@@ -1,0 +1,174 @@
+#!/bin/zsh
+set -euo pipefail
+
+repo_root=${0:A:h:h}
+source_bundle="${PVG_INPUT_ROOT:-$repo_root}/work/bigsur/System/Library/Extensions/AppleParavirtGPUMetal.bundle"
+cache="$repo_root/work/bigsur/System/Library/dyld/dyld_shared_cache_x86_64"
+catalina_cache="$repo_root/work/catalina/System/Library/dyld/dyld_shared_cache_x86_64"
+output=${1:-"$repo_root/artifacts/build/metal-plugin"}
+bundle="$output/AppleParavirtGPUMetal.bundle"
+binary="$bundle/Contents/MacOS/AppleParavirtGPUMetal"
+compiler_rel=System/Library/Extensions/AppleParavirtGPUMetal.bundle/Contents/Resources/libAppleParavirtCompilerPlugin.dylib
+extracted_compiler="${PVG_INPUT_ROOT:-$repo_root}/research/dsce/Out/$compiler_rel"
+compiler="$bundle/Contents/Resources/libAppleParavirtCompilerPlugin.dylib"
+real_compiler="$bundle/Contents/Resources/libAppleParavirtCompilerPluginReal.dylib"
+old_llvm="${PVG_INPUT_ROOT:-$repo_root}/research/dsce/Out/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/3902/Libraries/libLLVM.dylib"
+sdk="$repo_root/resources/xcode/XcodeCatalina.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+plugin_gpu_bridge=/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/PVGPluginGPUCompilerBridge.dylib
+
+if [[ -e "$output" ]]; then
+    print -u2 "output already exists: $output"
+    exit 73
+fi
+if [[ ! -f "$source_bundle/Contents/MacOS/AppleParavirtGPUMetal" ]] ||
+   { [[ -z ${PVG_INPUT_ROOT:-} ]] && [[ ! -f "$cache" || ! -f "$catalina_cache" ]]; }; then
+    print -u2 "PVG bundle or required dyld cache is missing"
+    exit 66
+fi
+
+mkdir -p "$output"
+ditto "$source_bundle" "$bundle"
+
+lipo -thin x86_64 "$binary" -output "$output/AppleParavirtGPUMetal.x86_64"
+mv "$output/AppleParavirtGPUMetal.x86_64" "$binary"
+xcrun vtool \
+    -set-build-version macos 10.15 10.15 \
+    -replace \
+    -output "$output/AppleParavirtGPUMetal.patched" \
+    "$binary"
+mv "$output/AppleParavirtGPUMetal.patched" "$binary"
+/usr/libexec/PlistBuddy -c 'Set :LSMinimumSystemVersion 10.15' \
+    "$bundle/Contents/Info.plist"
+
+codesign --remove-signature "$binary"
+"$repo_root/scripts/build-dsce"
+"$repo_root/vendor/source/dsce/dsce" legacy-objc \
+    "$binary" "$output/AppleParavirtGPUMetal.legacy-objc"
+mv "$output/AppleParavirtGPUMetal.legacy-objc" "$binary"
+chmod 755 "$binary"
+
+# Big Sur's Metal adds a compiler connection for LLVM ABI 0x7919. Catalina's
+# getCompilerConnection() deliberately aborts for anything except 0x0eda or
+# 0x0f3e. AppleParavirtDevice::llvmVersion is a six-byte leaf method at 0x6e9b;
+# map its `mov $0x7919,%eax` to Catalina's newer supported ABI. Fail closed if
+# the exact post-conversion instruction is not present.
+llvm_instruction_offset=$((0x6e9f))
+actual=$(dd if="$binary" bs=1 skip=$llvm_instruction_offset count=5 2>/dev/null | xxd -p)
+[[ "$actual" == b819790000 ]] || {
+    print -u2 "unexpected AppleParavirtDevice::llvmVersion instruction: $actual"
+    exit 65
+}
+printf '\270\076\017\000\000' | \
+    dd of="$binary" bs=1 seek=$llvm_instruction_offset conv=notrunc 2>/dev/null
+patched=$(dd if="$binary" bs=1 skip=$llvm_instruction_offset count=5 2>/dev/null | xxd -p)
+[[ "$patched" == b83e0f0000 ]] || {
+    print -u2 "failed to patch AppleParavirtDevice::llvmVersion"
+    exit 70
+}
+
+# Big Sur's driver asks its matching Metal framework for MTLPSBIN reflection
+# solely to mark potentially writable buffer and texture slots.  Catalina's
+# reflection reader predates that wire format and aborts while decoding it.
+# Replace this private helper with a conservative, format-independent bitmap
+# fill: every declared resource slot may be written.  This preserves resource
+# coherency at the cost of avoidable synchronization until reply translation
+# can provide the precise access mask.
+writability_offset=$((0x34ec))
+writability_limit=$((0x36f8))
+writability_actual=$(dd if="$binary" bs=1 skip=$writability_offset count=8 \
+    2>/dev/null | xxd -p)
+[[ "$writability_actual" == 554889e541574156 ]] || {
+    print -u2 "unexpected setWritability prologue: $writability_actual"
+    exit 65
+}
+writability_object="$output/PVGSetWritability.o"
+writability_raw="$output/PVGSetWritability.raw"
+xcrun clang -arch x86_64 -c "$repo_root/compat/PVGSetWritability.s" \
+    -o "$writability_object"
+writability_text_size_hex=$(otool -l "$writability_object" | awk '
+    $1 == "sectname" && $2 == "__text" { in_text = 1 }
+    in_text && $1 == "size" { print $2; exit }
+')
+writability_text_offset=$(otool -l "$writability_object" | awk '
+    $1 == "sectname" && $2 == "__text" { in_text = 1 }
+    in_text && $1 == "offset" { print $2; exit }
+')
+writability_size=$((writability_text_size_hex))
+dd if="$writability_object" of="$writability_raw" bs=1 \
+    skip=$writability_text_offset count=$writability_size 2>/dev/null
+(( writability_size <= writability_limit - writability_offset )) || {
+    print -u2 "conservative setWritability replacement is too large"
+    exit 65
+}
+dd if="$writability_raw" of="$binary" bs=1 seek=$writability_offset \
+    conv=notrunc 2>/dev/null
+rm "$writability_object" "$writability_raw"
+
+# The real compiler plugin is present only in Big Sur's dyld cache. Re-extract
+# it on every build so dsce's synthetic-Objective-C ownership fix is applied.
+# Also reconstruct Catalina's libLLVM: the facade links directly to that image
+# for serialization, while it loads Big Sur LLVM by handle for reparsing.
+if [[ -z ${PVG_INPUT_ROOT:-} ]]; then (
+    cd "$repo_root/vendor/source/dsce"
+    ./dsce "$cache" "/$compiler_rel"
+    ./dsce "$catalina_cache" \
+        /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/3902/Libraries/libLLVM.dylib
+); fi
+[[ -f "$extracted_compiler" && -f "$old_llvm" ]]
+mkdir -p "${compiler:h}"
+xcrun vtool -set-build-version macos 10.15 10.15 -replace \
+    -output "$output/libAppleParavirtCompilerPlugin.patched.dylib" \
+    "$extracted_compiler"
+mv "$output/libAppleParavirtCompilerPlugin.patched.dylib" "$real_compiler"
+install_name_tool -id \
+    /System/Library/Extensions/AppleParavirtGPUMetal.bundle/Contents/Resources/libAppleParavirtCompilerPluginReal.dylib \
+    "$real_compiler"
+install_name_tool -change \
+    /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/libGPUCompiler.dylib \
+    "$plugin_gpu_bridge" "$real_compiler"
+
+old_downgrade=_MTLDowngradeAIRModule
+new_downgrade=_PVGDowngradeAIRModule
+[[ ${#old_downgrade} -eq ${#new_downgrade} ]]
+[[ $(LC_ALL=C grep -aFo "$old_downgrade" "$real_compiler" | wc -l) -eq 2 ]] || {
+    print -u2 "unexpected compiler-plugin downgrade bind count"
+    exit 65
+}
+perl -0pi -e \
+    's/_MTLDowngradeAIRModule/_PVGDowngradeAIRModule/g' "$real_compiler"
+
+xcrun clang -arch x86_64 -mmacosx-version-min=10.15 -isysroot "$sdk" \
+    -DPVG_GL_FIX_FETCH_METADATA=1 -dynamiclib \
+    "$repo_root/compat/PVGCompilerPluginBridge/PVGCompilerPluginBridge.c" \
+    "$old_llvm" \
+    -install_name \
+    /System/Library/Extensions/AppleParavirtGPUMetal.bundle/Contents/Resources/libAppleParavirtCompilerPlugin.dylib \
+    -o "$compiler"
+
+chmod 755 "$compiler" "$real_compiler"
+codesign --force --sign - --preserve-metadata=entitlements "$real_compiler"
+codesign --force --sign - --preserve-metadata=entitlements "$compiler"
+xcrun dyld_info -opcodes "$real_compiler" | \
+    grep -q '_MTLGPUCompilerCreate' || {
+        print -u2 "real PVG compiler plugin lacks MTLGPUCompilerCreate bind"
+        exit 70
+    }
+otool -L "$compiler" | grep -q \
+    '/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/3902/Libraries/libLLVM.dylib' || {
+        print -u2 "PVG compiler facade is not bound to Catalina LLVM"
+        exit 70
+    }
+for export in MTLCompilerCreate MTLCompilerBuildRequestWithOptions \
+    MTLCompilerReleaseReply MTLCompilerDelete; do
+    nm -gU "$compiler" | grep -q " _$export$" || {
+        print -u2 "PVG compiler facade lacks $export"
+        exit 70
+    }
+done
+
+python3 "$repo_root/scripts/sign-donor.py" "$source_bundle" "$bundle" --deep
+codesign --verify --strict --verbose=2 "$bundle"
+file "$binary"
+otool -l "$binary" | awk \
+    '/LC_BUILD_VERSION/{show=1; count=0} show{print; count++} count==8{show=0}'
+printf '%s\n' "$bundle"

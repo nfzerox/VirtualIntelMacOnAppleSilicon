@@ -1,0 +1,43 @@
+#!/bin/zsh
+set -euo pipefail
+
+repo_root=${0:A:h:h}
+source_kext="${PVG_INPUT_ROOT:-$repo_root}/work/bigsur/System/Library/Extensions/IOGraphicsFamily.kext"
+output=${1:-"$repo_root/artifacts/build/iographics-585.2-catalina-coherent"}
+kext="$output/IOGraphicsFamily.kext"
+binary="$kext/IOGraphicsFamily"
+
+if [[ -e "$output" ]]; then
+    print -u2 "output already exists: $output"
+    exit 73
+fi
+[[ -f "$source_kext/IOGraphicsFamily" ]] || {
+    print -u2 "Big Sur IOGraphicsFamily is missing"
+    exit 66
+}
+
+mkdir -p "$output"
+ditto "$source_kext" "$kext"
+lipo -thin x86_64 "$binary" -output "$output/IOGraphicsFamily.x86_64"
+mv "$output/IOGraphicsFamily.x86_64" "$binary"
+codesign --remove-signature "$binary" 2>/dev/null || true
+xcrun vtool \
+    -set-build-version macos 10.15 11.7 \
+    -replace \
+    -output "$output/IOGraphicsFamily.patched" \
+    "$binary"
+mv "$output/IOGraphicsFamily.patched" "$binary"
+
+/usr/libexec/PlistBuddy -c 'Set :LSMinimumSystemVersion 10.15' \
+    "$kext/Info.plist" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c 'Add :LSMinimumSystemVersion string 10.15' \
+        "$kext/Info.plist"
+/usr/libexec/PlistBuddy \
+    -c 'Add :OSBundleLibraries:local.pvg.KernelCompat string 1.0.0' \
+    "$kext/Info.plist"
+
+python3 "$repo_root/scripts/sign-donor.py" "$source_kext" "$kext"
+codesign --verify --strict --verbose=2 "$kext"
+file "$binary"
+nm -u "$binary" | grep '__ZN9IOServicenwEm'
+printf '%s\n' "$kext"

@@ -1,0 +1,34 @@
+settings set auto-confirm true
+process attach --name WindowServer
+expression -l c -- void *$pvg_target = (void *)0x7f9d1a46efb0
+expression -l c -- void *$pvg_source = (void *)0x7f9d1a472330
+expression -l c -- unsigned int $pvg_target_id = ((unsigned int (*)(void *))IOSurfaceGetID)($pvg_target)
+expression -l c -- unsigned int $pvg_source_id = ((unsigned int (*)(void *))IOSurfaceGetID)($pvg_source)
+expression -l c -- unsigned int $pvg_target_seed = ((unsigned int (*)(void *))IOSurfaceGetSeed)($pvg_target)
+expression -l c -- unsigned int $pvg_source_seed = ((unsigned int (*)(void *))IOSurfaceGetSeed)($pvg_source)
+expression -l c -- unsigned int $pvg_target_use = ((unsigned int (*)(void *))IOSurfaceGetUseCount)($pvg_target)
+expression -l c -- unsigned int $pvg_source_use = ((unsigned int (*)(void *))IOSurfaceGetUseCount)($pvg_source)
+expression -l c -- unsigned long $pvg_target_size = ((unsigned long (*)(void *))IOSurfaceGetAllocSize)($pvg_target)
+expression -l c -- unsigned long $pvg_source_size = ((unsigned long (*)(void *))IOSurfaceGetAllocSize)($pvg_source)
+expression -l c -- unsigned long $pvg_target_bpr = ((unsigned long (*)(void *))IOSurfaceGetBytesPerRow)($pvg_target)
+expression -l c -- unsigned long $pvg_source_bpr = ((unsigned long (*)(void *))IOSurfaceGetBytesPerRow)($pvg_source)
+expression -l c -- void *$pvg_target_values = ((void *(*)(void *))IOSurfaceCopyAllValues)($pvg_target)
+expression -l c -- void *$pvg_source_values = ((void *(*)(void *))IOSurfaceCopyAllValues)($pvg_source)
+expression -l c -- $pvg_target_id
+expression -l c -- $pvg_source_id
+expression -l c -- $pvg_target_seed
+expression -l c -- $pvg_source_seed
+expression -l c -- $pvg_target_use
+expression -l c -- $pvg_source_use
+expression -l c -- $pvg_target_size
+expression -l c -- $pvg_source_size
+expression -l c -- $pvg_target_bpr
+expression -l c -- $pvg_source_bpr
+expression -l c -- ((void (*)(void *))CFShow)($pvg_target_values)
+expression -l c -- ((void (*)(void *))CFShow)($pvg_source_values)
+memory read --force --size 8 --format x --count 64 `$pvg_target`
+memory read --force --size 8 --format x --count 64 `$pvg_source`
+expression -l c -- ((void (*)(void *))CFRelease)($pvg_target_values)
+expression -l c -- ((void (*)(void *))CFRelease)($pvg_source_values)
+process detach
+quit

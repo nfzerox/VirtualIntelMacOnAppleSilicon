@@ -1,0 +1,9 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+mkdir -p "$root/Build/Probes"
+xcrun clang -fobjc-arc -fmodules -Wall -mmacosx-version-min=26.0 \
+    -I "$root/VirtualIntelMac" -framework Foundation \
+    "$root/probes/installer-catalog-tests.m" "$root/VirtualIntelMac/VIMInstallerCatalog.m" \
+    -o "$root/Build/Probes/installer-catalog-tests"
+exec "$root/Build/Probes/installer-catalog-tests" "$root/VirtualIntelMac/InstallerCatalog.plist"

@@ -1,0 +1,37 @@
+.TH USBREDIRECT "1" "February 2021" "usbredirect" "User Commands"
+.SH NAME
+usbredirect \- exporting an USB device for use from another (virtual) machine
+.SH SYNOPSIS
+.B usbredirect
+[\fI--device vendor:product\fR] [\fI--to addr:port\fR] [\fI--as addr:port\fR]
+.br
+.B usbredirect
+[\fI--device bus-device\fR] [\fI--to addr:port\fR] [\fI--as addr:port\fR]
+.SH DESCRIPTION
+usbredirect is an usbredir client for exporting an USB device either as TCP
+client or server, for use from another (virtual) machine through the usbredir
+protocol.
+.PP
+You can specify the USB device to export by USB id in the form of
+\fI<vendorid>:<prodid>\fR.
+.br
+Or you can specify the USB device to export in the form of
+\fI<busnum>-<devnum>\fR.
+.PP
+Notice that an instance of usbredirect can only be used to export a single USB
+device and it will close once the other side closes the connection. If you
+want to export multiple devices you can start multiple instances listening on
+different TCP ports.
+.SH AUTHOR
+Written by Victor Toso <victortoso@redhat.com>
+.SH REPORTING BUGS
+You can report bugs to the spice-devel mailinglist:
+http://lists.freedesktop.org/mailman/listinfo/spice-devel
+or filing an issue at:
+https://gitlab.freedesktop.org/spice/usbredir/issues/new
+.SH COPYRIGHT
+Copyright 2010-2021 Red Hat, Inc.
+License GPLv2+: GNU GPL version 2 or later <http://gnu.org/licenses/gpl.html>.
+.br
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.

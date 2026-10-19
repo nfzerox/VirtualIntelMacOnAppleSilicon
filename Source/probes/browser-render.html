@@ -1,0 +1,23 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>PVG browser rendering check</title>
+<style>
+body {font: 24px system-ui; background: #eef2fa; color: #16304b; margin: 40px}
+.panel {padding: 20px; background: white; border-radius: 20px; box-shadow: 0 8px 24px #6788}
+.gradient {height: 80px; background: linear-gradient(90deg,#f60,#09f); margin: 20px 0}
+.moving {width: 60px; height: 60px; background: #0a7; animation: move 2s infinite alternate}
+@keyframes move {to {transform: translateX(400px) rotate(180deg)}}
+</style>
+<h1>PVG browser rendering check</h1>
+<div class="panel">Text, CSS, SVG, canvas and animation must all be visible.
+<div class="gradient"></div>
+<svg width="220" height="100"><circle cx="50" cy="50" r="40" fill="#e37"/>
+<rect x="110" y="10" width="80" height="80" fill="#38e"/></svg>
+<canvas id="canvas" width="220" height="100"></canvas>
+<div class="moving"></div><p id="tick"></p></div>
+<script>
+const c=document.getElementById('canvas').getContext('2d');
+c.fillStyle='#fa0'; c.fillRect(0,0,220,100);
+c.fillStyle='#123'; c.font='24px sans-serif'; c.fillText('Canvas OK',20,60);
+let n=0; setInterval(()=>document.getElementById('tick').textContent='Live tick '+(++n),250);
+</script>

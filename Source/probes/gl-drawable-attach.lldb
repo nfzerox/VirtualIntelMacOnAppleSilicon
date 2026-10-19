@@ -1,0 +1,27 @@
+settings set target.env-vars GL_RESOURCES=/Users/Shared/pvg-probes/pvg-cat-gl/OpenGL.framework/Versions/A/Resources LC_ALL=C PVG_GL_TRACE_DRAWABLE=1 PVG_GL_TEST_INTEL_PROFILE=1 PVG_GL_TEST_MOJAVE_LOWERING=1
+breakpoint set --func-regex 'GLRDrawable::attachDrawable' --condition '$rcx != 0'
+run
+register read rdi rsi rdx rcx r8 r9
+memory read --size 4 --count 12 --format x $rcx
+# Research-only instruction offset verified in Big Sur donor disassembly.
+script base=lldb.frame.GetPC(); lldb.target.BreakpointCreateByAddress(base+0x222)
+breakpoint disable 1
+continue
+register read rdi rsi rdx rcx r8 rbx
+expression -- *(void **)($rbx+0x28)
+thread step-inst
+thread step-inst --count 5
+register read rax
+image lookup -a $rax
+script callback=lldb.frame.FindRegister('rax').GetValueAsUnsigned(); lldb.target.BreakpointCreateByAddress(callback+166)
+continue
+register read rax rbx r12
+memory read --size 4 --count 10 --format x $r12
+script lldb.target.BreakpointCreateByAddress(callback+249)
+breakpoint disable 2 3
+continue
+register read rdi rsi rdx rcx r8 r9
+thread step-inst-over
+register read rax
+thread backtrace --count 8
+quit

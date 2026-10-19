@@ -1,0 +1,45 @@
+#!/bin/zsh
+set -euo pipefail
+
+if (( EUID != 0 )) || (( $# != 2 )); then
+    print -u2 'usage: sudo catalina-install-command-trace archive.tgz backup-dir'
+    exit 64
+fi
+
+archive=${1:A}
+backup=${2:A}
+target=/System/Library/PrivateFrameworks/MetalSerializer.framework
+staging=${target}.pvgtrace-stage
+
+[[ $(sw_vers -productVersion) == 10.15.7 && $(sw_vers -buildVersion) == 19H15 ]] || {
+    print -u2 'refusing non-19H15 Catalina target'
+    exit 65
+}
+[[ -f $archive && ! -e $backup && ! -e $staging ]] || {
+    print -u2 'archive missing, backup exists, or staging path already exists'
+    exit 73
+}
+
+mkdir -p $backup/source
+tar -xzf $archive -C $backup/source
+source_framework=$backup/source/MetalSerializer.framework
+codesign --verify --deep --strict $source_framework
+
+mount -uw /
+ditto --noextattr --noacl $target $backup/original
+ditto $source_framework $staging
+chown -R root:wheel $staging
+chmod -R go-w $staging
+codesign --verify --deep --strict $staging
+
+mv $target $backup/displaced
+mv $staging $target
+if ! codesign --verify --deep --strict $target; then
+    mv $target $backup/failed
+    mv $backup/displaced $target
+    print -u2 'trace framework verification failed; original restored'
+    exit 74
+fi
+sync
+print 'Command-trace framework installed. Reboot is required.'
+print "Original retained at $backup/displaced"

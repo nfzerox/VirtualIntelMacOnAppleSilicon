@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Discussions
+    url: https://github.com/LongQT-sea/OpenCore-ISO/discussions
+    about: For general questions, tips sharing, and community help
+  - name: Dortania OpenCore Guide
+    url: https://dortania.github.io/OpenCore-Install-Guide/
+    about: Comprehensive OpenCore documentation and troubleshooting
+  - name: Proxmox VE Forum
+    url: https://forum.proxmox.com/
+    about: For Proxmox-specific questions and issues
+  - name: Intel iGPU Passthrough Guide
+    url: https://github.com/LongQT-sea/intel-igpu-passthru
+    about: Guide for Intel iGPU passthrough configuration

@@ -1,0 +1,20 @@
+#!/bin/zsh
+# Isolated research helper; no system binary edits or installation.
+set -euo pipefail
+repo=${0:A:h:h}
+output=${1:?usage: build-opengl-surface-probe NEW_DIRECTORY}
+[[ ! -e $output ]] || exit 73
+sdk="$repo/resources/xcode/XcodeMojave.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+mkdir -p "$output"
+xcrun clang -O2 -fblocks -arch x86_64 -mmacosx-version-min=10.14 -isysroot "$sdk" \
+    -dynamiclib "$repo/compat/PVGOpenGLProbe/PVGGLIOKit.c" \
+    -Wl,-reexport_framework,IOKit -install_name @loader_path/PVGGLIOKit.dylib \
+    -o "$output/PVGGLIOKit.dylib"
+xcrun vtool -set-build-version macos 10.14 10.14 \
+    -set-build-version maccatalyst 12.0 12.0 -replace \
+    -output "$output/PVGGLIOKit.zippered" "$output/PVGGLIOKit.dylib"
+mv "$output/PVGGLIOKit.zippered" "$output/PVGGLIOKit.dylib"
+xcrun clang -O2 -arch x86_64 -mmacosx-version-min=10.14 -isysroot "$sdk" \
+    "$repo/probes/gl-surface2.c" -framework IOKit -o "$output/gl-surface2"
+codesign -f -s - "$output/PVGGLIOKit.dylib"
+codesign -f -s - "$output/gl-surface2"

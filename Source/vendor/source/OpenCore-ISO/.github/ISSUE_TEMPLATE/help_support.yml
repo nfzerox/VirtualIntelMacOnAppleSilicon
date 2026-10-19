@@ -1,0 +1,97 @@
+name: Get Help & Support
+description: Get help with OpenCore-ISO setup or configuration
+title: "[HELP] "
+labels: ["question", "help wanted"]
+
+body:
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Need help with OpenCore-ISO?
+        Before asking for help, please check:
+        - The [README](https://github.com/LongQT-sea/OpenCore-ISO#readme) and its troubleshooting section
+        - [Existing issues](https://github.com/LongQT-sea/OpenCore-ISO/issues) for similar problems
+        - [Discussions](https://github.com/LongQT-sea/OpenCore-ISO/discussions) for community solutions
+
+        **Have you starred this repo yet?** Show your support by giving it a star!
+
+  - type: checkboxes
+    attributes:
+      label: Prerequisites
+      options:
+        - label: I have read the [README.md](https://github.com/LongQT-sea/OpenCore-ISO?#about)
+          required: true
+        - label: I have searched existing issues and discussions
+          required: true
+        - label: I've starred the repo ⭐ (or will star it later!)
+          required: false
+
+  - type: dropdown
+    attributes:
+      label: macOS Version
+      options:
+        - macOS 26 Tahoe
+        - macOS 15 Sequoia
+        - macOS 14 Sonoma
+        - macOS 13 Ventura
+        - macOS 12 Monterey
+        - macOS 11 Big Sur
+        - macOS 10.15 Catalina
+        - macOS 10.14 Mojave
+        - Other/Legacy (specify below)
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: System Info
+      description: Host OS and hardware specs info
+      placeholder: |
+        Host OS: e.g. Proxmox, QEMU/KVM, UTM, TrueNAS, Unraid
+        Mainboard: Z490
+        CPU: i7-10700K
+        RAM: 32GB
+        dGPU: None
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: VM Config or QEMU cmdline
+      description: Proxmox VM config (`qm config VMID`) or QEMU command line used to start the VM
+      placeholder: |
+        # qm config VMID
+        bios: ovmf
+        machine: q35
+        cpu: Skylake-Client-v4
+        
+        # QEMU cmdline
+        /usr/bin/qemu-system-x86_64 -accel kvm -machine q35 -m 4096 \
+          -cpu Skylake-Client-noTSX-IBRS,vendor=GenuineIntel \
+          -usb -device usb-tablet -device usb-kbd \
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Problem Description
+      description: What's the issue?
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: What You've Tried
+      description: Steps taken to resolve
+    validations:
+      required: false
+
+  - type: textarea
+    attributes:
+      label: Additional Context
+      description: Screenshots or other details (relevant errors or logs)
+    validations:
+      required: false

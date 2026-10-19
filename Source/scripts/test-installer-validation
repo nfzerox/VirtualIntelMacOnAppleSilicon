@@ -1,0 +1,10 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+mkdir -p "$root/Build/Probes"
+xcrun clang -fobjc-arc -fmodules -Wall -mmacosx-version-min=15.0 \
+    -I "$root/VirtualIntelMac" -framework AppKit \
+    "$root/probes/installer-validation-tests.m" "$root/VirtualIntelMac/VIMInstallerAssembly.m" \
+    "$root/VirtualIntelMac/VIMLibraryLocation.m" "$root/VirtualIntelMac/VIMAlerts.m" \
+    -o "$root/Build/Probes/installer-validation-tests"
+exec "$root/Build/Probes/installer-validation-tests" "$@"

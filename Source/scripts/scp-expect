@@ -1,0 +1,30 @@
+#!/usr/bin/expect -f
+
+if {$argc < 2} {
+    puts stderr "usage: PVG_SSH_PASSWORD=... scp-expect scp-argument ... destination"
+    exit 64
+}
+if {![info exists env(PVG_SSH_PASSWORD)]} {
+    puts stderr "PVG_SSH_PASSWORD is not set"
+    exit 64
+}
+
+set timeout 300
+spawn scp -O -r -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -- {*}$argv
+expect {
+    -nocase -re {password:} {
+        send -- "$env(PVG_SSH_PASSWORD)\r"
+        exp_continue
+    }
+    eof {}
+    timeout {
+        puts stderr "scp timed out"
+        exit 124
+    }
+}
+
+catch wait result
+if {[llength $result] >= 4} {
+    exit [lindex $result 3]
+}
+exit 1

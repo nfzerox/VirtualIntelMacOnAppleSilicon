@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="136" viewBox="0 0 500 136" role="img" aria-label="Download Virtual Intel Mac">
+  <defs>
+    <linearGradient id="blue" x2="0" y2="1"><stop stop-color="#489bff"/><stop offset="1" stop-color="#0068ff"/></linearGradient>
+    <filter id="inset"><feGaussianBlur stdDeviation="2"/></filter>
+  </defs>
+  <rect width="500" height="136" rx="22" fill="url(#blue)"/>
+  <rect x="2" y="2" width="496" height="132" rx="20" fill="none" stroke="#0057dd" stroke-opacity=".3" stroke-width="2" filter="url(#inset)"/>
+  <rect x="42" y="43" width="70" height="64" rx="16" fill="white"/>
+  <path d="M77 26v48m-14-9 14 14 14-14" fill="none" stroke="#2c86ff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M77 26v15" fill="none" stroke="white" stroke-width="6" stroke-linecap="round"/>
+  <g fill="white" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif">
+    <text x="132" y="56" font-size="28">Click to download</text>
+    <text x="132" y="94" font-size="38" font-weight="600">Virtual Intel Mac</text>
+  </g>
+</svg>

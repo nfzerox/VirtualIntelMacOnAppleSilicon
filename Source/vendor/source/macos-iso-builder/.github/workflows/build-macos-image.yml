@@ -1,0 +1,156 @@
+name: Build Full Installer ISO/DMG image
+
+on:
+  workflow_dispatch:
+    inputs:
+      macos_version:
+        description: "Choose a macOS version to build."
+        required: true
+        type: choice
+        options:
+          - ''
+          - 'Tahoe'
+          - 'Sequoia'
+          - 'Sonoma'
+          - 'Ventura'
+          - 'Monterey'
+          - 'Big Sur'
+          - 'Catalina'
+          - 'Mojave'
+          - 'High Sierra'
+          - 'Sierra'
+          - 'El Capitan'
+          - 'Yosemite'
+          - 'Mavericks'
+          - 'Mountain Lion'
+          - 'Lion'
+      image_format:
+        description: "Choose 'iso' for virtual machines, 'dmg' for flash to USB drive."
+        required: true
+        type: choice
+        options:
+          - ''
+          - 'iso'
+          - 'dmg'
+
+jobs:
+  preflight:
+    if: ${{ inputs.macos_version != '' && inputs.image_format != '' }}
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    outputs:
+      _build: ${{ steps.check.outputs._build }}
+
+    steps:
+      - name: Preflight
+        id: check
+        run: |
+          echo "_build=false" >> $GITHUB_OUTPUT
+          sum() { printf '%s\n' "$@" >> "$GITHUB_STEP_SUMMARY"; }
+
+          # Third time's the charm
+          if [ ${{ github.run_attempt }} -ge 3 ] || [ ${{ github.run_number }} -ge 3 ]; then
+            echo "_build=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Most users arrive directly at the Actions tab without reading the
+          # README, missing the prebuilt images in the Releases tab. Requiring
+          # a star (step 1 of the README) reduces redundant builds - and runner
+          # costs - for images that may already exist in a recent forks list.
+          #
+          # GET /repos/{owner}/{repo}/stargazers has been admin/collaborator
+          # only since 2026-06-30, and Actions' app-install token is refused
+          # even on its own repo ("Resource not accessible by integration").
+          # Ask the reverse question instead - is this repo in the actor's
+          # starred list - which is still unrestricted. Sorted newest-first,
+          # so a star made just before dispatching lands on page 1.
+          FOUND=false
+          PAGE=1
+          while [ $PAGE -le 5 ]; do
+            DATA=$(curl -s \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/users/${{ github.actor }}/starred?per_page=100&page=${PAGE}")
+            [ "$(echo "$DATA" | jq -r 'type')" = "array" ] || break
+            echo "$DATA" | jq -e 'any(.[]; .full_name == "LongQT-sea/macos-iso-builder")' > /dev/null && FOUND=true && break
+            [ "$(echo "$DATA" | jq 'length')" -lt 100 ] && break
+            PAGE=$((PAGE + 1))
+          done
+
+          if [ "$FOUND" = "true" ]; then
+            echo "_build=true" >> $GITHUB_OUTPUT
+          else
+            sum "## Before you build - check if someone already did it for you :point_down:" \
+                "" \
+                "Browse the **[Recent Forks List](https://github.com/LongQT-sea/macos-iso-builder/releases/latest)** - someone may have already built the macOS version you need." \
+                "" \
+                "If you still need to build your own, star this repo first [LongQT-sea/macos-iso-builder](https://github.com/LongQT-sea/macos-iso-builder) - that's step 1 in the [README](https://github.com/LongQT-sea/macos-iso-builder#how-to-use). :star:" \
+                "<br>![star](https://raw.githubusercontent.com/LongQT-sea/macos-iso-builder/main/.github/star.jpg)"
+          fi
+
+  build-macos-image:
+    needs: preflight
+    if: needs.preflight.outputs._build == 'true'
+    runs-on: macos-15-intel
+    timeout-minutes: 80
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: System Information
+        run: |
+          echo "Runner OS: $(sw_vers -productName) $(sw_vers -productVersion)"
+          echo "Architecture: $(uname -m)"
+          echo ""
+          df -h $(mktemp)
+          echo ""
+          echo "RAM: $(top -l 1 | grep PhysMem)"
+          echo ""
+          echo "CPU: $(sysctl -n machdep.cpu.brand_string)"
+
+      - name: Create macOS image
+        id: create_image
+        run: |
+          ./mkmaciso "${{ inputs.macos_version }}" "${{ inputs.image_format }}"
+          if [ "${{ inputs.image_format }}" == "iso" ]; then
+            echo "image_name=$(basename *.iso)" >> $GITHUB_OUTPUT
+          else
+            echo "image_name=$(basename *.dmg.img)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.create_image.outputs.image_name }}
+          compression-level: 0
+          retention-days: 15
+          archive: false
+
+      - name: Summary
+        if: always()
+        run: |
+          sum() { printf '%s\n' "$@" >> "$GITHUB_STEP_SUMMARY"; }
+
+          if [ "${{ steps.create_image.outcome }}" == "failure" ]; then
+            sum "## Download macOS failed" \
+                "" \
+                "> [!WARNING]" \
+                "> This runner may have network issues. Please **re-run the workflow** to try a different runner."
+          elif [ "${{ job.status }}" == "success" ]; then
+            if [ "${{ inputs.image_format }}" == "iso" ]; then
+              sum "## Successfully built $(basename *.iso)" \
+                  "" \
+                  "> [!Important]" \
+                  "> This ISO image is intended for creating macOS virtual machines on Proxmox VE, QEMU, and VMware."
+            else
+              sum "## Successfully built $(basename *.dmg.img)" \
+                  "" \
+                  "> [!Important]" \
+                  '> This DMG image is intended for flashing to USB drive using [Rufus](https://rufus.ie/en/#download) *(Windows)* or `dd` *(Linux)*.'
+            fi
+            sum "" \
+                "> [!TIP]" \
+                "> Enable [Cloudflare WARP](https://one.one.one.one/) for faster download from GitHub artifact."
+          fi

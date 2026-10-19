@@ -1,0 +1,250 @@
+#!/bin/zsh
+set -euo pipefail
+
+repo_root=${0:A:h:h}
+output=${1:-"$repo_root/artifacts/build/compiler-stack-catalina-pvg"}
+catalina_cache="$repo_root/work/catalina/System/Library/dyld/dyld_shared_cache_x86_64"
+bigsur_cache="$repo_root/work/bigsur/System/Library/dyld/dyld_shared_cache_x86_64"
+catalina_service="$repo_root/work/catalina/compiler/MTLCompilerService"
+catalina_service_bundle="$repo_root/work/catalina/compiler/MTLCompilerService.xpc"
+bigsur_resources="$repo_root/work/bigsur/compiler-files/System/Library"
+extracted="$repo_root/vendor/source/dsce/Out/System/Library/PrivateFrameworks"
+sdk="$repo_root/resources/xcode/XcodeCatalina.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+cxx_headers="$repo_root/resources/xcode/XcodeCatalina.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/include/c++/v1"
+
+if [[ -e "$output" ]]; then
+    print -u2 "output already exists: $output"
+    exit 73
+fi
+for required in "$catalina_cache" "$bigsur_cache" "$catalina_service"; do
+    [[ -f "$required" ]] || {
+        print -u2 "compiler input missing: $required"
+        exit 66
+    }
+done
+[[ -d "$catalina_service_bundle" && -d "$bigsur_resources" ]] || {
+    print -u2 "compiler bundle resources are missing"
+    exit 66
+}
+
+# Catalina's compiler front end and XPC protocol remain authoritative.  dsce
+# reconstructs the cached 3902 images; Big Sur contributes only the PVG-aware
+# GPUCompiler/LLVM 31001 backend and its resources.
+"$repo_root/scripts/build-dsce"
+(
+    cd "$repo_root/vendor/source/dsce"
+    ./dsce "$catalina_cache" \
+        /System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3902/
+    ./dsce "$bigsur_cache" \
+        /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/
+)
+
+xpc_rel=Frameworks/Metal.framework/Versions/A/XPCServices/MTLCompilerService.xpc
+mtl_rel=PrivateFrameworks/MTLCompiler.framework/Versions/3903
+gpu_rel=PrivateFrameworks/GPUCompiler.framework/Versions/31001
+metal_resources_rel=Frameworks/Metal.framework/Versions/A/Resources
+mkdir -p "$output/System/Library/Frameworks/Metal.framework/Versions/A/XPCServices" \
+    "$output/System/Library/Frameworks/Metal.framework/Versions/A/Resources" \
+    "$output/System/Library/PrivateFrameworks/MTLCompiler.framework/Versions" \
+    "$output/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions"
+
+ditto "$catalina_service_bundle" "$output/System/Library/$xpc_rel"
+service="$output/System/Library/$xpc_rel/Contents/MacOS/MTLCompilerService"
+cp -p "$catalina_service" "$service"
+old_service_path='/System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3902/MTLCompiler'
+new_service_path='/System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3903/MTLCompiler'
+[[ $(LC_ALL=C grep -aFo "$old_service_path" "$service" | wc -l) -eq 1 ]]
+perl -0pi -e \
+    's{/System/Library/PrivateFrameworks/MTLCompiler\.framework/Versions/3902/MTLCompiler}{/System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3903/MTLCompiler}g' \
+    "$service"
+[[ $(LC_ALL=C grep -aFo "$new_service_path" "$service" | wc -l) -eq 1 ]]
+
+mtl_root="$output/System/Library/$mtl_rel"
+mtl="$mtl_root/MTLCompiler"
+mtl_libraries="$mtl_root/Libraries"
+mkdir -p "$mtl_libraries"
+cp -p "$extracted/MTLCompiler.framework/Versions/3902/MTLCompiler" "$mtl"
+cp -p \
+    "$extracted/MTLCompiler.framework/Versions/3902/Libraries/libMTLCompilerHelper.dylib" \
+    "$mtl_libraries/libMTLCompilerHelper.dylib"
+
+# MTLCompiler loads ComposeFilters with a constructed absolute path rather
+# than a Mach-O dependency.  Its CI-SPI input modules are produced by the
+# 31001 backend below, so the 3902 ComposeFilters image would interpret LLVM 7
+# objects with LLVM 5's layout and crash in llvm::Value::getName().  Keep the
+# C-facing 3902 MTLCompiler ABI, but give its private 3903 directory the
+# matching Big Sur helper and redirect the equal-length directory component.
+cp -p \
+    "$extracted/GPUCompiler.framework/Versions/31001/Libraries/libComposeFilters.dylib" \
+    "$mtl_libraries/libComposeFilters.dylib"
+old_compose_dir='/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/3902/Libraries/'
+new_compose_dir='/System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3903/Libraries/'
+[[ ${#old_compose_dir} -eq ${#new_compose_dir} ]]
+[[ $(strings -a "$mtl" | LC_ALL=C grep -Fxc "$old_compose_dir") -eq 1 ]] || {
+    print -u2 "unexpected ComposeFilters directory count"
+    exit 65
+}
+perl -0pi -e \
+    's{/System/Library/PrivateFrameworks/GPUCompiler\.framework/Versions/3902/Libraries/\x00}{/System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3903/Libraries/\x00}g' \
+    "$mtl"
+[[ $(strings -a "$mtl" | LC_ALL=C grep -Fxc "$new_compose_dir") -eq 1 ]]
+
+gpu_root="$output/System/Library/$gpu_rel"
+ditto "$bigsur_resources/$gpu_rel" "$gpu_root"
+gpu_libraries="$gpu_root/Libraries"
+mkdir -p "$gpu_libraries"
+cp -p "$extracted/GPUCompiler.framework/Versions/31001/Libraries/"*.dylib \
+    "$gpu_libraries/"
+for resource in MTLRaytracingRuntime.rtlib MTLBVHBuilder.metallib MTLECBE.metallib; do
+    cp -p "$bigsur_resources/$metal_resources_rel/$resource" \
+        "$output/System/Library/$metal_resources_rel/$resource"
+done
+
+# Route Catalina's LLVM 5 imports through narrow ABI wrappers which re-export
+# Big Sur LLVM 7/GPUCompiler, while retaining Catalina's Metal-facing ABI.
+install_name_tool -change \
+    /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/3902/Libraries/libGPUCompiler.dylib \
+    /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/PVGGPUCompilerCompat.dylib \
+    "$mtl"
+install_name_tool -change \
+    /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/3902/Libraries/libLLVM.dylib \
+    /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/PVGLLVMCompat.dylib \
+    "$mtl"
+install_name_tool -change \
+    /System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3902/Libraries/libMTLCompilerHelper.dylib \
+    /System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3903/Libraries/libMTLCompilerHelper.dylib \
+    "$mtl"
+install_name_tool -id \
+    /System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3903/Libraries/libMTLCompilerHelper.dylib \
+    "$mtl_libraries/libMTLCompilerHelper.dylib"
+install_name_tool -change \
+    /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/3902/Libraries/libLLVM.dylib \
+    /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/PVGLLVMCompat.dylib \
+    "$mtl_libraries/libMTLCompilerHelper.dylib"
+
+# Three LLVM 5 symbols collide with incompatible LLVM 7 exports.  Rename both
+# exact copies of each bind string to equal-length wrapper names.
+for symbol in \
+    __ZN4llvm15SmallVectorBase8grow_podEPvmm \
+    __ZN4llvm10DataLayout5clearEv \
+    __ZN4llvm10DataLayoutD1Ev; do
+    [[ $(LC_ALL=C grep -aFo "$symbol" "$mtl" | wc -l) -eq 2 ]] || {
+        print -u2 "unexpected MTLCompiler bind count for $symbol"
+        exit 65
+    }
+done
+perl -0pi -e \
+    's/__ZN4llvm15SmallVectorBase8grow_podEPvmm/_PVGLLVM5__SmallVectorBase8grow_podEPvmm/g; s/__ZN4llvm10DataLayout5clearEv/_PVGLLVM7__DataLayoutAssign__/g; s/__ZN4llvm10DataLayoutD1Ev/_PVGLLVM5__DataLayoutD1Ev/g' \
+    "$mtl"
+
+# GPUCompiler 31001 added a function-name parameter before the final two
+# MTLGPUCompilerSpecializeFunction arguments.  Route Catalina's call through
+# the equal-length wrapper symbol that inserts NULL and shifts those pointers.
+old_specialize=_MTLGPUCompilerSpecializeFunction
+new_specialize=_PVGGPUCompilerSpecializeFunction
+[[ ${#old_specialize} -eq ${#new_specialize} ]]
+[[ $(LC_ALL=C grep -aFo "$old_specialize" "$mtl" | wc -l) -eq 2 ]] || {
+    print -u2 "unexpected specialize bind count"
+    exit 65
+}
+perl -0pi -e \
+    's/_MTLGPUCompilerSpecializeFunction/_PVGGPUCompilerSpecializeFunction/g' \
+    "$mtl"
+[[ $(LC_ALL=C grep -aFo "$new_specialize" "$mtl" | wc -l) -eq 2 ]]
+
+# MTLCompiler's inline LLVM 5 DataLayout assignment is unsafe on the LLVM 7
+# layout.  Redirect its entry to the equal-length import slot renamed above;
+# PVGLLVMCompat then invokes LLVM 7's real assignment operator.  The relative
+# branch targets the deterministic dsce stub at preferred address
+# 0x7fff52be7ec8 from the function at 0x7fff52b9cbe4.
+data_layout_assign_offset=$((0x7be4))
+actual=$(dd if="$mtl" bs=1 skip=$data_layout_assign_offset count=8 2>/dev/null | xxd -p)
+[[ "$actual" == 554889e541565348 ]] || {
+    print -u2 "unexpected DataLayout assignment prologue: $actual"
+    exit 65
+}
+printf '\351\337\262\004\000' | \
+    dd of="$mtl" bs=1 seek=$data_layout_assign_offset conv=notrunc 2>/dev/null
+
+# formatIsValid performs two inline LLVM isa<ConstantInt> checks while reading
+# fragment-output color indices.  The reconstructed Catalina implementation
+# embeds LLVM 5's TypeID (0x12), but this stack intentionally supplies LLVM 7,
+# where ConstantInt is 0x0d.  Big Sur's 31001 MTLCompiler has the same routine
+# and operands with exactly this one-byte discriminator change.
+first_constant_int_check=$((0x3b9c5))
+second_constant_int_check=$((0x3b9fb))
+first_actual=$(dd if="$mtl" bs=1 skip=$first_constant_int_check count=4 \
+    2>/dev/null | xxd -p)
+second_actual=$(dd if="$mtl" bs=1 skip=$second_constant_int_check count=4 \
+    2>/dev/null | xxd -p)
+[[ "$first_actual" == 807a1012 && "$second_actual" == 80791012 ]] || {
+    print -u2 "unexpected ConstantInt checks: $first_actual $second_actual"
+    exit 65
+}
+for constant_int_check_offset in \
+    $first_constant_int_check $second_constant_int_check; do
+    printf '\015' | dd of="$mtl" bs=1 \
+        seek=$((constant_int_check_offset + 3)) conv=notrunc 2>/dev/null
+done
+
+# Add the PVG compiler plugin to Catalina's fixed driver allowlist by replacing
+# an equal-sized obsolete Intel entry (three trailing NUL bytes preserve size).
+old_plugin='AppleIntelHD4000GraphicsMTLDriver.bundle/Contents/MacOS/libMTLIntelCompilerPlugin.dylib'
+new_plugin='AppleParavirtGPUMetal.bundle/Contents/Resources/libAppleParavirtCompilerPlugin.dylib'
+[[ $(LC_ALL=C grep -aFo "$old_plugin" "$mtl" | wc -l) -eq 1 ]]
+perl -0pi -e \
+    's{AppleIntelHD4000GraphicsMTLDriver\.bundle/Contents/MacOS/libMTLIntelCompilerPlugin\.dylib}{AppleParavirtGPUMetal.bundle/Contents/Resources/libAppleParavirtCompilerPlugin.dylib\x00\x00\x00}g' \
+    "$mtl"
+[[ $(LC_ALL=C grep -aFo "$new_plugin" "$mtl" | wc -l) -eq 1 ]]
+
+objects="$output/objects"
+mkdir -p "$objects"
+xcrun clang -arch x86_64 -mmacosx-version-min=10.15 -isysroot "$sdk" \
+    -c "$repo_root/compat/PVGLLVMCompat/PVGLLVMCompat.c" \
+    -o "$objects/PVGLLVMCompat-c.o"
+xcrun clang++ -arch x86_64 -std=c++11 -mmacosx-version-min=10.15 \
+    -isysroot "$sdk" -nostdinc++ -I "$cxx_headers" \
+    -c "$repo_root/compat/PVGLLVMCompat/PVGLLVMCompat.cpp" \
+    -o "$objects/PVGLLVMCompat-cpp.o"
+xcrun clang -arch x86_64 -mmacosx-version-min=10.15 -isysroot "$sdk" \
+    -c "$repo_root/compat/PVGLLVMCompat/PVGLLVMCompat.s" \
+    -o "$objects/PVGLLVMCompat-s.o"
+xcrun clang++ -arch x86_64 -mmacosx-version-min=10.15 -isysroot "$sdk" \
+    -dynamiclib "$objects/PVGLLVMCompat-c.o" \
+    "$objects/PVGLLVMCompat-cpp.o" "$objects/PVGLLVMCompat-s.o" \
+    -install_name \
+    /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/PVGLLVMCompat.dylib \
+    -Wl,-reexport_library,"$gpu_libraries/libLLVM.dylib" \
+    -o "$gpu_libraries/PVGLLVMCompat.dylib"
+
+xcrun clang++ -arch x86_64 -std=c++11 -mmacosx-version-min=10.15 \
+    -isysroot "$sdk" -nostdinc++ -I "$cxx_headers" \
+    -c "$repo_root/compat/PVGGPUCompilerCompat/PVGGPUCompilerCompat.cpp" \
+    -o "$objects/PVGGPUCompilerCompat-cpp.o"
+xcrun clang -arch x86_64 -mmacosx-version-min=10.15 -isysroot "$sdk" \
+    -c "$repo_root/compat/PVGGPUCompilerCompat/PVGGPUCompilerCompat.s" \
+    -o "$objects/PVGGPUCompilerCompat-s.o"
+xcrun clang++ -arch x86_64 -mmacosx-version-min=10.15 -isysroot "$sdk" \
+    -dynamiclib "$objects/PVGGPUCompilerCompat-cpp.o" \
+    "$objects/PVGGPUCompilerCompat-s.o" \
+    -install_name \
+    /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/PVGGPUCompilerCompat.dylib \
+    -Wl,-reexport_library,"$gpu_libraries/libGPUCompiler.dylib" \
+    -o "$gpu_libraries/PVGGPUCompilerCompat.dylib"
+
+for image in "$gpu_libraries"/lib*.dylib; do
+    xcrun vtool -set-build-version macos 10.15 11.7 -replace \
+        -output "$image.patched" "$image"
+    mv "$image.patched" "$image"
+done
+
+chmod 755 "$service" "$mtl" "$mtl_libraries"/*.dylib "$gpu_libraries"/*.dylib
+python3 "$repo_root/scripts/sign-donor.py" "$catalina_service" "$service"
+python3 "$repo_root/scripts/sign-donor.py" "$catalina_service_bundle" "$output/System/Library/$xpc_rel" --deep
+for image in "$mtl" "$mtl_libraries"/*.dylib "$gpu_libraries"/*.dylib; do
+    codesign --force --sign - --preserve-metadata=entitlements "$image"
+    dyld_info -objc "$image" >/dev/null
+done
+codesign --verify --deep --strict "$output/System/Library/$xpc_rel"
+find "$objects" -depth -delete
+printf '%s\n' "$output"

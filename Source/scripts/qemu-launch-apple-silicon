@@ -1,0 +1,72 @@
+#!/bin/zsh
+# Launch the existing Apple-silicon test overlays; no disk conversion/install.
+set -euo pipefail
+root=${0:A:h:h}
+[[ $(uname -m) == arm64 ]] || { print -u2 'This launcher requires an Apple silicon host.'; exit 64; }
+case ${1:-} in
+    catalina) leaf=Catalina-native-arm-v1; port=22116; firmware=opencore-catalina-autoboot ;;
+    mojave) leaf=Mojave-native-oop-v1; port=22114; firmware=opencore-mojave-arm-autoboot ;;
+    bigsur) leaf=BigSur-native-oop-v1; port=22111; firmware=opencore-bigsur-arm-autoboot ;;
+    *) print -u2 'usage: zsh scripts/qemu-launch-apple-silicon catalina|mojave|bigsur'; exit 64 ;;
+esac
+slug=$1
+# Native TCG: TSO, lazy jump cache, physical-TLB retention and user dispatch.
+export PVG_QEMU_BINARY=${PVG_QEMU_BINARY:-$root/artifacts/host-arm64/qemu-arm64-alternate-lookup-v2}
+[[ -x $PVG_QEMU_BINARY ]] || {
+    print -u2 'Build with scripts/build-tcg-tso-candidate artifacts/host-arm64/qemu-arm64-alternate-lookup-v2'; exit 66
+}
+export PVG_TCG_TSO=${PVG_TCG_TSO:-1}
+export PVG_OOP_HELPER=${PVG_OOP_HELPER:-$root/artifacts/host-arm64/apple-gfx-helper-adaptive}
+export PVG_OOP_DONOR=${PVG_OOP_DONOR:-$root/artifacts/host-arm64/donor-v2/Out/System/Library/Frameworks/ParavirtualizedGraphics.framework/Versions/A/ParavirtualizedGraphics}
+export PVG_QEMU_DISK=${PVG_QEMU_DISK:-${PVG_VM_STORAGE:?Set PVG_VM_STORAGE to the folder holding prepared qcow2 disks, or PVG_QEMU_DISK}/$leaf.qcow2}
+export PVG_QEMU_VARS=${PVG_QEMU_VARS:-$root/artifacts/host-arm64/$slug-oop-VARS.fd}
+export PVG_QEMU_OPENCORE=${PVG_QEMU_OPENCORE:-$root/artifacts/qemu/$firmware/OpenCore.iso}
+export PVG_QEMU_SSH_PORT=${PVG_QEMU_SSH_PORT:-$port}
+export PVG_QEMU_QMP_SOCKET=${PVG_QEMU_QMP_SOCKET:-/tmp/pvg-$slug-oop-qmp.sock}
+export PVG_QEMU_SERIAL_LOG=${PVG_QEMU_SERIAL_LOG:-$root/artifacts/host-arm64/$slug-oop-serial.log}
+export PVG_QEMU_ACCEL=tcg
+# Local QEMU experiment: O(1) jump-cache invalidation; keep mandatory TLB flushes.
+# Set to 0 for the eager-clearing comparison path.
+export PVG_TCG_LAZY_JMP_CACHE=${PVG_TCG_LAZY_JMP_CACHE:-1}
+# Qualified with four-core Mojave; both preserve architectural invalidation.
+export PVG_TCG_KEEP_PHYS_TLB=${PVG_TCG_KEEP_PHYS_TLB:-1}
+export PVG_TCG_INLINE_JMP_CACHE=${PVG_TCG_INLINE_JMP_CACHE:-1}
+export PVG_TCG_LOOKUP_DIAGNOSTICS=${PVG_TCG_LOOKUP_DIAGNOSTICS:-0}
+# Qualified architectural context retention on four-core Mojave. Leave other
+# releases opt-in until their stock-kernel PCID paths are runtime-qualified.
+if [[ $slug == mojave ]]; then
+    # Same-boot repeated Finder window ordering improves about 7%; preserve
+    # the original generated fast path and architectural invalidation checks.
+    export PVG_TCG_ALTERNATE_LOOKUP=${PVG_TCG_ALTERNATE_LOOKUP:-1}
+    export PVG_TCG_PCID_CONTEXTS=${PVG_TCG_PCID_CONTEXTS:-1}
+    # Context-tagged dispatch retention: qualified same-boot window/IPC gain.
+    export PVG_TCG_CONTEXT_JMP_CACHE=${PVG_TCG_CONTEXT_JMP_CACHE:-1}
+    export PVG_TCG_FAST_PTW=${PVG_TCG_FAST_PTW:-1}
+    # Keep 4096 translations only in USER64 (logical MMU slot 2), not all
+    # 22 slots. Avoids measured adaptive-shrink/repopulation cliffs.
+    # FLOOR_BITS=6 restores the original minimum; MASK=0 disables selection.
+    export PVG_TCG_TLB_FLOOR_BITS=${PVG_TCG_TLB_FLOOR_BITS:-12}
+    export PVG_TCG_TLB_FLOOR_MASK=${PVG_TCG_TLB_FLOOR_MASK:-4}
+fi
+# Tracked native FPSR experiment remains opt-in: no clear measured gain.
+export PVG_TCG_NATIVE_FP_FLAGS=${PVG_TCG_NATIVE_FP_FLAGS:-0}
+# Guarded packed SSE and integer-derived precision flags; qualified on Mojave.
+export PVG_TCG_NATIVE_PACKED_FP=${PVG_TCG_NATIVE_PACKED_FP:-1}
+export PVG_TCG_NATIVE_EXACT_FP=${PVG_TCG_NATIVE_EXACT_FP:-1}
+export PVG_QEMU_CPUS=${PVG_QEMU_CPUS:-4}
+export PVG_QEMU_MEMORY_MB=${PVG_QEMU_MEMORY_MB:-4096}
+export PVG_OOP_SCALE_FACTOR=${PVG_OOP_SCALE_FACTOR:-2}
+export PVG_PRESERVE_IOSURFACE=${PVG_PRESERVE_IOSURFACE:-1}
+export PVG_SHADOW_COALESCE=${PVG_SHADOW_COALESCE:-1}
+export PVG_SHADOW_MAX_CHUNK=${PVG_SHADOW_MAX_CHUNK:-1048576}
+export PVG_SHADOW_TEXTURE_PAGING=${PVG_SHADOW_TEXTURE_PAGING:-1}
+# Duplex HDA through SDL; microphone capture requires host privacy permission.
+export PVG_QEMU_AUDIO=${PVG_QEMU_AUDIO:-1}
+if [[ $slug == mojave ]]; then
+    export PVG_HOST_AIR_LLVM=${PVG_HOST_AIR_LLVM:-$root/artifacts/mojave/reference/payload/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/libLLVM.dylib}
+    [[ -f $PVG_HOST_AIR_LLVM ]] || { print -u2 'Missing LLVM31001 for Mojave host shader repair.'; exit 66; }
+    nm -g "$PVG_OOP_HELPER" | awk '/ T _PVGHostRepairLibrary$/ { found=1 } END { exit !found }' || {
+        print -u2 'Rebuild the helper with scripts/build-pvg-oop-helper (PVG_OOP_HELPER_OUTPUT selects its path).'; exit 66
+    }
+fi
+exec zsh "$root/scripts/qemu-launch" "$slug"

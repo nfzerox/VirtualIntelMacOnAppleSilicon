@@ -1,0 +1,8 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+out=${1:?usage: build-guest-image-patch NEW_OUTPUT}
+[[ ! -e $out ]] || { print -u2 'Output exists; choose a new staging path.'; exit 73; }
+xcrun clang -arch x86_64 -mmacosx-version-min=10.14 -fobjc-arc -O2 -Wall -Wextra \
+    -framework Foundation "$root/tools/guest-image-patch.m" -o "$out"
+codesign --force --sign - "$out"

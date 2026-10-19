@@ -1,0 +1,23 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 50;
+	objects = {
+		200000000000000000000001 = {isa = PBXBuildFile; fileRef = 200000000000000000000002; };
+		200000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PVGOpenGLProbe.cpp; sourceTree = "<group>"; };
+		200000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		200000000000000000000004 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PVGOpenGLProbe.kext; sourceTree = BUILT_PRODUCTS_DIR; };
+		200000000000000000000005 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		200000000000000000000006 = {isa = PBXGroup; children = (200000000000000000000002, 200000000000000000000003, 200000000000000000000007); sourceTree = "<group>"; };
+		200000000000000000000007 = {isa = PBXGroup; children = (200000000000000000000004); name = Products; sourceTree = "<group>"; };
+		200000000000000000000008 = {isa = PBXNativeTarget; buildConfigurationList = 200000000000000000000009; buildPhases = (20000000000000000000000A, 200000000000000000000005); buildRules = (); dependencies = (); name = PVGOpenGLProbe; productName = PVGOpenGLProbe; productReference = 200000000000000000000004; productType = "com.apple.product-type.kernel-extension"; };
+		20000000000000000000000A = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (200000000000000000000001); runOnlyForDeploymentPostprocessing = 0; };
+		20000000000000000000000B = {isa = PBXProject; attributes = {LastUpgradeCheck = 1170; ORGANIZATIONNAME = "Virtual Intel Mac";}; buildConfigurationList = 20000000000000000000000C; compatibilityVersion = "Xcode 3.2"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = 200000000000000000000006; productRefGroup = 200000000000000000000007; projectDirPath = ""; projectRoot = ""; targets = (200000000000000000000008); };
+		20000000000000000000000D = {isa = XCBuildConfiguration; buildSettings = {ARCHS = x86_64; CLANG_CXX_LANGUAGE_STANDARD = "gnu++14"; CODE_SIGNING_ALLOWED = NO; GCC_OPTIMIZATION_LEVEL = 2; MACOSX_DEPLOYMENT_TARGET = 10.15; ONLY_ACTIVE_ARCH = YES; SDKROOT = macosx; }; name = Release; };
+		20000000000000000000000E = {isa = XCBuildConfiguration; buildSettings = {ARCHS = x86_64; CLANG_CXX_LANGUAGE_STANDARD = "gnu++14"; CLANG_ENABLE_OBJC_ARC = NO; CODE_SIGNING_ALLOWED = NO; CURRENT_PROJECT_VERSION = 1.0.0; DEAD_CODE_STRIPPING = NO; GCC_ENABLE_CPP_EXCEPTIONS = NO; GCC_ENABLE_CPP_RTTI = NO; GCC_PREPROCESSOR_DEFINITIONS = "$(inherited) KERNEL KERNEL_PRIVATE DRIVER_PRIVATE APPLE NeXT"; INFOPLIST_FILE = Info.plist; MACOSX_DEPLOYMENT_TARGET = 10.15; MODULE_NAME = local.pvg.OpenGLProbe; MODULE_START = 0; MODULE_STOP = 0; MODULE_VERSION = 1.0.0; ONLY_ACTIVE_ARCH = YES; PRODUCT_BUNDLE_IDENTIFIER = local.pvg.OpenGLProbe; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = macosx; SUPPORTED_PLATFORMS = macosx; }; name = Release; };
+		200000000000000000000009 = {isa = XCConfigurationList; buildConfigurations = (20000000000000000000000E); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		20000000000000000000000C = {isa = XCConfigurationList; buildConfigurations = (20000000000000000000000D); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+	};
+	rootObject = 20000000000000000000000B;
+}

@@ -1,0 +1,7 @@
+breakpoint set --name CoreDisplay_Display_PresentDisplaySurface
+breakpoint set --name CoreDisplay_Display_PresentDisplaySurfaceWithTimestamp
+continue
+thread backtrace --count 20
+register read rdi rsi rdx rcx r8 r9
+process detach
+quit

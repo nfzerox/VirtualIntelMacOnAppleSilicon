@@ -1,0 +1,11 @@
+breakpoint set --name IOAccelDisplayPipeTransactionEnd
+continue
+expression -l c -- unsigned long long $pvg_timestamp = *(unsigned long long *)($rdi + 0x48)
+expression -l c -- unsigned long long $pvg_now = ((unsigned long long (*)(void))mach_absolute_time)()
+expression -l c -- long long $pvg_delta = (long long)($pvg_timestamp - $pvg_now)
+expression -l c -- $pvg_timestamp
+expression -l c -- $pvg_now
+expression -l c -- $pvg_delta
+memory read --format x --size 8 --count 12 $rdi+0x40
+process detach
+quit

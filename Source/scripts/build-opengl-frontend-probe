@@ -1,0 +1,34 @@
+#!/bin/zsh
+# Research-only coherent loose-file Catalina GL frontend. No system install.
+set -euo pipefail
+output=${1:?usage: build-opengl-frontend-probe NEW_DIRECTORY GUEST_DIRECTORY}
+guest=${2:?guest absolute directory required}
+donor=${PVG_CATALINA_GL_DONOR:-/Volumes/Catalina/System/Library/Frameworks/OpenGL.framework}
+[[ ! -e $output && $guest == /* && -f $donor/Versions/A/OpenGL ]] || exit 65
+mkdir -p "$output"
+cp -RX "$donor" "$output/OpenGL.framework"
+python3 - "$output" "$guest" <<'PY'
+import pathlib, subprocess, sys
+root=pathlib.Path(sys.argv[1]).resolve()
+guest=sys.argv[2].rstrip('/')
+prefix='/System/Library/Frameworks/OpenGL.framework/'
+images=[]
+for path in root.rglob('*'):
+    if path.is_symlink() or not path.is_file(): continue
+    if 'Mach-O' not in subprocess.check_output(['file','-b',str(path)],text=True): continue
+    images.append(path)
+    subprocess.run(['codesign','--remove-signature',str(path)],check=False,capture_output=True)
+    listing=subprocess.check_output(['otool','-L',str(path)],text=True)
+    for line in listing.splitlines()[1:]:
+        dependency=line.strip().split(' (',1)[0]
+        if dependency.startswith(prefix):
+            replacement=guest+'/OpenGL.framework/'+dependency[len(prefix):]
+            subprocess.run(['install_name_tool','-change',dependency,replacement,str(path)],check=True)
+    # LC_ID_DYLIB is separate from dependency load commands.
+    identity=subprocess.check_output(['otool','-D',str(path)],text=True).splitlines()
+    if len(identity)>1:
+        subprocess.run(['install_name_tool','-id',guest+'/'+str(path.relative_to(root)),str(path)],check=True)
+for path in images:
+    subprocess.run(['codesign','-f','-s','-',str(path)],check=True)
+print('Prepared',len(images),'images; set GL_RESOURCES='+guest+'/OpenGL.framework/Versions/A/Resources')
+PY

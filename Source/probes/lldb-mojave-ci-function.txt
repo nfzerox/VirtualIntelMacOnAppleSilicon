@@ -1,0 +1,11 @@
+breakpoint set -n pvgExecutableFunction
+run solid gpu
+expr -- id $fn = (id)$rsi
+expr -- unsigned char *$fd = (unsigned char *)[(id)$fn functionData]
+expr -- unsigned char *$ld = (unsigned char *)[(id)$fn libraryData]
+memory read -f x -s 8 -c 12 $fd
+memory read -f x -s 8 -c 12 $ld
+expr -- unsigned char *$mapped = *(unsigned char **)($ld + 0x48)
+expr -- unsigned long $length = *(unsigned long *)($ld + 0x50)
+memory read --force --binary --outfile /Users/Shared/pvg-probes/ci-solid-library.bin $mapped ($mapped+$length)
+process kill

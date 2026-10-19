@@ -1,0 +1,7 @@
+breakpoint set -n "-[CIContext drawImage:inRect:fromRect:]"
+continue
+expression -- id $image = (id)$rdx
+expression -- void *$capture = (void *)dlopen("/Users/Shared/pvg-probes/aperture-ci-capture.dylib", 2)
+expression -- ((void(*)(id))dlsym($capture,"VIMCaptureCIImage"))($image)
+detach
+quit

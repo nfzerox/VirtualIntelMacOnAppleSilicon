@@ -1,0 +1,19 @@
+#!/bin/bash
+# Reversible diagnostic: grant only the observed CoreDisplay notification lookup.
+set -euo pipefail
+test "$(id -u)" = 0
+profile=/System/Library/Frameworks/WebKit.framework/Versions/A/Resources/com.apple.WebProcess.sb
+backup=${PVG_BACKUP_ROOT:-$HOME/PVGBackups}/webprocess-before-coredisplay.sb
+mount -uw /
+mkdir -p ${PVG_BACKUP_ROOT:-$HOME/PVGBackups}
+if ! test -e "$backup"; then cp -p "$profile" "$backup"; fi
+/usr/bin/python - "$profile" <<'PY'
+import sys
+p = sys.argv[1]
+data = open(p).read()
+rule = '\n; PVG compatibility: CoreDisplay notifications only\n(allow mach-lookup (global-name "com.apple.CoreDisplay.Notification"))\n'
+if rule not in data:
+    with open(p, 'a') as f:
+        f.write(rule)
+PY
+echo "Installed diagnostic rule; restart Safari to test. Backup: $backup"

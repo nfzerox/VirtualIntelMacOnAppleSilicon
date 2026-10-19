@@ -1,0 +1,17 @@
+USBREDIRHOST_0.8.0 {
+global:
+    usbredirhost_check_device_filter;
+    usbredirhost_close;
+    usbredirhost_free_write_buffer;
+    usbredirhost_get_guest_filter;
+    usbredirhost_has_data_to_write;
+    usbredirhost_open;
+    usbredirhost_open_full;
+    usbredirhost_read_guest_data;
+    usbredirhost_set_buffered_output_size_cb;
+    usbredirhost_set_device;
+    usbredirhost_write_guest_data;
+local:
+*;
+};
+# .... define new API here using predicted next version number ....

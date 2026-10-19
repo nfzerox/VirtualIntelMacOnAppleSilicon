@@ -1,0 +1,12 @@
+{
+  "source": "Virtual Mac on iPad development sources (https://github.com/nfzerox/VirtualMacOniPad)",
+  "commit": "434e0b5864b34e7a0f3ec51ea1d84ac819e19bc4",
+  "paths": [
+    "VirtualMac/vz/uncache.py",
+    "VirtualMac/vz/ipsw_patches/dyld_a2sb.go"
+  ],
+  "purpose": "ARM shared-cache reconstruction reference and tooling; no renderer implementation",
+  "local_changes": [
+    "Map the private constant-string class alias to the exported CF constant-string class reference during import reconstruction"
+  ]
+}

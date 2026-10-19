@@ -1,0 +1,14 @@
+#include "ld_base.xcconfig"
+#include "unittests_base.xcconfig"
+
+GCC_PREPROCESSOR_DEFINITIONS = $(inherited) BUILDING_UNIT_TESTS=1 BUILDING_LD_UNIT_TESTS=1
+
+LD_CLIENT_NAME=ld
+
+WARNING_CFLAGS = $(inherited) -Wno-unused-function
+
+LD_RUNPATH_SEARCH_PATHS = @loader_path/../Frameworks
+
+// TODO: Clean these up.  They were moved from the build settings
+COPY_PHASE_STRIP = NO
+PRODUCT_BUNDLE_IDENTIFIER = ads.UnitTests-ld

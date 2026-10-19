@@ -1,0 +1,11 @@
+settings set auto-confirm true
+process attach --name WindowServer
+expression -l c -- void *$pvg_notify_setup = ((void *(*)(void *, const char *))dlsym)((void *)-2, "IOAccelDisplayPipeSetTransactionNotifyPort")
+expression -l c -- void *$pvg_notify_callback = (void *)((char *)$pvg_notify_setup + 0x114)
+memory read --force --size 1 --format x --count 64 `$pvg_notify_callback`
+breakpoint set --address `$pvg_notify_callback`
+process continue
+register read rdi rdx rcx
+memory read --force --size 8 --format x --count 8 `$rdx`
+process detach
+quit

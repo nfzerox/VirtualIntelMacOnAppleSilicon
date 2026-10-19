@@ -1,0 +1,7 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+probe_dir=$(mktemp -d /tmp/vim-linkedit-tests.XXXXXX)
+xcrun clang -fobjc-arc -Wno-deprecated-declarations -framework Foundation \
+    "$root/probes/guest-linkedit-tests.m" -o "$probe_dir/test"
+"$probe_dir/test"

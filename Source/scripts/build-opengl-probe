@@ -1,0 +1,23 @@
+#!/bin/zsh
+set -euo pipefail
+repo=${0:A:h:h}
+sdk="$repo/resources/xcode/XcodeMojave.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+kernel="$sdk/System/Library/Frameworks/Kernel.framework"
+# Xcode 27's build engine rejects pre-12 deployment targets. Use the bundled
+# target-era toolchain directly, including its kernel startup archive.
+toolchain="$repo/resources/xcode/XcodeMojave.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+out=${1:-"$repo/artifacts/qemu/opengl-probe"}
+product="$out/PVGOpenGLProbe.kext/Contents"
+mkdir -p "$product/MacOS"
+flags=(-arch x86_64 -mmacosx-version-min=10.14 -isysroot "$sdk"
+    -nostdinc -I"$kernel/PrivateHeaders" -I"$kernel/Headers"
+    -DKERNEL -DKERNEL_PRIVATE -DDRIVER_PRIVATE -DAPPLE -DNeXT
+    -mkernel -fno-builtin -fno-common -O2)
+"$toolchain/clang++" $flags -std=gnu++14 -fno-exceptions -fno-rtti -fapple-kext \
+    -c "$repo/compat/PVGOpenGLProbe/PVGOpenGLProbe.cpp" -o "$out/driver.o"
+"$toolchain/clang" $flags -c "$repo/compat/PVGOpenGLProbe/kmod_info.c" -o "$out/info.o"
+"$toolchain/ld" -arch x86_64 -kext -macosx_version_min 10.14 \
+    -o "$product/MacOS/PVGOpenGLProbe" "$out/driver.o" "$out/info.o" \
+    -L"$sdk/usr/lib" -lkmod -lkmodc++
+cp "$repo/compat/PVGOpenGLProbe/Info.plist" "$product/Info.plist"
+codesign --force --sign - "$out/PVGOpenGLProbe.kext"

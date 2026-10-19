@@ -1,0 +1,10 @@
+--- a/libusb/os/darwin_usb.c
++++ b/libusb/os/darwin_usb.c
+@@ -2663,6 +2663,7 @@
+     return cancel_control_transfer(itransfer);
+   case LIBUSB_TRANSFER_TYPE_BULK:
+   case LIBUSB_TRANSFER_TYPE_INTERRUPT:
+   case LIBUSB_TRANSFER_TYPE_ISOCHRONOUS:
++  case LIBUSB_TRANSFER_TYPE_BULK_STREAM:
+     return darwin_abort_transfers (itransfer);
+   default:

@@ -1,0 +1,12 @@
+#!/bin/bash
+set -euo pipefail
+source_dir="$(cd "$(dirname "$0")/.." && pwd)"
+mkdir -p "$source_dir/Build/Probes"
+xcrun clang -fobjc-arc -fmodules -mmacosx-version-min=11.0 -arch arm64 -arch x86_64 \
+  -I "$source_dir/VirtualIntelMac" "$source_dir/probes/machine-configuration-tests.m" \
+  "$source_dir/VirtualIntelMac/VIMMachine.m" "$source_dir/VirtualIntelMac/VIMInstallerAssembly.m" \
+  "$source_dir/VirtualIntelMac/VIMFirmwareBoot.m" "$source_dir/VirtualIntelMac/VIMLibraryLocation.m" \
+  "$source_dir/VirtualIntelMac/VIMAlerts.m" \
+  "$source_dir/VirtualIntelMac/VIMNetworkDefaults.m" \
+  -framework Cocoa -o "$source_dir/Build/Probes/machine-configuration-tests"
+"$source_dir/Build/Probes/machine-configuration-tests"

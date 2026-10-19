@@ -1,0 +1,12 @@
+#!/bin/zsh
+# Guest x86_64 plugin dependency; independent of the builder architecture.
+set -euo pipefail
+repo=${0:A:h:h}
+output=${1:?usage: build-bigsur-metal-compat NEW_DYLIB}
+[[ ! -e $output ]] || exit 73
+xcrun clang -O2 -arch x86_64 -mmacosx-version-min=11.0 -dynamiclib \
+    "$repo/compat/PVGOpenGLProbe/PVGBigSurMetalCompat.m" \
+    -framework Foundation -Wl,-reexport_framework,Metal \
+    -Wl,-reexport_framework,IOSurface -Wl,-undefined,dynamic_lookup \
+    -install_name @loader_path/PVGBigSurMetalCompat.dylib -o "$output"
+codesign -f -s - "$output"

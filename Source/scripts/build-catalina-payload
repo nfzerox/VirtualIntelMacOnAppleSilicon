@@ -1,0 +1,129 @@
+#!/bin/zsh
+set -euo pipefail
+
+repo_root=${0:A:h:h}
+output=${1:-"$repo_root/artifacts/build/catalina-pvg-payload-coherent"}
+serializer_build=${PVG_SERIALIZER_BUILD:-"$repo_root/artifacts/build/metalserializer"}
+plugin_build=${PVG_PLUGIN_BUILD:-"$repo_root/artifacts/build/metal-plugin-bitcode-membrane"}
+compiler_build=${PVG_COMPILER_BUILD:-"$repo_root/artifacts/build/compiler-stack-bitcode-membrane"}
+kernel_build=${PVG_KERNEL_BUILD:-"$repo_root/artifacts/build/kernel-stack-coherent-iosurface-abi"}
+iographics_build=${PVG_IOGRAPHICS_BUILD:-"$repo_root/artifacts/build/iographics-585.2-catalina-coherent"}
+framebuffer_build=${PVG_FRAMEBUFFER_BUILD:-"$repo_root/artifacts/build/framebuffer-bootstrap"}
+abi_build="$repo_root/work/build/PVGIOSurfaceABI/Build/Products/Debug/PVGIOSurfaceABI.kext"
+lilu_build="$repo_root/vendor/source/Lilu/build/Debug/Lilu.kext"
+
+if [[ -e "$output" ]]; then
+    print -u2 "output already exists: $output"
+    exit 73
+fi
+
+if [[ ! -d "$serializer_build/MetalSerializer.framework" ]]; then
+    "$repo_root/scripts/build-metalserializer" "$serializer_build"
+fi
+serializer_wrapper="$serializer_build/MetalSerializer.framework/Versions/A/MetalSerializer"
+nm -gU "$serializer_wrapper" | grep -q '_PVGInstallMetalCompatPipelineHooks' || {
+    print -u2 "MetalSerializer wrapper predates the render-pipeline ABI adapter"
+    exit 66
+}
+strings -a "$serializer_wrapper" | grep -q 'built metallib' || {
+    print -u2 "MetalSerializer wrapper predates the AIR deployment adapter"
+    exit 66
+}
+strings -a "$serializer_wrapper" | grep -q \
+    'PVGMetalCompat-precise-access-and-async-conversion' || {
+    print -u2 "MetalSerializer wrapper predates precise access tracking and async conversion"
+    exit 66
+}
+plugin_bundle="$plugin_build/AppleParavirtGPUMetal.bundle"
+plugin_facade="$plugin_bundle/Contents/Resources/libAppleParavirtCompilerPlugin.dylib"
+plugin_real="$plugin_bundle/Contents/Resources/libAppleParavirtCompilerPluginReal.dylib"
+compiler_mtl="$compiler_build/System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3903/MTLCompiler"
+compiler_bridge="$compiler_build/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/PVGPluginGPUCompilerBridge.dylib"
+compiler_llvm="$compiler_build/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/libLLVM.dylib"
+
+if [[ ! -e "$plugin_build" ]]; then
+    "$repo_root/scripts/build-metal-plugin" "$plugin_build"
+fi
+if [[ ! -e "$compiler_build" ]]; then
+    "$repo_root/scripts/build-compiler-stack" "$compiler_build"
+fi
+for required in "$plugin_bundle" "$plugin_facade" "$plugin_real" \
+    "$compiler_mtl" "$compiler_bridge" "$compiler_llvm"; do
+    [[ -e "$required" ]] || {
+        print -u2 "incomplete or obsolete payload dependency: $required"
+        print -u2 "remove or replace the corresponding build directory, then retry"
+        exit 66
+    }
+done
+if [[ ! -d "$abi_build" || ! -d "$lilu_build" ]]; then
+    "$repo_root/scripts/build-iosurface-abi"
+fi
+if [[ ! -d "$kernel_build/IOSurface.kext" ]]; then
+    "$repo_root/scripts/build-kernel-stack"
+fi
+if [[ ! -d "$iographics_build/IOGraphicsFamily.kext" ]]; then
+    "$repo_root/scripts/build-iographics" "$iographics_build"
+fi
+if [[ ! -d "$framebuffer_build/PVGFramebufferBootstrap.kext" ]]; then
+    "$repo_root/scripts/build-framebuffer-bootstrap" "$framebuffer_build"
+fi
+
+mkdir -p \
+    "$output/System/Library/Extensions" \
+    "$output/System/Library/Frameworks/Metal.framework/Versions/A/Resources" \
+    "$output/System/Library/Frameworks/Metal.framework/Versions/A/XPCServices" \
+    "$output/System/Library/PrivateFrameworks" \
+    "$output/Library/Extensions"
+
+ditto "$kernel_build/IOAcceleratorFamily2.kext" \
+    "$output/System/Library/Extensions/IOAcceleratorFamily2.kext"
+ditto "$kernel_build/IOSurface.kext" \
+    "$output/System/Library/Extensions/IOSurface.kext"
+ditto "$iographics_build/IOGraphicsFamily.kext" \
+    "$output/System/Library/Extensions/IOGraphicsFamily.kext"
+ditto "$kernel_build/AppleParavirtGPU.kext" \
+    "$output/System/Library/Extensions/AppleParavirtGPU.kext"
+ditto "$kernel_build/PVGKernelCompat.kext" \
+    "$output/Library/Extensions/PVGKernelCompat.kext"
+ditto "$lilu_build" \
+    "$output/Library/Extensions/Lilu.kext"
+ditto "$abi_build" \
+    "$output/Library/Extensions/PVGIOSurfaceABI.kext"
+ditto "$framebuffer_build/PVGFramebufferBootstrap.kext" \
+    "$output/Library/Extensions/PVGFramebufferBootstrap.kext"
+ditto "$plugin_bundle" \
+    "$output/System/Library/Extensions/AppleParavirtGPUMetal.bundle"
+ditto "$serializer_build/MetalSerializer.framework" \
+    "$output/System/Library/PrivateFrameworks/MetalSerializer.framework"
+ditto "$compiler_build/System/Library/Frameworks/Metal.framework/Versions/A/XPCServices/MTLCompilerService.xpc" \
+    "$output/System/Library/Frameworks/Metal.framework/Versions/A/XPCServices/MTLCompilerService.xpc"
+ditto "$compiler_build/System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3903" \
+    "$output/System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3903"
+ditto "$compiler_build/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001" \
+    "$output/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001"
+for resource in MTLRaytracingRuntime.rtlib MTLBVHBuilder.metallib MTLECBE.metallib; do
+    cp -p "$compiler_build/System/Library/Frameworks/Metal.framework/Versions/A/Resources/$resource" \
+        "$output/System/Library/Frameworks/Metal.framework/Versions/A/Resources/$resource"
+done
+
+(
+    cd "$output"
+    find . -type f ! -name manifest.sha256 -print0 | LC_ALL=C sort -z | \
+        xargs -0 shasum -a 256 > manifest.sha256
+)
+
+codesign --verify --strict --verbose=2 \
+    "$output/System/Library/Extensions/IOAcceleratorFamily2.kext" \
+    "$output/System/Library/Extensions/IOSurface.kext" \
+    "$output/System/Library/Extensions/IOGraphicsFamily.kext" \
+    "$output/System/Library/Extensions/AppleParavirtGPU.kext" \
+    "$output/Library/Extensions/PVGKernelCompat.kext" \
+    "$output/Library/Extensions/Lilu.kext" \
+    "$output/Library/Extensions/PVGIOSurfaceABI.kext" \
+    "$output/Library/Extensions/PVGFramebufferBootstrap.kext" \
+    "$output/System/Library/Extensions/AppleParavirtGPUMetal.bundle" \
+    "$output/System/Library/PrivateFrameworks/MetalSerializer.framework" \
+    "$output/System/Library/Frameworks/Metal.framework/Versions/A/XPCServices/MTLCompilerService.xpc" \
+    "$output/System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3903/MTLCompiler" \
+    "$output/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/"*.dylib
+printf '%s\n' "$output"

@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+
+    <!-- Variables -->
+    <?define Version=@PACKAGE_VERSION@?>
+    <?define Arch="@WIXL_ARCH@"?>
+    <?if $(var.Arch)="x64"?>
+        <?define GLIB_ARCH="win64"?>
+        <?define ArchString="64-bit"?>
+        <?define ArchProgramFilesFolder="ProgramFiles64Folder"?>
+        <?define Win64="yes"?>
+    <?else?>
+        <?define GLIB_ARCH="win32"?>
+        <?define ArchString="32-bit"?>
+        <?define ArchProgramFilesFolder="ProgramFilesFolder"?>
+        <?define Win64="no"?>
+    <?endif?>
+    <?define UpgradeCode="7CA4ECFF-299F-4AAF-BFF9-24F8B8F10BAC"?>
+
+    <!-- Dependencies -->
+    <?require libusbx.wxi?>
+    <?require glib2.wxi?>
+
+    <Product
+        Id='C773C459-1A94-44F4-9C1F-B9766BE0EDE7'
+        Name="usbredirect $(var.Version) ($(var.ArchString))"
+        Manufacturer="$(env.MANUFACTURER)"
+        Version="$(var.Version)"
+        UpgradeCode="$(var.UpgradeCode)"
+        Language="1033">
+
+        <Package
+            Comments='usbredirect binary from usbredir library'
+            InstallerVersion="200"
+            Compressed="yes"
+            InstallScope="perMachine"
+            Manufacturer="$(env.MANUFACTURER)"/>
+
+        <Media Id="1" Cabinet="cabinet.cab" EmbedCab="yes"/>
+
+        <Property Id="ARPHELPLINK" Value="https://gitlab.freedesktop.org/spice/usbredir/"/>
+        <Property Id="ARPNOMODIFY" Value="1"/>
+        <Property Id="ARPNOREPAIR" Value="1"/>
+        <Upgrade Id="$(var.UpgradeCode)">
+            <UpgradeVersion
+                Minimum="$(var.Version)"
+                OnlyDetect="yes"
+                Property="NEWERVERSIONDETECTED"/>
+            <UpgradeVersion
+                Minimum="0.0.0"
+                Maximum="$(var.Version)"
+                IncludeMinimum="yes"
+                IncludeMaximum="no"
+                Property="OLDERVERSIONBEINGUPGRADED"/>
+        </Upgrade>
+        <Condition Message="A more recent version of usbredirect is already installed.">NOT NEWERVERSIONDETECTED</Condition>
+
+        <Directory Id='TARGETDIR' Name='SourceDir'>
+            <Directory Id="$(var.ArchProgramFilesFolder)">
+                <Directory Id='INSTALLDIR' Name='usbredirect'>
+                </Directory>
+            </Directory>
+        </Directory>
+
+        <Feature Id='Complete' Level='1'>
+            <ComponentGroupRef Id="CG.libusbx"/>
+            <ComponentGroupRef Id="CG.glib2"/>
+            <ComponentGroupRef Id="CG.usbredirect"/>
+        </Feature>
+    </Product>
+</Wix>

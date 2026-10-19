@@ -1,0 +1,121 @@
+#!/bin/zsh
+set -euo pipefail
+repo=${0:A:h:h}
+(( $# == 2 )) || { print -u2 'usage: pvg-stage-guest guest-root staging-payload'; exit 64; }
+guest=${1:A}
+payload=${2:A}
+[[ $payload != / && $payload != $guest ]] || exit 64
+source "$repo/scripts/pvg-platform"
+version=$(/usr/libexec/PlistBuddy -c 'Print :ProductVersion' "$guest/System/Library/CoreServices/SystemVersion.plist")
+pvg_platform "$version"
+patch_tool="$repo/prebuilt/tools/guest-image-patch"
+[[ -x $patch_tool ]] || { print -u2 'Missing bundled native guest-image-patch tool'; exit 69; }
+macho_tool="$repo/prebuilt/tools/guest-macho"
+# Native patcher never overwrites. Publish its checked result into the payload
+# only after success; the guest source and existing staged output stay intact
+# on a validation failure. The outer installer owns the system transaction.
+patch_native() {
+    local kind=$1 input=$2 output=$3 temporary
+    temporary=$(mktemp -d "${output:h}/.pvg-image.XXXXXX")
+    if "$patch_tool" "$kind" "$input" "$temporary/image"; then
+        mv -f "$temporary/image" "$output"
+        rmdir "$temporary"
+    else
+        print -u2 "Native patch rejected; diagnostic staging retained at $temporary"
+        return 65
+    fi
+}
+if [[ $pvg_target == 10.14 ]]; then
+    [[ -x $macho_tool ]] || { print -u2 'Missing bundled native guest-macho tool'; exit 69; }
+fi
+core=/System/Library/Frameworks/CoreDisplay.framework/Versions/A/CoreDisplay
+compiler=/System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3902/MTLCompiler
+output_compiler=/System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3903/MTLCompiler
+service=/System/Library/Frameworks/Metal.framework/Versions/A/XPCServices/MTLCompilerService.xpc
+for file in "$core" "$compiler" "$service/Contents/MacOS/MTLCompilerService"; do
+    [[ -f "$guest$file" ]] || { print -u2 "Missing guest file: $file"; exit 66; }
+done
+mkdir -p "$payload${core:h}" "$payload${output_compiler:h}" "$payload${service:h}"
+if [[ $pvg_target == 10.14 ]]; then
+    native=$(mktemp -d /private/var/tmp/pvg-native-mojave.XXXXXX)
+    for app in Aperture iPhoto; do
+        policy=/Library/Preferences/com.apple.$app.plist
+        mkdir -p "$payload${policy:h}"
+        "$repo/prebuilt/tools/guest-prepare" --aperture-policy "$guest$policy" "$native/$app.plist"
+        cp "$native/$app.plist" "$payload$policy"
+    done
+    vpa=/System/Library/PrivateFrameworks/AppleVPA.framework/Versions/A/Resources/Info.plist
+    mkdir -p "$payload${vpa:h}"
+    "$repo/prebuilt/tools/guest-prepare" --vpa "$guest$vpa" "$native/vpa.plist"
+    cp "$native/vpa.plist" "$payload$vpa"
+    patch_native mojave-coredisplay "$guest$core" "$payload$core"
+    # Pre-Big-Sur has loose images. Always use THIS guest's SkyLight, never a
+    # reference-build copy or cache extraction. Unknown layouts fail closed.
+    sky=/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight
+    [[ -s "$guest$sky" ]] || { print -u2 'Missing native on-disk SkyLight'; exit 66; }
+    mkdir -p "$payload${sky:h}"
+    mkdir -p "$payload/usr/lib"
+    cp "$repo/prebuilt/mojave/PVGGLIOKit.dylib" "$payload/usr/lib/PVGGLIOKit.dylib"
+    patch_native mojave-skylight "$guest$sky" "$payload$sky"
+    codesign --force --sign - --preserve-metadata=entitlements "$payload$sky"
+    codesign --verify --strict "$payload$sky"
+    # The new client is 64-bit, but stock 32-bit GL/CoreDisplay still loads
+    # Mojave's original IOAccelerator. Never drop its i386 slice.
+    ioaccel=/System/Library/PrivateFrameworks/IOAccelerator.framework/Versions/A/IOAccelerator
+    "$macho_tool" replace-x86_64 \
+        "$guest$ioaccel" "$payload$ioaccel" "$native/IOAccelerator"
+    cp "$native/IOAccelerator" "$payload$ioaccel"
+    codesign --force --sign - --preserve-metadata=entitlements "$payload$ioaccel"
+    codesign --verify --strict "$payload$ioaccel"
+else
+    patch_native coredisplay "$guest$core" "$payload$core"
+fi
+compiler_input="$guest$compiler"
+service_input="$guest$service/Contents/MacOS/MTLCompilerService"
+if [[ $pvg_target == 10.14 ]]; then
+    for kind in compiler service; do
+        variable=${kind}_input
+        input=${(P)variable}
+        "$macho_tool" thin "$input" "$native/$kind"
+    done
+    compiler_input="$native/compiler"
+    service_input="$native/service"
+fi
+# Preserve this guest's compiler resources on both supported backport releases;
+# the app payload intentionally carries no reference-build compiler directory.
+if [[ -e "$payload${output_compiler:h}" ]]; then
+    mv "$payload${output_compiler:h}" "$payload${output_compiler:h}.reference-$$"
+fi
+mkdir -p "$payload${output_compiler:h}"
+cp -R "$guest${compiler:h}/." "$payload${output_compiler:h}/"
+patch_native compiler "$compiler_input" "$payload$output_compiler"
+# cp materializes compressed source files without reproducing restricted
+# directory flags from a mounted Apple system image in the staging tree.
+if [[ -e "$payload$service" ]]; then
+    mv "$payload$service" "$payload$service.reference-$$"
+fi
+mkdir -p "$payload$service"
+cp -R "$guest$service/Contents" "$payload$service/"
+patch_native service \
+    "$service_input" "$payload$service/Contents/MacOS/MTLCompilerService"
+# These are native on-disk images, not dsce output. Never re-sign donor images in Catalina.
+codesign --force --sign - --preserve-metadata=entitlements "$payload$core" "$payload$output_compiler"
+codesign --force --deep --sign - --preserve-metadata=entitlements "$payload$service"
+codesign --verify --strict "$payload$core" "$payload$output_compiler"
+codesign --verify --deep --strict "$payload$service"
+if [[ $pvg_target == 10.14 ]]; then
+    gl=/System/Library/Frameworks/OpenGL.framework
+    # Refresh EVERY native 32-bit component from this guest, not a reference
+    # build. Recognize old routing installations and recover their saved entry.
+    "$macho_tool" stage-opengl "$guest$gl" "$payload$gl" \
+        "$guest/System/Library/Frameworks/PVGGL32.dylib" "$guest/Library/PVG/OpenGL32.dylib" > "$native/gl-sign-list"
+    while IFS= read -r image; do
+        if [[ $image == */OpenGL.framework/Versions/A/Libraries/CVMServer ]]; then
+            codesign --force --sign - --preserve-metadata=entitlements --entitlements "$repo/support/CVMServer.entitlements.plist" "$image"
+        else
+            codesign --force --sign - --preserve-metadata=entitlements "$image"
+        fi
+        codesign --verify --strict "$image"
+    done < "$native/gl-sign-list"
+    codesign --force --sign - --preserve-metadata=entitlements "$payload$gl"
+fi

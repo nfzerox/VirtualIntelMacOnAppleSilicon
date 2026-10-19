@@ -1,0 +1,18 @@
+breakpoint set --name CoreDisplay_Display_PresentDisplaySurfaceWithTimestamp
+continue
+register read rdi rsi rdx rcx r8 r9
+expression -l c -- unsigned long long $pvg_supplied_timestamp = $rcx
+expression -l c -- unsigned long long $pvg_now = ((unsigned long long (*)(void))mach_absolute_time)()
+expression -l c -- long long $pvg_present_delta = (long long)($pvg_supplied_timestamp - $pvg_now)
+expression -l c -- void *$pvg_surface = ((void *(*)(void *))CoreDisplay_DisplaySurface_GetIOSurface)((void *)$rsi)
+expression -l c -- unsigned int $pvg_surface_id = ((unsigned int (*)(void *))IOSurfaceGetID)($pvg_surface)
+expression -l c -- unsigned long long $pvg_indexed_timestamp_0 = ((unsigned long long (*)(void *, unsigned long))IOSurfaceGetIndexedTimestamp)($pvg_surface, 0)
+expression -l c -- unsigned long long $pvg_indexed_timestamp_1 = ((unsigned long long (*)(void *, unsigned long))IOSurfaceGetIndexedTimestamp)($pvg_surface, 1)
+expression -l c -- $pvg_supplied_timestamp
+expression -l c -- $pvg_now
+expression -l c -- $pvg_present_delta
+expression -l c -- $pvg_surface_id
+expression -l c -- $pvg_indexed_timestamp_0
+expression -l c -- $pvg_indexed_timestamp_1
+process detach
+quit

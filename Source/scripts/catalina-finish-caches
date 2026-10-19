@@ -1,0 +1,34 @@
+#!/bin/zsh
+set -u
+
+if (( EUID != 0 )); then
+    print -u2 "catalina-finish-caches must run as root"
+    exit 77
+fi
+if (( $# != 1 )); then
+    print -u2 "usage: catalina-finish-caches log-root"
+    exit 64
+fi
+
+log_root=${1:A}
+mkdir -p "$log_root"
+rm -f "$log_root/cache-build.done"
+
+touch /System/Library/Extensions /Library/Extensions
+kextcache -system-caches > "$log_root/kextcache-system-install.txt" 2>&1
+system_status=$?
+
+prelinked_status=125
+if (( system_status == 0 )); then
+    kextcache -system-prelinked-kernel \
+        > "$log_root/kextcache-install.txt" 2>&1
+    prelinked_status=$?
+fi
+
+sync
+{
+    print "system-caches=$system_status"
+    print "prelinked-kernel=$prelinked_status"
+} > "$log_root/cache-build.done"
+
+(( system_status == 0 && prelinked_status == 0 ))

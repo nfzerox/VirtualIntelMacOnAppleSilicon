@@ -1,0 +1,41 @@
+#!/bin/bash
+# Render real AppKit views with synthetic fixtures; no guest or desktop capture.
+# VIM_COMPOSITED_PREVIEWS=1 additionally captures only our own synthetic windows
+# to qualify native glass, and only when Screen Recording is already authorized.
+set -euo pipefail
+source_dir="$(cd "$(dirname "$0")/.." && pwd)"
+mkdir -p "$source_dir/Build/UIReview"
+xcrun clang -fobjc-arc -fmodules -Wno-incomplete-implementation \
+  -mmacosx-version-min=11.0 -arch arm64 -arch x86_64 \
+  -I "$source_dir/VirtualIntelMac" \
+  "$source_dir/tools/ui-previews.m" \
+  "$source_dir/VirtualIntelMac/AppDelegate.m" \
+  "$source_dir/VirtualIntelMac/VIMUpdateChecker.m" \
+  "$source_dir/VirtualIntelMac/VIMLibraryViewController.m" \
+  "$source_dir/VirtualIntelMac/VIMMachineSettings.m" \
+  "$source_dir/VirtualIntelMac/VIMSettingsIcon.m" \
+  "$source_dir/VirtualIntelMac/VIMDiscImage.m" \
+  "$source_dir/VirtualIntelMac/VIMMachine.m" \
+  "$source_dir/VirtualIntelMac/VIMFirmwareBoot.m" \
+  "$source_dir/VirtualIntelMac/VIMLibraryLocation.m" \
+  "$source_dir/VirtualIntelMac/VIMNetworkDefaults.m" \
+  "$source_dir/VirtualIntelMac/VIMNewMachineWindow.m" \
+  "$source_dir/VirtualIntelMac/VIMInstallerCatalog.m" \
+  "$source_dir/VirtualIntelMac/VIMInstallerAssembly.m" \
+  "$source_dir/VirtualIntelMac/VIMDownload.m" \
+  "$source_dir/VirtualIntelMac/VIMHostSupport.m" \
+  "$source_dir/VirtualIntelMac/VIMAlerts.m" \
+  "$source_dir/VirtualIntelMac/VIMMenuController.m" \
+  "$source_dir/VirtualIntelMac/VIMSession.m" \
+  "$source_dir/VirtualIntelMac/VIMPlayButton.m" \
+  "$source_dir/VirtualIntelMac/VIMMetalView.m" \
+  "$source_dir/VirtualIntelMac/VIMDisplayConnection.m" \
+  "$source_dir/VirtualIntelMac/VIMQMPConnection.m" \
+  "$source_dir/VirtualIntelMac/VIMGuestAgent.m" \
+  "$source_dir/VirtualIntelMac/VIMGuestPreparation.m" \
+  "$source_dir/VirtualIntelMac/VIMGuestInstallation.m" \
+  "$source_dir/VirtualIntelMac/VIMGuestProgress.m" \
+  -framework Cocoa -framework AVFoundation -framework UniformTypeIdentifiers \
+  -framework Metal -framework QuartzCore -o "$source_dir/Build/ui-previews"
+"$source_dir/Build/ui-previews" "$source_dir" "$source_dir/Build/UIReview"
+echo "UI previews: $source_dir/Build/UIReview"

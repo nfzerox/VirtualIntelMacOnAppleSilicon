@@ -1,0 +1,7 @@
+[wrap-file]
+directory = attrs-0.2.10
+source_url = https://crates.io/api/v1/crates/attrs/0.2.10/download
+source_filename = attrs-0.2.10.tar.gz
+source_hash = 60e397c905850173fdc02285fe7f94f1b0c3ff55ff6e103efbe98074d80601c4
+method = cargo
+

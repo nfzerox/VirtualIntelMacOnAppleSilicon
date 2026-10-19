@@ -1,0 +1,6 @@
+image lookup -n IOAccelDisplayPipeTransactionEnd
+disassemble -n IOAccelDisplayPipeTransactionEnd
+image lookup -n IOAccelDisplayPipeTransactionSetPlaneIOSurface
+disassemble -n IOAccelDisplayPipeTransactionSetPlaneIOSurface
+process detach
+quit

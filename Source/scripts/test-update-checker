@@ -1,0 +1,11 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+out="$root/Build/UpdateTests.app/Contents"
+mkdir -p "$out/MacOS"
+cp "$root/probes/update-checker-tests-Info.plist" "$out/Info.plist"
+xcrun clang -fobjc-arc -fmodules -framework Cocoa -I "$root/VirtualIntelMac" \
+    "$root/probes/update-checker-tests.m" "$root/VirtualIntelMac/VIMUpdateChecker.m" \
+    "$root/VirtualIntelMac/VIMAlerts.m" \
+    -o "$out/MacOS/UpdateTests"
+"$out/MacOS/UpdateTests"

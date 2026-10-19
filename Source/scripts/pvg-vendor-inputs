@@ -1,0 +1,32 @@
+#!/bin/zsh
+# Maintainer-only: package reviewed donor inputs, not caches/Xcodes or user data.
+set -euo pipefail
+repo=${0:A:h:h}
+output=${1:?usage: pvg-vendor-inputs NEW-output-archive}
+[[ ! -e $output ]] || exit 73
+stage=$(mktemp -d /private/var/tmp/pvg-donor-inputs.XXXXXX)
+paths=(
+    work/bigsur/System/Library/Extensions/IOSurface.kext
+    work/bigsur/System/Library/Extensions/IOAcceleratorFamily2.kext
+    work/bigsur/System/Library/Extensions/IOGraphicsFamily.kext
+    work/bigsur/System/Library/Extensions/AppleParavirtGPU.kext
+    work/bigsur/System/Library/Extensions/AppleParavirtGPUMetal.bundle
+    work/bigsur/System/Library/PrivateFrameworks/MetalSerializer.framework/Versions/A/Resources
+    work/bigsur/compiler-files/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001
+    work/bigsur/compiler-files/System/Library/Frameworks/Metal.framework/Versions/A/Resources
+    work/catalina/compiler/MTLCompilerService
+    work/catalina/compiler/MTLCompilerService.xpc
+    research/dsce/Out/System/Library/PrivateFrameworks/MetalSerializer.framework/Versions/A/MetalSerializer
+    research/dsce/Out/System/Library/Extensions/AppleParavirtGPUMetal.bundle/Contents/Resources/libAppleParavirtCompilerPlugin.dylib
+    research/dsce/Out/System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3902
+    research/dsce/Out/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries
+    research/dsce/Out/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/3902/Libraries/libLLVM.dylib
+)
+for input in $paths; do
+    [[ -e "$repo/$input" ]] || { print -u2 "Missing $input"; exit 66; }
+    mkdir -p "$stage/inputs/${input:h}"
+    cp -R "$repo/$input" "$stage/inputs/$input"
+done
+(cd "$stage/inputs"; find . -type f -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256) > "$stage/INPUTS.sha256"
+COPYFILE_DISABLE=1 tar -czf "$output" -C "$stage" inputs INPUTS.sha256
+print "Donor inputs: $output; scratch retained: $stage"

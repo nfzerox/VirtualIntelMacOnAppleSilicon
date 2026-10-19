@@ -1,0 +1,49 @@
+#include "base.xcconfig"
+#include? "dyld_features.xcconfig"
+
+ALIGNMENT[arch=armv7s]     = -Wl,-segalign,0x4000
+
+OTHER_CODE_SIGN_FLAGS[sdk=*simulator*]   = --entitlements $(SRCROOT)/dyld/dyld_sim-entitlements.plist
+OTHER_CODE_SIGN_FLAGS[sdk=iphoneos*]     =
+OTHER_CODE_SIGN_FLAGS[sdk=macosx*]       =
+
+PRODUCT_NAME                  = dyld
+PRODUCT_NAME[sdk=*simulator*] = dyld_sim
+
+INSTALL_PATH   = /usr/lib
+INSTALL_PATH[sdk=exclavekit*]   = $(SYSTEM_PREFIX)/usr/lib
+
+// Disable building the _asan variant for dyld on ExclaveKit
+BUILD_VARIANTS[sdk=exclavekit*] = normal
+
+GCC_PREPROCESSOR_DEFINITIONS_Debug   = DYLD_VERSION=$(RC_ProjectSourceVersion) BUILDING_DYLD=1 DEBUG=1
+GCC_PREPROCESSOR_DEFINITIONS_Release = DYLD_VERSION=$(RC_ProjectSourceVersion) BUILDING_DYLD=1
+GCC_PREPROCESSOR_DEFINITIONS         = $(GCC_PREPROCESSOR_DEFINITIONS_$(CONFIGURATION)) $(GCC_PREPROCESSOR_DEFINITIONS_FEATURES)
+GCC_PREPROCESSOR_DEFINITIONS[sdk=exclavekit*] = $(GCC_PREPROCESSOR_DEFINITIONS_$(CONFIGURATION)) $(GCC_PREPROCESSOR_DEFINITIONS_FEATURES) L4_CONFIG_PLAT_EVP=1
+
+LINK_WITH_STANDARD_LIBRARIES[sdk=exclavekit*] = NO
+
+SYSTEM_HEADER_SEARCH_PATHS[sdk=exclavekit*] = $(SDKROOT)$(SYSTEM_PREFIX)/usr/include/c++/v1 $(SDKROOT)$(SYSTEM_PREFIX)/usr/local/standalone/cL4/include
+OTHER_CFLAGS[sdk=exclavekit*] = -nostdlibinc -idirafter $(SDKROOT)$(SYSTEM_PREFIX)/usr/local/include/dyld -idirafter $(SDKROOT)$(SYSTEM_PREFIX)/usr/include
+
+ENTRY_NAME[sdk=*simulator*] = __dyld_sim_prepare
+ENTRY_NAME[sdk=iphoneos*]   = __dyld_start
+ENTRY_NAME[sdk=macosx*]     = __dyld_start
+ENTRY_NAME[sdk=exclavekit*] = __dyld_start
+
+DIRTY                    = -Wl,-dirty_data_list,$(DERIVED_SOURCES_DIR)/dyld.dirty
+
+LLDB_SUPPORT = -Wl,-exported_symbol,_lldb_image_notifier -Wl,-exported_symbol,_dyld_all_image_infos
+LLDB_SUPPORT[sdk=*simulator*] =
+
+OTHER_LDFLAGS = -e $(ENTRY_NAME) -Wl,-exported_symbol,$(ENTRY_NAME) $(LLDB_SUPPORT) -Wl,-no_inits @$(DERIVED_SOURCES_DIR)/archives.txt -nostdlib -Wl,-dylinker -Wl,-dylinker_install_name,/usr/lib/dyld $(ALIGNMENT) -Wl,-fixup_chains -Wl,-data_const -fapple-link-rtlib $(DIRTY) -Wl,-section_order,__TPRO_CONST,__data:__auth_got:__allocator
+
+CODE_SIGN_IDENTITY = $(TRUSTED_CODE_SIGN_IDENTITY)
+
+// TODO: Clean these up.  They were moved from the build settings
+GCC_PREPROCESSOR_DEFINITIONS = DYLD_VERSION=$(RC_ProjectSourceVersion) _LIBCPP_NO_EXCEPTIONS=1 $(inherited)
+LD_GENERATE_MAP_FILE = YES
+ONLY_ACTIVE_ARCH[config=Debug] = NO
+SUPPORTED_PLATFORMS = macosx iphoneos xros watchos appletvos bridgeos watchsimulator iphonesimulator xrsimulator appletvsimulator exclavekit.macosx exclavekit.iphoneos exclavekit.appletvos exclavekit.xros exclavekit.watchos
+UNSTRIPPED_PRODUCT = NO
+USER_HEADER_SEARCH_PATHS = ./dyld ./common ./libdyld ${DERIVED_FILE_DIR}

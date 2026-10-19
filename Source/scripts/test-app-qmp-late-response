@@ -1,0 +1,9 @@
+#!/bin/bash
+set -euo pipefail
+source_dir="$(cd "$(dirname "$0")/.." && pwd)"
+mkdir -p "$source_dir/Build/Probes"
+xcrun clang -fobjc-arc -fmodules -Wall -mmacosx-version-min=11.0 -arch x86_64 -arch arm64 \
+  -I "$source_dir/VirtualIntelMac" -framework Foundation \
+  "$source_dir/probes/app-qmp-late-response.m" "$source_dir/VirtualIntelMac/VIMQMPConnection.m" \
+  -o "$source_dir/Build/Probes/app-qmp-late-response"
+exec "$source_dir/Build/Probes/app-qmp-late-response"

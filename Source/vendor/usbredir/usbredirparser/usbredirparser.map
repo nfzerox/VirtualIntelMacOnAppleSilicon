@@ -1,0 +1,68 @@
+USBREDIRPARSER_0.8.0 {
+global:
+    usbredirfilter_check;
+    usbredirfilter_print;
+    usbredirfilter_rules_to_string;
+    usbredirfilter_string_to_rules;
+    usbredirfilter_verify;
+    usbredirparser_caps_set_cap;
+    usbredirparser_create;
+    usbredirparser_destroy;
+    usbredirparser_do_read;
+    usbredirparser_do_write;
+    usbredirparser_free_packet_data;
+    usbredirparser_free_write_buffer;
+    usbredirparser_has_data_to_write;
+    usbredirparser_have_cap;
+    usbredirparser_have_peer_caps;
+    usbredirparser_init;
+    usbredirparser_peer_has_cap;
+    usbredirparser_send_alloc_bulk_streams;
+    usbredirparser_send_alt_setting_status;
+    usbredirparser_send_buffered_bulk_packet;
+    usbredirparser_send_bulk_packet;
+    usbredirparser_send_bulk_receiving_status;
+    usbredirparser_send_bulk_streams_status;
+    usbredirparser_send_cancel_data_packet;
+    usbredirparser_send_configuration_status;
+    usbredirparser_send_control_packet;
+    usbredirparser_send_device_connect;
+    usbredirparser_send_device_disconnect;
+    usbredirparser_send_ep_info;
+    usbredirparser_send_filter_filter;
+    usbredirparser_send_filter_reject;
+    usbredirparser_send_free_bulk_streams;
+    usbredirparser_send_get_alt_setting;
+    usbredirparser_send_get_configuration;
+    usbredirparser_send_interface_info;
+    usbredirparser_send_interrupt_packet;
+    usbredirparser_send_interrupt_receiving_status;
+    usbredirparser_send_iso_packet;
+    usbredirparser_send_iso_stream_status;
+    usbredirparser_send_reset;
+    usbredirparser_send_set_alt_setting;
+    usbredirparser_send_set_configuration;
+    usbredirparser_send_start_bulk_receiving;
+    usbredirparser_send_start_interrupt_receiving;
+    usbredirparser_send_start_iso_stream;
+    usbredirparser_send_stop_bulk_receiving;
+    usbredirparser_send_stop_interrupt_receiving;
+    usbredirparser_send_stop_iso_stream;
+    usbredirparser_serialize;
+    usbredirparser_unserialize;
+local:
+*;
+};
+
+USBREDIRPARSER_0.10.0 {
+global:
+    usbredirfilter_free;
+} USBREDIRPARSER_0.8.0;
+
+USBREDIRPARSER_0.11.0 {
+global:
+    usbredirparser_get_bufferered_output_size;
+} USBREDIRPARSER_0.10.0;
+
+
+# .... define new API here using predicted next version number ....

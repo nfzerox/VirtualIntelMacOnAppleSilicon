@@ -1,0 +1,34 @@
+#!/bin/zsh
+# Bring-up delta only: requires the already installed r3 kernel candidate.
+set -euo pipefail
+(( EUID == 0 )) || exit 77
+[[ $(sw_vers -buildVersion) == 18G103 ]] || exit 65
+payload=${1:A}
+backup=${PVG_BACKUP_ROOT:-$HOME}/pvg-backup-r4-userland
+[[ ! -e "$backup" && -e ${PVG_BACKUP_ROOT:-$HOME}/pvg-backup-r3/install-complete ]] || exit 73
+targets=(
+ /System/Library/PrivateFrameworks/IOAccelerator.framework/Versions/A/IOAccelerator
+ /System/Library/PrivateFrameworks/MetalSerializer.framework
+ /System/Library/Frameworks/CoreDisplay.framework/Versions/A/CoreDisplay
+ /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/libGPUCompilerImpl.dylib
+ /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/PVGMojaveArchive.dylib
+ /System/Library/Extensions/AppleParavirtGPUMetal.bundle
+)
+for target in $targets; do [[ -e "$payload$target" ]] || exit 66; done
+mkdir -p "$backup"
+for target in $targets; do
+    mkdir -p "$backup${target:h}"
+    [[ ! -e "$target" ]] || ditto "$target" "$backup$target"
+done
+touch "$backup/backup-complete"
+for target in $targets; do
+    staged="${target:h}/.pvg-r4-${target:t}"
+    [[ ! -e "$staged" ]] || exit 73
+    ditto "$payload$target" "$staged"
+    chown -R root:wheel "$staged"
+    [[ ! -e "$target" ]] || mv "$target" "$backup/${target:t}.displaced"
+    mv "$staged" "$target"
+done
+sync
+touch "$backup/install-complete"
+print 'r4 userland installed; existing processes retain old mappings until restart.'

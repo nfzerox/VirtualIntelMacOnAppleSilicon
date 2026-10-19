@@ -1,0 +1,9 @@
+settings set interpreter.prompt-on-quit false
+breakpoint set --name "-[MTLIOAccelResource initWithDevice:remoteStorageResource:options:args:argsSize:]"
+breakpoint modify --condition "*(unsigned int *)$r9 == 0x82" 1
+breakpoint command add 1
+memory read --format x --size 8 --count 21 $r9
+process detach
+quit
+DONE
+process continue

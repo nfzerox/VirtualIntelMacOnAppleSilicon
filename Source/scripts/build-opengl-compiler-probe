@@ -1,0 +1,22 @@
+#!/bin/zsh
+# Experimental GL metadata repair; never installs or alters production payloads.
+set -euo pipefail
+repo=${0:A:h:h}
+output=${1:?usage: zsh scripts/build-opengl-compiler-probe NEW_OUTPUT_DYLIB}
+[[ ! -e $output ]] || { print -u2 'Output already exists'; exit 73; }
+target=${PVG_TARGET_OS:-10.15}
+case $target in
+    10.15) xcode=XcodeCatalina ;;
+    10.14) xcode=XcodeMojave ;;
+    *) print -u2 'Unsupported target'; exit 64 ;;
+esac
+sdk="$repo/resources/xcode/$xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+llvm="$repo/research/dsce/Out/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/3902/Libraries/libLLVM.dylib"
+[[ -d $sdk && -f $llvm ]] || exit 66
+mkdir -p "${output:h}"
+xcrun clang -O2 -arch x86_64 -mmacosx-version-min=$target -isysroot "$sdk" \
+    -DPVG_GL_FIX_FETCH_METADATA=1 -dynamiclib \
+    "$repo/compat/PVGCompilerPluginBridge/PVGCompilerPluginBridge.c" "$llvm" \
+    -install_name /System/Library/Extensions/AppleParavirtGPUMetal.bundle/Contents/Resources/libAppleParavirtCompilerPlugin.dylib \
+    -o "$output"
+codesign -f -s - "$output"

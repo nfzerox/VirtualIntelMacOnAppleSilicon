@@ -1,0 +1,43 @@
+#!/bin/zsh
+set -euo pipefail
+
+if (( EUID != 0 )) || (( $# != 0 )); then
+    print -u2 'usage: sudo catalina-restore-armed-trace'
+    exit 64
+fi
+
+target=/System/Library/PrivateFrameworks/MetalSerializer.framework
+backup=${PVG_BACKUP_ROOT:-$HOME/PVGBackups}/metalserializer-pre-display-sync
+displaced=$backup/displaced
+traced=${PVG_BACKUP_ROOT:-$HOME/PVGBackups}/metalserializer-pre-armed-trace/armed-traced
+expected_trace=1a7cca44a08cd2c16d91989f6ffe4c1f26fa5cebd8d80a02b309d8514a47a2e2
+expected_original=9939c2773fb57f34b0cf8b3c9b1f144be567af9377682a58aee475c6378d6efb
+
+[[ $(sw_vers -productVersion) == 10.15.7 && $(sw_vers -buildVersion) == 19H15 ]] || {
+    print -u2 'refusing non-19H15 Catalina target'
+    exit 65
+}
+[[ -d $displaced && ! -e $traced ]] || {
+    print -u2 'backup missing or trace destination already exists'
+    exit 73
+}
+[[ $(shasum -a 256 $target/Versions/A/MetalSerializer | awk '{print $1}') == $expected_trace ]] || {
+    print -u2 'refusing to replace an unexpected current framework'
+    exit 65
+}
+[[ $(shasum -a 256 $displaced/Versions/A/MetalSerializer | awk '{print $1}') == $expected_original ]] || {
+    print -u2 'backup does not match expected wrapper'
+    exit 65
+}
+codesign --verify --deep --strict $displaced
+mount -uw /
+mv $target $traced
+mv $displaced $target
+if ! codesign --verify --deep --strict $target; then
+    mv $target $displaced
+    mv $traced $target
+    print -u2 'backup failed verification; armed trace restored'
+    exit 74
+fi
+sync
+print 'Armed trace removed; previous nontracing wrapper restored. Reboot into PVG.'

@@ -1,0 +1,103 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 50;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		300000000000000000000001 /* PVGIOSurfaceABI.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000002 /* PVGIOSurfaceABI.cpp */; };
+		300000000000000000000011 /* plugin_start.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000012 /* plugin_start.cpp */; };
+		300000000000000000000013 /* libkmod.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 300000000000000000000014 /* libkmod.a */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		300000000000000000000002 /* PVGIOSurfaceABI.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PVGIOSurfaceABI.cpp; sourceTree = "<group>"; };
+		300000000000000000000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		300000000000000000000004 /* PVGIOSurfaceABI.kext */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PVGIOSurfaceABI.kext; sourceTree = BUILT_PRODUCTS_DIR; };
+		300000000000000000000012 /* plugin_start.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = plugin_start.cpp; path = ../../vendor/source/Lilu/build/Debug/Lilu.kext/Contents/Resources/Library/plugin_start.cpp; sourceTree = SOURCE_ROOT; };
+		300000000000000000000014 /* libkmod.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libkmod.a; path = ../../vendor/source/MacKernelSDK/Library/x86_64/libkmod.a; sourceTree = SOURCE_ROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		300000000000000000000005 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (300000000000000000000013 /* libkmod.a in Frameworks */); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		300000000000000000000006 = {isa = PBXGroup; children = (300000000000000000000002, 300000000000000000000003, 300000000000000000000012, 300000000000000000000014, 300000000000000000000007 /* Products */); sourceTree = "<group>"; };
+		300000000000000000000007 /* Products */ = {isa = PBXGroup; children = (300000000000000000000004 /* PVGIOSurfaceABI.kext */); name = Products; sourceTree = "<group>"; };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		300000000000000000000008 /* PVGIOSurfaceABI */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 300000000000000000000009 /* Build configuration list for PBXNativeTarget */;
+			buildPhases = (30000000000000000000000A /* Sources */, 300000000000000000000005 /* Frameworks */);
+			buildRules = ();
+			dependencies = ();
+			name = PVGIOSurfaceABI;
+			productName = PVGIOSurfaceABI;
+			productReference = 300000000000000000000004 /* PVGIOSurfaceABI.kext */;
+			productType = "com.apple.product-type.kernel-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		30000000000000000000000B /* Project object */ = {
+			isa = PBXProject;
+			attributes = {LastUpgradeCheck = 1250; ORGANIZATIONNAME = "Virtual Intel Mac";};
+			buildConfigurationList = 30000000000000000000000C /* Build configuration list for PBXProject */;
+			compatibilityVersion = "Xcode 9.3";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base);
+			mainGroup = 300000000000000000000006;
+			productRefGroup = 300000000000000000000007 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (300000000000000000000008 /* PVGIOSurfaceABI */);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		30000000000000000000000A /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (300000000000000000000001 /* PVGIOSurfaceABI.cpp in Sources */, 300000000000000000000011 /* plugin_start.cpp in Sources */); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		30000000000000000000000D /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ARCHS = x86_64; CLANG_CXX_LANGUAGE_STANDARD = "c++1y"; CODE_SIGNING_ALLOWED = NO; GCC_OPTIMIZATION_LEVEL = 0; MACOSX_DEPLOYMENT_TARGET = 10.15; ONLY_ACTIVE_ARCH = YES; SDKROOT = macosx; }; name = Debug; };
+		30000000000000000000000E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = x86_64;
+				CODE_SIGNING_ALLOWED = NO;
+				CURRENT_PROJECT_VERSION = "$(MODULE_VERSION)";
+				DEAD_CODE_STRIPPING = NO;
+				GCC_PREPROCESSOR_DEFINITIONS = "$(inherited) DEBUG=1 MODULE_VERSION=$(MODULE_VERSION) PRODUCT_NAME=$(PRODUCT_NAME) KERNEL KERNEL_PRIVATE DRIVER_PRIVATE APPLE NeXT";
+				HEADER_SEARCH_PATHS = ("$(SRCROOT)/../../vendor/source/Lilu/build/Debug/Lilu.kext/Contents/Resources", "$(SRCROOT)/../../vendor/source/MacKernelSDK/Headers");
+				INFOPLIST_FILE = Info.plist;
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../vendor/source/MacKernelSDK/Library/x86_64";
+				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				MODULE_NAME = local.pvg.IOSurfaceABI;
+				MODULE_START = PVGIOSurfaceABI_kern_start;
+				MODULE_STOP = PVGIOSurfaceABI_kern_stop;
+				MODULE_VERSION = 1.6.3;
+				ONLY_ACTIVE_ARCH = YES;
+				OTHER_CFLAGS = ("-mmmx", "-msse", "-msse2", "-msse3", "-mfpmath=sse", "-mssse3", "-fno-non-call-exceptions", "-fno-builtin", "-fno-asynchronous-unwind-tables", "-Wno-unknown-warning-option", "-Wno-ossharedptr-misuse", "-Wno-vla");
+				OTHER_LDFLAGS = "-static";
+				PRODUCT_BUNDLE_IDENTIFIER = local.pvg.IOSurfaceABI;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				WRAPPER_EXTENSION = kext;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		300000000000000000000009 /* Build configuration list for PBXNativeTarget */ = {isa = XCConfigurationList; buildConfigurations = (30000000000000000000000E /* Debug */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+		30000000000000000000000C /* Build configuration list for PBXProject */ = {isa = XCConfigurationList; buildConfigurations = (30000000000000000000000D /* Debug */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+/* End XCConfigurationList section */
+	};
+	rootObject = 30000000000000000000000B /* Project object */;
+}

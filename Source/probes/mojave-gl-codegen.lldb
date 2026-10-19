@@ -1,0 +1,19 @@
+# Research only: request the PP stream in addition to native bytecode.
+# Mojave gleLinkProgram constructs ShLink options at RCX; +20 is codegen flags.
+# Its native flags are 10 for GLD config type2, Catalina instead requests11.
+breakpoint set --name ShLink
+breakpoint command add 1
+expression -- *(unsigned int *)($rcx + 20) |= 1
+continue
+DONE
+# Diagnostic only: LLVM fallback has no PP stream. This tests how far the
+# shader path gets without dereferencing that null stream, not semantic proof.
+breakpoint set --name PPStreamAddOption --condition '$rdi == 0'
+breakpoint command add 2
+thread return
+continue
+DONE
+run
+continue
+thread backtrace
+quit

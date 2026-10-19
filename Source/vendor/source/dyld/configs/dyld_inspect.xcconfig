@@ -1,0 +1,9 @@
+#include "tools_base.xcconfig"
+
+CODE_SIGN_ENTITLEMENTS = $(SRCROOT)/configs/task_read_for_pid_entitlement.plist
+
+MAN_INSTALL_PATH = /usr/appleinternal/share/man/man1/
+
+INSTALL_PATH = /usr/appleinternal/bin
+
+CODE_SIGN_IDENTITY = $(TRUSTED_CODE_SIGN_IDENTITY)

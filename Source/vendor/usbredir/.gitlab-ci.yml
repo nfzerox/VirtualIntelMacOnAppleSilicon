@@ -1,0 +1,75 @@
+image: fedora:latest
+
+variables:
+  DEPENDENCIES: >-
+    gcc clang meson ninja-build valgrind git bzip2 libusb1-devel glib2-devel
+  FUZZING_DEPENDENCIES: >-
+    clang libcxx-devel compiler-rt
+  MINGW_DEPENDENCIES: >-
+    mingw64-gcc mingw64-pkg-config mingw64-glib2 mingw64-libusbx
+
+# Check if can build with and without usbredirect
+stable:
+  artifacts:
+    paths:
+        - _build/meson-logs/*.txt
+    when: always
+    expire_in: 1 week
+
+  before_script:
+    - dnf install -y --nogpgcheck $DEPENDENCIES
+  script:
+    - meson . _build -Dfuzzing=disabled -Dtools=enabled
+    - cd _build
+    - meson compile
+    - meson test
+    - meson test --wrap='valgrind --leak-check=full --error-exitcode=1'
+    - meson dist
+
+.fuzzing_base:
+  resource_group: fuzzing
+  before_script:
+    - dnf install -y --nogpgcheck $DEPENDENCIES $FUZZING_DEPENDENCIES
+    - export CC='clang -fsanitize=fuzzer-no-link -fsanitize=address'
+    - export CXX='clang++ -fsanitize=fuzzer-no-link -fsanitize=address'
+
+fuzzing:
+  extends: .fuzzing_base
+  artifacts:
+    paths:
+        - build/meson-logs/*.txt
+    when: always
+    expire_in: 1 week
+
+  script:
+    - export LIB_FUZZING_ENGINE=-fsanitize=fuzzer
+    - export OUT=/tmp/fuzzer
+    - ./build-aux/oss-fuzz.sh
+
+fuzzing_standalone:
+  extends: .fuzzing_base
+  artifacts:
+    paths:
+        - build-*/meson-logs/*.txt
+    when: always
+    expire_in: 1 week
+
+  script:
+    - export LIB_FUZZING_ENGINE=standalone
+    - export OUT=/tmp/fuzzer-standalone
+    - ./build-aux/oss-fuzz.sh
+
+windows:
+  artifacts:
+    paths:
+        - _win_build/meson-logs/*.txt
+    when: always
+    expire_in: 1 week
+
+  before_script:
+    - dnf install -y --nogpgcheck $DEPENDENCIES $MINGW_DEPENDENCIES
+
+  script:
+    - mkdir _win_build && cd _win_build
+    - mingw64-meson -Dtools=enabled
+    - ninja

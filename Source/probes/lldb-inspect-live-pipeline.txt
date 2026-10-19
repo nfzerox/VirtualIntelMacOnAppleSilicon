@@ -1,0 +1,25 @@
+settings set auto-confirm true
+process attach --name WindowServer
+expression -l objc++ -- @import Foundation
+expression -l objc++ -O -- (id)0x7f9d1a56e0c0
+expression -l objc++ -O -- [(id)0x7f9d1a56e0c0 valueForKey:@"_vertexFunction"]
+expression -l objc++ -O -- [[(id)0x7f9d1a56e0c0 valueForKey:@"_vertexFunction"] valueForKey:@"function"]
+expression -l objc++ -O -- [[[(id)0x7f9d1a56e0c0 valueForKey:@"_vertexFunction"] valueForKey:@"function"] valueForKey:@"name"]
+expression -l objc++ -O -- [(id)0x7f9d1a56e0c0 valueForKey:@"_fragmentFunction"]
+expression -l objc++ -O -- [[(id)0x7f9d1a56e0c0 valueForKey:@"_fragmentFunction"] valueForKey:@"function"]
+expression -l objc++ -O -- [[[(id)0x7f9d1a56e0c0 valueForKey:@"_fragmentFunction"] valueForKey:@"function"] valueForKey:@"name"]
+expression -l objc++ -O -- [(id)0x7f9d1a56e0c0 valueForKey:@"_resource1"]
+expression -l objc++ -O -- [(id)0x7f9d1a56e0c0 valueForKey:@"_resource2"]
+expression -l objc++ -- (BOOL)[[NSData dataWithBytes:((void *(*)(id, SEL))objc_msgSend)((id)0x7f9d1a534960, sel_registerName("contents")) length:((unsigned long (*)(id, SEL))objc_msgSend)((id)0x7f9d1a534960, sel_registerName("length"))] writeToFile:@"/tmp/pipeline22-resource1.bin" atomically:NO]
+expression -l objc++ -- (BOOL)[[NSData dataWithBytes:((void *(*)(id, SEL))objc_msgSend)((id)0x7f9d1a56def0, sel_registerName("contents")) length:((unsigned long (*)(id, SEL))objc_msgSend)((id)0x7f9d1a56def0, sel_registerName("length"))] writeToFile:@"/tmp/pipeline22-resource2.bin" atomically:NO]
+expression -l objc++ -O -- (id)0x7f9d1a475bc0
+expression -l objc++ -- (BOOL)[[NSData dataWithBytes:((void *(*)(id, SEL))objc_msgSend)((id)0x7f9d1a475bc0, sel_registerName("contents")) length:((unsigned long (*)(id, SEL))objc_msgSend)((id)0x7f9d1a475bc0, sel_registerName("length"))] writeToFile:@"/tmp/pipeline22-pooled-buffer.bin" atomically:NO]
+memory read --force --size 8 --format x --count 46 0x7f9d1a534960
+memory read --force --size 8 --format x --count 46 0x7f9d1a56def0
+memory read --force --size 8 --format x --count 12 0x7f9d1a534bd0
+memory read --force --size 8 --format x --count 12 0x7f9d1a56e060
+memory read --force --size 8 --format x --count 8 0x7f9d1a534920
+memory read --force --size 8 --format x --count 8 0x7f9d1a56deb0
+memory read --force --size 8 --format x --count 24 0x7f9d1a56e0c0
+process detach
+quit

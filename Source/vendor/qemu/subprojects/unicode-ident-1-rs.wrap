@@ -1,0 +1,7 @@
+[wrap-file]
+directory = unicode-ident-1.0.24
+source_url = https://crates.io/api/v1/crates/unicode-ident/1.0.24/download
+source_filename = unicode-ident-1.0.24.tar.gz
+source_hash = e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75
+method = cargo
+

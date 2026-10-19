@@ -1,0 +1,8 @@
+settings set auto-confirm true
+process attach --name WindowServer
+expression -l objc++ -- @import Foundation
+command script import /tmp/pvgtrace.py
+script pvgtrace.install()
+process continue
+process detach
+quit

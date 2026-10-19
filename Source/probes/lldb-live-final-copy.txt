@@ -1,0 +1,7 @@
+settings set auto-confirm true
+process attach --name WindowServer
+command script import /Users/Shared/pvg-probes/pvgfinal.py
+script pvgfinal.install()
+continue
+process detach
+quit

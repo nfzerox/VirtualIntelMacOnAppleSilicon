@@ -1,0 +1,280 @@
+#!/bin/zsh
+set -euo pipefail
+export LC_ALL=C
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+repo=${0:A:h:h}
+mode=${1:-install}
+fail() { print -u2 -- "ERROR: $*"; exit 1; }
+case $mode in
+    install|--install) mode=install ;;
+    --check|--verify|--rollback) ;;
+    --build) shift; exec /bin/zsh "$repo/scripts/pvg-build-release" "$@" ;;
+    --help|-h)
+        print 'Usage: ./Install.command [--check | --verify | --build [output-directory] | --rollback backup-directory]'
+        print 'No argument: install the bundled release, with an admin password and confirmation.'
+        exit 0 ;;
+    *) fail "Unknown option: $mode (use --help)" ;;
+esac
+if [[ $mode == --rollback ]]; then
+    (( $# == 2 )) || fail '--rollback requires the exact backup directory printed during installation.'
+else
+    (( $# <= 1 )) || fail 'Unexpected extra arguments.'
+fi
+
+source "$repo/scripts/pvg-platform"
+pvg_platform "$(sw_vers -productVersion)" || exit $?
+[[ $(uname -m) == x86_64 ]] || fail 'Requires an Intel Mojave or Catalina guest.'
+print "Detected $pvg_name; release: $pvg_release"
+ioreg -rd1 -c IOPlatformExpertDevice | grep -q '"model".*Parallels' ||
+    fail 'This installer is restricted to a Parallels guest.'
+if ! csrutil status | grep -q '^System Integrity Protection status: disabled\.'; then
+    print -u2 'SIP is not fully disabled. Nothing was installed.'
+    print -u2 'Shut down this guest. Boot its Recovery OS (Command-R during guest startup),'
+    print -u2 'open Utilities > Terminal, run: csrutil disable'
+    print -u2 'Restart normally and run Install.command again. Do this in the GUEST, not the host.'
+    exit 77
+fi
+
+if [[ $mode == --verify ]]; then
+    (cd "$pvg_release"; shasum -a 256 -c SHA256SUMS) || fail 'Bundled verification files failed integrity checks.'
+    grep -Fq "Guest: Intel $pvg_name $pvg_target" "$pvg_release/RELEASE.txt" || fail 'Release targets a different guest OS.'
+    /usr/sbin/kextstat | grep -E 'AppleParavirtGPU|local.pvg|as.vit9696.Lilu'
+    /usr/sbin/ioreg -r -n AppleParavirtAccelerator | grep -q AppleParavirtAccelerator ||
+        fail 'AppleParavirtAccelerator is absent. Check host Video Type=2 and reboot.'
+    for probe in metal-access-regression metal-depth-smoke; do
+        "$pvg_release/probes/$probe"
+    done
+    "$pvg_release/probes/metal-async-pipeline" 5
+    print 'PASS: accelerator present and bundled GPU correctness probes passed.'
+    print 'Also test Safari, Preview HEIC, Launchpad folders and window dragging visually.'
+    exit 0
+fi
+
+# Parallels owns guest boot arguments; guest NVRAM writes can fail even as root.
+# Check the running kernel, not merely a value queued for the next boot.
+if [[ $mode != --rollback ]]; then
+    running_bootargs=$(/usr/sbin/sysctl -n kern.bootargs)
+    [[ " $running_bootargs " == *' amfi_get_out_of_my_way=0x1 '* ]] ||
+        fail 'Shut down the guest. In Parallels Configure > Hardware > Boot Order > Advanced Settings > Boot flags, add devices.mac.boot_args="amfi_get_out_of_my_way=0x1" (preserve other required guest flags). Start the guest and retry. No system files changed.'
+fi
+
+# Validate bytes before privilege escalation or any system modification.
+if [[ $mode != --rollback ]]; then
+    print 'Checking the bundled release...'
+    [[ -f "$pvg_release/SHA256SUMS" ]] || fail "Missing $pvg_name release. Build/package the matching payload first; never use the other OS payload."
+    (cd "$pvg_release"; shasum -a 256 -c SHA256SUMS) || fail 'Release is incomplete or corrupt. Copy the entire repository again.'
+    grep -Fq "Guest: Intel $pvg_name $pvg_target" "$pvg_release/RELEASE.txt" || fail 'Release targets a different guest OS.'
+    "$pvg_release/probes/guest-compatibility" || fail 'Guest private interfaces are not compatible with this package.'
+fi
+if [[ $mode == --check ]]; then
+    check_stage=$(mktemp -d /private/var/tmp/pvg-guest-check.XXXXXX)
+    /bin/zsh "$repo/scripts/pvg-stage-guest" / "$check_stage" || fail 'Guest binary patch validation failed. No system files changed.'
+    print "PASS: guest interfaces, native patches, SIP and release checks passed. Staging: $check_stage"
+    print 'Required AMFI boot argument is active. Installation requires a reboot.'
+    exit 0
+fi
+if (( EUID != 0 )); then
+    print 'Administrator access is needed inside this guest. Password characters will not appear.'
+    exec sudo /bin/zsh "$0" "$@"
+fi
+
+lock=/var/run/pvgbackport-install.lock
+mkdir "$lock" 2>/dev/null || fail "Another installation may be running ($lock)."
+scratch=$(mktemp -d /private/var/tmp/pvg-installer.XXXXXX)
+trap 'rmdir "$lock" 2>/dev/null || true; print "Installer working files: $scratch"' EXIT
+backup=''
+mutating=0
+
+# System and Data are separate APFS volumes. Cross-volume mv tries to copy
+# protected extended attributes and can fail. Rename beside the target instead.
+displace() {
+    local target=$1 phase=$2
+    local holding="${target:h}/.pvgbackport-${backup:t}-$phase"
+    mkdir -p "$holding" || return 1
+    [[ ! -e "$holding/${target:t}" ]] || return 1
+    mv "$target" "$holding/${target:t}" || return 1
+    print -r -- "$holding/${target:t}" >> "$backup/displaced-paths.txt" || return 1
+}
+
+restore() {
+    local saved=$1 target
+    [[ -f "$saved/backup-complete" && -f "$saved/targets.txt" ]] || fail "Incomplete backup: $saved"
+    mkdir -p "$saved/displaced-on-restore" || return 1
+    while IFS= read -r target; do
+        [[ -e "$saved/originals$target" || -L "$saved/originals$target" || -f "$saved/absent$target" ]] ||
+            fail "Backup missing state for $target"
+    done < "$saved/targets.txt"
+    while IFS= read -r target; do
+        if [[ -e "$target" || -L "$target" ]]; then
+            # Each rollback directory is single-use, preserving failed files.
+            displace "$target" restore || return 1
+        fi
+        if [[ -e "$saved/originals$target" || -L "$saved/originals$target" ]]; then
+            mkdir -p "${target:h}" || return 1
+            ditto --noextattr --noacl "$saved/originals$target" "$target" || return 1
+            chown -R root:wheel "$target" || return 1
+        fi
+    done < "$saved/targets.txt"
+    # Boot flags are host-managed and were never modified by this installer.
+    sync || return 1
+    touch "$saved/restored" || return 1
+}
+on_error() {
+    local code=${1:-$?}
+    trap - ZERR INT TERM
+    if [[ -n ${cache_pid:-} ]]; then
+        kill -TERM $cache_pid 2>/dev/null || true
+        wait $cache_pid 2>/dev/null || true
+    fi
+    print -u2 "Installation failed (status $code). Do not restart until rollback is complete."
+    if (( mutating )); then
+        restore "$backup" || { print -u2 'Automatic rollback failed. Restore your Parallels snapshot.'; exit 1; }
+        print -u2 'Original files and boot caches restored; host-managed boot arguments unchanged. Snapshot rollback is also available.'
+    fi
+    exit $code
+}
+trap on_error ZERR
+trap 'on_error 130' INT
+trap 'on_error 143' TERM
+
+if [[ $mode == --rollback ]]; then
+    backup=${2:A}
+    [[ $backup == /Library/Application\ Support/PVGBackport/backups/* && -d $backup && ! -L $backup ]] ||
+        fail 'Use a backup created by this installer under /Library/Application Support/PVGBackport/backups/.'
+    [[ ! -e "$backup/restored" && ! -d "$backup/displaced-on-restore" ]] || fail 'This backup was already restored or a restore was interrupted; use your VM snapshot.'
+    [[ -f "$backup/build.txt" && $(<"$backup/build.txt") == $(sw_vers -buildVersion) ]] ||
+        fail 'Backup OS build differs from this guest. Do not restore pre-update binaries onto an updated OS; use a complete VM snapshot.'
+    print "Restore $backup? Save your work first."
+    read 'answer?Type RESTORE to continue: '
+    [[ $answer == RESTORE ]] || exit 0
+    mount -uw /
+    restore "$backup"
+    print 'Rollback complete. Shut down, restore the host Video Type, then start the guest.'
+    exit 0
+fi
+
+print 'This experimental backport replaces guest graphics components and requires guest AMFI disabled through Parallels.'
+print 'SIP must remain disabled. It does not change host security settings or Safari sandbox rules.'
+print 'Have a powered-off Parallels snapshot/backup before continuing. Save all guest work.'
+available_kb=$(df -k / | awk 'END { print $4 }')
+(( available_kb >= 4 * 1024 * 1024 )) || fail 'At least 4 GiB free space is required for backups and cache generation.'
+read 'answer?Type INSTALL to continue: '
+[[ $answer == INSTALL ]] || exit 0
+tar -xf "$(pvg_release_archive "$pvg_release")" -C "$scratch"
+payload="$scratch/payload"
+[[ -d $payload ]] || fail 'Archive has no payload directory.'
+# Never overwrite guest-owned components with the reference-build copies.
+# Derive native components from this installation before any system mutation.
+/bin/zsh "$repo/scripts/pvg-stage-guest" / "$payload"
+targets=()
+while IFS= read -r target; do targets+=("$target"); done < "$pvg_targets"
+for target in $targets; do
+    [[ -e "$payload$target" ]] || fail "Missing payload component: $target"
+done
+# Validate all executable signatures before touching the system. Resources have archive hashes.
+for target in $targets; do
+    case $target in
+        *.kext|*.bundle|*.framework|*.xpc|*.dylib|*/OpenGL|*/CoreDisplay|*/SkyLight|*/IOAccelerator)
+            codesign --verify --deep --strict "$payload$target" ;;
+        */3903) codesign --verify --strict "$payload$target/MTLCompiler" ;;
+        */31001)
+            for dylib in "$payload$target/Libraries/"*.dylib; do
+                codesign --verify --strict "$dylib"
+            done ;;
+    esac
+done
+# Keep the Parallels Tools loader only if Tools is already installed; never bundle vendor Tools.
+if [[ -d /Library/Extensions/prl_tg.kext ]]; then
+    targets+=(/Library/LaunchDaemons/com.pvgbackport.prltg-loader.plist)
+    mkdir -p "$payload/Library/LaunchDaemons"
+    cp "$repo/support/com.pvgbackport.prltg-loader.plist" "$payload/Library/LaunchDaemons/"
+fi
+cache_system=/System/Library/PrelinkedKernels/prelinkedkernel
+cache_data=/Library/Apple/System/Library/PrelinkedKernels/prelinkedkernel
+[[ $pvg_target != 10.14 ]] || cache_data=$cache_system
+[[ -s $cache_system ]] || fail 'No System-volume prelinked kernel. Unsupported boot layout.'
+# Include boot caches and obsolete bridge in the transaction, not in the release payload.
+typeset -U all_targets
+all_targets=($targets /Library/Extensions/IOSurfacePVGCompat.kext "$cache_system" "$cache_data")
+backup="/Library/Application Support/PVGBackport/backups/$(date +%Y%m%d-%H%M%S)-$$"
+mkdir -p "$backup/originals" "$backup/absent"
+chmod 700 "$backup"
+print -l -- $all_targets > "$backup/targets.txt"
+sw_vers > "$backup/os.txt"
+sw_vers -buildVersion > "$backup/build.txt"
+shasum -a 256 \
+    /System/Library/Frameworks/CoreDisplay.framework/Versions/A/CoreDisplay \
+    /System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3902/MTLCompiler \
+    /System/Library/Frameworks/Metal.framework/Versions/A/XPCServices/MTLCompilerService.xpc/Contents/MacOS/MTLCompilerService \
+    > "$backup/guest-inputs.sha256"
+if nvram boot-args > "$scratch/nvram.txt" 2>/dev/null; then
+    sed 's/^[^[:space:]]*[[:space:]]*//' "$scratch/nvram.txt" > "$backup/boot-args.txt"
+else
+    touch "$backup/boot-args.absent"
+    : > "$backup/boot-args.txt"
+fi
+print "Saving originals to: $backup"
+for target in $all_targets; do
+    if [[ -e $target || -L $target ]]; then
+        mkdir -p "$backup/originals${target:h}"
+        ditto --noextattr --noacl "$target" "$backup/originals$target"
+    else
+        mkdir -p "$backup/absent${target:h}"
+        touch "$backup/absent$target"
+    fi
+done
+touch "$backup/backup-complete"
+mount -uw /
+mutating=1
+mkdir -p "$backup/displaced"
+for target in $targets; do
+    if [[ -e $target || -L $target ]]; then
+        mkdir -p "$backup/displaced${target:h}"
+        displace "$target" install
+    fi
+    mkdir -p "${target:h}"
+    ditto --noextattr --noacl "$payload$target" "$target"
+    chown -R root:wheel "$target"
+    chmod -R go-w "$target"
+done
+obsolete=/Library/Extensions/IOSurfacePVGCompat.kext
+if [[ -e $obsolete ]]; then
+    mkdir -p "$backup/displaced${obsolete:h}"
+    displace "$obsolete" install
+fi
+touch /System/Library/Extensions /Library/Extensions
+print "Building the guest boot cache (log: $backup/kextcache.log)..."
+(trap - ZERR INT TERM; exec /usr/sbin/kextcache -i /) > "$backup/kextcache.log" 2>&1 &
+cache_pid=$!
+elapsed=0
+while kill -0 $cache_pid 2>/dev/null; do
+    sleep 5
+    elapsed=$((elapsed + 5))
+    if (( elapsed % 30 == 0 )); then
+        print "  Cache builder still running ($elapsed seconds)."
+    fi
+    if (( elapsed >= 300 )); then
+        kill -TERM $cache_pid 2>/dev/null || true
+        sleep 2
+        kill -KILL $cache_pid 2>/dev/null || true
+        wait $cache_pid || true
+        print -u2 'Cache build exceeded five minutes; rolling back.'
+        false
+    fi
+done
+wait $cache_pid
+unset cache_pid
+[[ -s $cache_data && $cache_data -nt "$backup/backup-complete" ]] || {
+    print -u2 'Cache builder did not produce a fresh target boot cache.'
+    false
+}
+[[ $cache_data == $cache_system ]] || cp -p "$cache_data" "$cache_system"
+chown root:wheel "$cache_system"
+sync
+touch "$backup/install-complete"
+mutating=0
+print 'Installation complete. No dyld shared-cache rebuild was needed.'
+print "Backup: $backup"
+print 'Shut down the guest. On the host set Hardware > Video > Type to 2.'
+print 'Then start the guest and run ./Install.command --verify.'
+print 'Do not judge the new driver before that restart. This script never reboots without you.'

@@ -1,0 +1,36 @@
+#!/bin/zsh
+# Local macOS build using Apple's PVG, never a replacement GPU backend.
+set -euo pipefail
+repo=${0:A:h:h}
+source_dir=${PVG_QEMU_SOURCE:-$repo/vendor/qemu}
+deps=${PVG_QEMU_DEPS:-${repo:h:h:h}/pvg-qemu-deps}
+[[ $(uname -s) == Darwin ]] || exit 65
+if [[ $(uname -m) == arm64 ]]; then
+    build=${PVG_QEMU_BUILD:-$repo/Build/qemu/build-arm64-pvg}
+    export PATH="/opt/homebrew/bin:$PATH"
+    export PKG_CONFIG=/opt/homebrew/bin/pkgconf
+    export PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig
+    host_args=(--enable-tcg --disable-hvf
+        --extra-cflags=-mmacosx-version-min=15.2
+        --extra-objcflags=-mmacosx-version-min=15.2)
+else
+    build=${PVG_QEMU_BUILD:-$repo/Build/qemu/build-pvg}
+    export PATH="$deps/install/bin:$deps/venv/bin:$PATH"
+    export PKG_CONFIG="$deps/install/bin/pkgconf"
+    export PKG_CONFIG_PATH="$deps/install/lib/pkgconfig:/usr/local/lib/pkgconfig"
+    host_args=(--python="$deps/venv/bin/python3" --enable-hvf)
+fi
+[[ -x $source_dir/configure && -x $PKG_CONFIG ]] || exit 66
+case ${PVG_QEMU_LTO:-0} in
+    0) host_args+=(--disable-lto) ;;
+    1) host_args+=(--enable-lto) ;;
+    *) print -u2 'PVG_QEMU_LTO must be 0 or 1'; exit 64 ;;
+esac
+mkdir -p "$build"
+cd "$build"
+"$source_dir/configure" --target-list=x86_64-softmmu \
+    "${host_args[@]}" --enable-cocoa --enable-pvg \
+    --enable-slirp --enable-pixman --enable-sdl --disable-docs --disable-guest-agent \
+    --disable-werror --disable-rust
+ninja -j "${PVG_BUILD_JOBS:-4}" qemu-system-x86_64 qemu-img
+print "Built Apple-framework QEMU at $build"

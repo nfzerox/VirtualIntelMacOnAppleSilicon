@@ -1,0 +1,22 @@
+expression -l c -- void *$pvg_s1 = ((void *(*)(unsigned int))IOSurfaceLookup)(1)
+expression -l c -- void *$pvg_s3 = ((void *(*)(unsigned int))IOSurfaceLookup)(3)
+expression -l c -- unsigned int $pvg_s1_seed = ((unsigned int (*)(void *))IOSurfaceGetSeed)($pvg_s1)
+expression -l c -- unsigned int $pvg_s3_seed = ((unsigned int (*)(void *))IOSurfaceGetSeed)($pvg_s3)
+expression -l c -- unsigned int $pvg_s1_use = ((unsigned int (*)(void *))IOSurfaceGetUseCount)($pvg_s1)
+expression -l c -- unsigned int $pvg_s3_use = ((unsigned int (*)(void *))IOSurfaceGetUseCount)($pvg_s3)
+expression -l c -- void *$pvg_s1_values = ((void *(*)(void *))IOSurfaceCopyAllValues)($pvg_s1)
+expression -l c -- void *$pvg_s3_values = ((void *(*)(void *))IOSurfaceCopyAllValues)($pvg_s3)
+expression -l c -- $pvg_s1
+expression -l c -- $pvg_s1_seed
+expression -l c -- $pvg_s1_use
+expression -l c -- ((void (*)(void *))CFShow)($pvg_s1_values)
+expression -l c -- $pvg_s3
+expression -l c -- $pvg_s3_seed
+expression -l c -- $pvg_s3_use
+expression -l c -- ((void (*)(void *))CFShow)($pvg_s3_values)
+expression -l c -- ((void (*)(void *))CFRelease)($pvg_s1_values)
+expression -l c -- ((void (*)(void *))CFRelease)($pvg_s3_values)
+expression -l c -- ((void (*)(void *))CFRelease)($pvg_s1)
+expression -l c -- ((void (*)(void *))CFRelease)($pvg_s3)
+process detach
+quit

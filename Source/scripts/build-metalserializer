@@ -1,0 +1,137 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cache="$repo_root/work/bigsur/System/Library/dyld/dyld_shared_cache_x86_64"
+resources="${PVG_INPUT_ROOT:-$repo_root}/work/bigsur/System/Library/PrivateFrameworks/MetalSerializer.framework/Versions/A/Resources"
+output=${1:-"$repo_root/artifacts/build/metalserializer"}
+framework="$output/MetalSerializer.framework"
+extracted="${PVG_INPUT_ROOT:-$repo_root}/research/dsce/Out/System/Library/PrivateFrameworks/MetalSerializer.framework/Versions/A/MetalSerializer"
+target=${PVG_TARGET_OS:-10.15}
+case "$target" in
+    10.15) xcode_name=XcodeCatalina ;;
+    10.14) xcode_name=XcodeMojave ;;
+    *) echo "unsupported target: $target" >&2; exit 64 ;;
+esac
+sdk="$repo_root/resources/xcode/$xcode_name.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+trace_flags=
+trace_sources=
+if [ "${PVG_EXPERIMENTAL_LEGACY_AIR:-0}" = 1 ]; then
+    [ "$target" = 10.14 ] || { echo "Legacy AIR experiment is Mojave-only" >&2; exit 64; }
+    trace_flags=-DPVG_EXPERIMENTAL_LEGACY_AIR=1
+fi
+
+if [ "${PVG_TRACE_RESOURCES:-0}" = 1 ]; then
+    trace_flags="$trace_flags -DPVG_TRACE_RESOURCES=1"
+fi
+if [ "${PVG_TRACE_COMMANDS:-0}" = 1 ]; then
+    trace_flags="$trace_flags -DPVG_TRACE_COMMANDS=1"
+    trace_sources="$repo_root/probes/pvg-command-trace.m"
+fi
+if [ "${PVG_TRACE_COMMANDS_ARMED:-0}" = 1 ]; then
+    [ "${PVG_TRACE_COMMANDS:-0}" = 1 ] || {
+        echo "PVG_TRACE_COMMANDS_ARMED requires PVG_TRACE_COMMANDS=1" >&2
+        exit 64
+    }
+    trace_flags="$trace_flags -DPVG_TRACE_COMMANDS_ARMED=1"
+fi
+if [ "${PVG_TRACE_COMPILER_ALWAYS:-0}" = 1 ]; then
+    trace_flags="$trace_flags -DPVG_TRACE_COMPILER_ALWAYS=1"
+fi
+if [ "${PVG_FORCE_DISPLAY_SURFACE_SYNC:-0}" = 1 ]; then
+    trace_flags="$trace_flags -DPVG_FORCE_DISPLAY_SURFACE_SYNC=1"
+fi
+if [ "${PVG_SKIP_WINDOWSERVER_MIPMAPS:-0}" = 1 ]; then
+    trace_flags="$trace_flags -DPVG_SKIP_WINDOWSERVER_MIPMAPS=1"
+    trace_sources="$trace_sources $repo_root/probes/pvg-skip-windowserver-mipmaps.m"
+fi
+
+if [ -e "$output" ]; then
+    echo "output already exists: $output" >&2
+    exit 73
+fi
+if { [ ! -f "$cache" ] && [ ! -f "$extracted" ]; } || [ ! -f "$resources/Info.plist" ]; then
+    echo "Big Sur cache or framework resources are missing" >&2
+    exit 66
+fi
+
+if [ ! -f "$extracted" ]; then
+    "$repo_root/scripts/build-dsce"
+    (
+        cd "$repo_root/vendor/source/dsce"
+        ./dsce "$cache" \
+            /System/Library/PrivateFrameworks/MetalSerializer.framework/Versions/A/MetalSerializer
+    )
+fi
+
+mkdir -p "$framework/Versions/A"
+cp -R "$resources" "$framework/Versions/A/"
+cp -p "$extracted" "$output/MetalSerializer.unpatched"
+xcrun vtool \
+    -set-build-version macos "$target" "$target" \
+    -replace \
+    -output "$framework/Versions/A/MetalSerializerOriginal" \
+    "$extracted"
+install_name_tool -id @loader_path/MetalSerializerOriginal \
+    "$framework/Versions/A/MetalSerializerOriginal"
+
+if [ "$target" = 10.14 ]; then
+    xcrun clang -O2 -fblocks -arch x86_64 -mmacosx-version-min=10.14 -isysroot "$sdk" \
+        -dynamiclib "$repo_root/compat/PVGMojaveObjC.m" \
+        -Wl,-reexport_library,"$sdk/usr/lib/libobjc.tbd" \
+        -Wl,-reexport_library,"$sdk/usr/lib/libSystem.tbd" \
+        -framework Foundation -Wl,-reexport_framework,Metal \
+        -install_name /System/Library/PrivateFrameworks/MetalSerializer.framework/Versions/A/PVGMojaveObjC.dylib \
+        -o "$framework/Versions/A/PVGMojaveObjC.dylib"
+    # Mojave's UIKit apps enforce iOSMac compatibility on dependencies of
+    # IOAccelerator. This facade uses the shared macOS Objective-C/System/Metal
+    # ABI, so publish both platforms (as Apple's zippered libraries do), not
+    # an iOSMac-only replacement. No executable instructions are changed.
+    # dyld-655.1.1 MachOFile::supportsPlatform checks these load commands.
+    xcrun vtool -set-build-version macos 10.14 10.14 \
+        -set-build-version maccatalyst 12.0 12.0 -replace \
+        -output "$framework/Versions/A/PVGMojaveObjC.zippered" \
+        "$framework/Versions/A/PVGMojaveObjC.dylib"
+    mv "$framework/Versions/A/PVGMojaveObjC.zippered" \
+        "$framework/Versions/A/PVGMojaveObjC.dylib"
+    install_name_tool -change /usr/lib/libobjc.A.dylib @loader_path/PVGMojaveObjC.dylib \
+        "$framework/Versions/A/MetalSerializerOriginal"
+    install_name_tool -change /usr/lib/libSystem.B.dylib @loader_path/PVGMojaveObjC.dylib \
+        "$framework/Versions/A/MetalSerializerOriginal"
+    codesign -f -s - "$framework/Versions/A/PVGMojaveObjC.dylib"
+fi
+
+# Catalina's MTLIOAccelBuffer fills the 0xa8-byte resource-create descriptor
+# using the pre-Big-Sur field layout.  Load a narrow Objective-C ABI adapter
+# before forwarding all MetalSerializer symbols to the dsce-reconstructed
+# implementation.
+if [ "$target" = 10.14 ]; then
+    trace_sources="$trace_sources $repo_root/compat/PVGMojavePipelineSerialization.m"
+fi
+xcrun clang -O2 -arch x86_64 -mmacosx-version-min="$target" -fblocks -isysroot "$sdk" \
+    $trace_flags \
+    -dynamiclib "$repo_root/compat/PVGMetalCompat/PVGMetalCompat.m" \
+    "$repo_root/compat/PVGMetalCompat/PVGWritability.m" \
+    $trace_sources \
+    -undefined dynamic_lookup \
+    -install_name \
+    /System/Library/PrivateFrameworks/MetalSerializer.framework/Versions/A/MetalSerializer \
+    -Wl,-not_for_dyld_shared_cache \
+    -Wl,-reexport_library,"$framework/Versions/A/MetalSerializerOriginal" \
+    -framework Foundation -framework Metal -lobjc \
+    -o "$framework/Versions/A/MetalSerializer"
+/usr/libexec/PlistBuddy \
+    -c "Set :LSMinimumSystemVersion $target" \
+    "$framework/Versions/A/Resources/Info.plist"
+ln -s A "$framework/Versions/Current"
+ln -s Versions/Current/MetalSerializer "$framework/MetalSerializer"
+ln -s Versions/Current/Resources "$framework/Resources"
+
+codesign -f -s - "$framework/Versions/A/MetalSerializerOriginal"
+codesign -f -s - "$framework/Versions/A/MetalSerializer"
+codesign -f -s - "$framework"
+codesign --verify --deep --strict --verbose=4 "$framework"
+dyld_info -objc "$framework/Versions/A/MetalSerializer" >/dev/null
+dyld_info -objc "$framework/Versions/A/MetalSerializerOriginal" >/dev/null
+
+echo "built $framework"

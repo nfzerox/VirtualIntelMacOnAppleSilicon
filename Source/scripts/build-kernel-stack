@@ -1,0 +1,88 @@
+#!/bin/zsh
+set -euo pipefail
+
+repo_root=${0:A:h:h}
+source_extensions="${PVG_INPUT_ROOT:-$repo_root}/work/bigsur/System/Library/Extensions"
+compat="$repo_root/work/build/PVGKernelCompat/Build/Products/Release/PVGKernelCompat.kext"
+output=${1:-"$repo_root/artifacts/build/kernel-stack-coherent-iosurface-abi"}
+
+if [[ ! -d "$compat" ]]; then
+    "$repo_root/scripts/build-kernel-compat"
+fi
+
+[[ ! -e "$output" ]] || {
+    print -u2 "output already exists: $output"
+    exit 73
+}
+mkdir -p "$output"
+ditto "$source_extensions/IOSurface.kext" \
+    "$output/IOSurface.kext"
+ditto "$source_extensions/IOAcceleratorFamily2.kext" \
+    "$output/IOAcceleratorFamily2.kext"
+ditto "$source_extensions/AppleParavirtGPU.kext" \
+    "$output/AppleParavirtGPU.kext"
+ditto "$compat" "$output/PVGKernelCompat.kext"
+
+iosurface_plist="$output/IOSurface.kext/Contents/Info.plist"
+ioaccel_plist="$output/IOAcceleratorFamily2.kext/Contents/Info.plist"
+pvg_plist="$output/AppleParavirtGPU.kext/Contents/Info.plist"
+
+/usr/libexec/PlistBuddy -c 'Set :LSMinimumSystemVersion 10.15' \
+    "$iosurface_plist"
+/usr/libexec/PlistBuddy -c 'Add :OSBundleLibraries:local.pvg.KernelCompat string 1.0.0' \
+    "$iosurface_plist" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c 'Set :OSBundleLibraries:local.pvg.KernelCompat 1.0.0' \
+        "$iosurface_plist"
+/usr/libexec/PlistBuddy -c 'Add :OSBundleLibraries:local.pvg.IOSurfaceABI string 1.0.0' \
+    "$iosurface_plist" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c 'Set :OSBundleLibraries:local.pvg.IOSurfaceABI 1.0.0' \
+        "$iosurface_plist"
+/usr/libexec/PlistBuddy -c 'Set :LSMinimumSystemVersion 10.15' \
+    "$ioaccel_plist"
+/usr/libexec/PlistBuddy -c 'Set :LSMinimumSystemVersion 10.15' \
+    "$pvg_plist"
+/usr/libexec/PlistBuddy -c 'Add :OSBundleCompatibleVersion string 1.0.0' \
+    "$pvg_plist" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c 'Set :OSBundleCompatibleVersion 1.0.0' \
+        "$pvg_plist"
+/usr/libexec/PlistBuddy -c 'Add :OSBundleLibraries:local.pvg.KernelCompat string 1.0.0' \
+    "$pvg_plist" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c 'Set :OSBundleLibraries:local.pvg.KernelCompat 1.0.0' \
+        "$pvg_plist"
+
+# Catalina is x86_64-only. Removing arm64e also avoids presenting an unknown
+# slice to Catalina's older kext tools.
+for binary in \
+    "$output/IOSurface.kext/Contents/MacOS/IOSurface" \
+    "$output/AppleParavirtGPU.kext/Contents/MacOS/AppleParavirtGPU"; do
+    lipo -thin x86_64 "$binary" -output "$binary.x86_64"
+    mv "$binary.x86_64" "$binary"
+done
+
+# OSSharedPtr<OSObject>& is one pointer wide, and every donor call site
+# value-initializes it before the call. Big Sur's overload merely invokes the
+# Catalina-era OSObject** overload and transfers the returned retain. Retarget
+# the import in-place; the shorter mangled name is padded inside the existing
+# string-table slot. Keeping this call in Apple's IOSurface bundle also lets it
+# use the private KPI that Catalina intentionally denies to third-party kexts.
+iosurface_binary="$output/IOSurface.kext/Contents/MacOS/IOSurface"
+copy_shared='__ZN12IOUserClient27copyObjectForPortNameInTaskEP4taskjR11OSSharedPtrI8OSObjectE'
+copy_raw='__ZN12IOUserClient27copyObjectForPortNameInTaskEP4taskjPP8OSObject'
+[[ $(LC_ALL=C grep -aFo "$copy_shared" "$iosurface_binary" | wc -l) -eq 1 ]]
+perl -0pi -e \
+    's/__ZN12IOUserClient27copyObjectForPortNameInTaskEP4taskjR11OSSharedPtrI8OSObjectE/__ZN12IOUserClient27copyObjectForPortNameInTaskEP4taskjPP8OSObject\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00/g' \
+    "$iosurface_binary"
+[[ $(LC_ALL=C grep -aFo "$copy_raw" "$iosurface_binary" | wc -l) -eq 1 ]]
+
+for bundle in \
+    "$output/PVGKernelCompat.kext" \
+    "$output/IOSurface.kext" \
+    "$output/IOAcceleratorFamily2.kext" \
+    "$output/AppleParavirtGPU.kext"; do
+    codesign --force --deep --sign - --preserve-metadata=entitlements "$bundle"
+    codesign --verify --strict --verbose=2 "$bundle"
+done
+
+plutil -lint "$iosurface_plist" "$ioaccel_plist" "$pvg_plist"
+file "$output"/*.kext/Contents/MacOS/*
+printf '%s\n' "$output"

@@ -1,0 +1,19 @@
+# Upstream QEMU imported as plain files into Source/vendor/qemu; our changes
+# are ordinary commits on top. Update both lines below when importing a new
+# upstream release. Submodules are not vendored; pins are recorded here.
+upstream https://gitlab.com/qemu-project/qemu.git f9587d4045c67cd0d8d8bdcd5d0bb5b6b395b63c
+submodule roms/QemuMacDrivers https://gitlab.com/qemu-project/QemuMacDrivers.git 90c488d5f4a407342247b9ea869df1c2d9c8e266
+submodule roms/SLOF https://gitlab.com/qemu-project/SLOF.git 47457c9078a217150aa1634f2657e6804fbde467
+submodule roms/edk2 https://gitlab.com/qemu-project/edk2.git 2970e5699ba6267f3384ffab20f96647578aebc8
+submodule roms/ipxe https://gitlab.com/qemu-project/ipxe.git 4bd064de239dab2426b31c9789a1f4d78087dc63
+submodule roms/openbios https://gitlab.com/qemu-project/openbios.git e5ac46dd24e6216c36aa80462af25457e7029440
+submodule roms/opensbi https://gitlab.com/qemu-project/opensbi.git 74434f255873d74e56cc50aa762d1caf24c099f8
+submodule roms/qboot https://gitlab.com/qemu-project/qboot.git 8ca302e86d685fa05b16e2b208888243da319941
+submodule roms/qemu-palcode https://gitlab.com/qemu-project/qemu-palcode.git 99d9b4dcf27d7fbcbadab71bdc88ef6531baf6bf
+submodule roms/seabios https://gitlab.com/qemu-project/seabios.git b52ca86e094d19b58e2304417787e96b940e39c6
+submodule roms/seabios-hppa https://gitlab.com/qemu-project/seabios-hppa.git d33a19dfed266116cb29a895aefbbcc901d18a0e
+submodule roms/skiboot https://gitlab.com/qemu-project/skiboot.git 785a5e3070a86e18521e62fe202b87209de30fa2
+submodule roms/u-boot https://gitlab.com/qemu-project/u-boot.git 840658b093976390e9537724f802281c9c8439f5
+submodule roms/u-boot-sam460ex https://gitlab.com/qemu-project/u-boot-sam460ex.git 1e5f4a1607cc6713d27ffe48dd9de84e69cfc1c2
+submodule roms/vbootrom https://gitlab.com/qemu-project/vbootrom.git 1c8e9510b22c5b0fd7d7753f08042a4bcbd2939d
+submodule tests/lcitool/libvirt-ci https://gitlab.com/libvirt/libvirt-ci.git f34cd57eb892259c26600187bc35cc4152f932cf

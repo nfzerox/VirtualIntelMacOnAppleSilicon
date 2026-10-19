@@ -1,0 +1,9 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+out=${1:?usage: build-guest-progress NEW_OUTPUT}
+[[ ! -e $out ]] || { print -u2 'Output exists; choose a new staging path.'; exit 73; }
+xcrun clang -arch x86_64 -mmacosx-version-min=10.14 -fobjc-arc -O2 -Wall -Wextra \
+    -framework Cocoa "$root/tools/guest-progress.m" \
+    -Wl,-sectcreate,__TEXT,__info_plist,"$root/support/GuestProgress-Info.plist" -o "$out"
+codesign --force --sign - "$out"

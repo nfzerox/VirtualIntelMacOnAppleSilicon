@@ -1,0 +1,30 @@
+breakpoint set -n "-[CIContext drawImage:inRect:fromRect:]"
+continue
+expression -- id $image = (id)$rdx
+memory read --format f --size 8 --count 8 `$rsp+8`
+expression -- int $viewport[4] = {}; ((void(*)(unsigned,int*))glGetIntegerv)(0x0BA2,$viewport)
+expression -- $viewport
+expression -- int $scissor[4] = {}; ((void(*)(unsigned,int*))glGetIntegerv)(0x0C10,$scissor)
+expression -- $scissor
+expression -- (unsigned char)((unsigned char(*)(unsigned))glIsEnabled)(0x0C11)
+expression -- int $framebuffer = 0; ((void(*)(unsigned,int*))glGetIntegerv)(0x8CA6,&$framebuffer)
+expression -- $framebuffer
+expression -- int $drawbuffer = 0; ((void(*)(unsigned,int*))glGetIntegerv)(0x0C01,&$drawbuffer)
+expression -- $drawbuffer
+expression -- int $readbuffer = 0; ((void(*)(unsigned,int*))glGetIntegerv)(0x0C02,&$readbuffer)
+expression -- $readbuffer
+expression -- unsigned char $mask[4] = {}; ((void(*)(unsigned,unsigned char*))glGetBooleanv)(0x0C23,$mask)
+expression -- $mask
+expression -- float $projection[16] = {}; ((void(*)(unsigned,float*))glGetFloatv)(0x0BA7,$projection)
+expression -- $projection
+expression -- float $modelview[16] = {}; ((void(*)(unsigned,float*))glGetFloatv)(0x0BA6,$modelview)
+expression -- $modelview
+expression -O -- $image
+thread step-out
+expression -- ((void(*)(unsigned))glReadBuffer)(0x0405)
+expression -- unsigned char $pixel[4] = {}; ((void(*)(int,int,int,int,unsigned,unsigned,void*))glReadPixels)(945,658,1,1,0x1908,0x1401,$pixel)
+expression -- $pixel
+expression -- (unsigned)((unsigned(*)(void))glGetError)()
+expression -- ((void(*)(unsigned))glReadBuffer)($readbuffer)
+detach
+quit

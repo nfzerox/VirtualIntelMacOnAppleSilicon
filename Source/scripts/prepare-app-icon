@@ -1,0 +1,16 @@
+#!/bin/bash
+# Developer artwork refresh only. Ordinary builds use checked-in SVGs.
+set -euo pipefail
+source_dir="$(cd "$(dirname "$0")/.." && pwd)"
+mkdir -p "$source_dir/Build/IconReview"
+xcrun clang -fobjc-arc -fmodules "$source_dir/tools/export-app-artwork.m" \
+  -framework Cocoa -framework ImageIO -o "$source_dir/Build/export-app-artwork"
+"$source_dir/Build/export-app-artwork" symbol "$source_dir/VirtualIntelMac/AppIcon.icon/Assets"
+developer_dir="$(xcode-select -p)"
+renderer="${developer_dir%/Developer}/Applications/Icon Composer.app/Contents/Executables/ictool"
+for appearance in Default Dark; do
+  "$renderer" "$source_dir/VirtualIntelMac/AppIcon.icon" --export-image \
+    --output-file "$source_dir/Build/IconReview/$appearance.png" \
+    --platform macOS --rendition "$appearance" --width 512 --height 512 --scale 1
+done
+echo "Icon Composer previews: $source_dir/Build/IconReview"

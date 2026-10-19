@@ -1,0 +1,60 @@
+name: Feature Request
+description: Suggest a new feature or improvement for OpenCore-ISO
+title: "[FEATURE] "
+labels: ["enhancement"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Thanks for suggesting a feature for OpenCore-ISO!
+        Your ideas help make this project better for everyone.
+        
+        **Have you starred this repo yet?** Show your support by giving it a star!
+
+  - type: checkboxes
+    attributes:
+      label: Prerequisites
+      options:
+        - label: I searched existing issues - this hasn't been requested
+          required: true
+        - label: This relates to OpenCore-ISO specifically
+          required: true
+        - label: I've starred the repo ⭐ (or will star it later!)
+          required: false
+
+  - type: textarea
+    attributes:
+      label: Feature Description
+      description: What would you like to see?
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Problem It Solves
+      description: What issue does this address?
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Proposed Implementation
+      description: How should this work?
+    validations:
+      required: false
+
+  - type: textarea
+    attributes:
+      label: Additional Context
+      description: Any other details or alternatives?
+    validations:
+      required: false
+
+  - type: checkboxes
+    attributes:
+      label: I can help with
+      options:
+        - label: Testing
+        - label: Documentation
+        - label: Implementation

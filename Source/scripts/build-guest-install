@@ -1,0 +1,19 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+out=${1:?usage: build-guest-install NEW_OUTPUT}
+extra=()
+if [[ ${2:-} == --fixture ]]; then
+    extra=(-DVIM_INSTALL_PLAN_TESTING)
+elif [[ $# != 1 ]]; then
+    print -u2 'Only --fixture is accepted as an optional second argument.'; exit 64
+fi
+[[ ! -e $out ]] || { print -u2 'Output exists; choose a new staging path.'; exit 73; }
+mkdir -p "$root/Build/Probes"
+work=$(mktemp -d "$root/Build/Probes/guest-install-build.XXXXXX")
+# Generate immutable native allowlists from the existing release target lists.
+python3 "$root/scripts/generate-guest-install-targets.py" "$work/guest-install-targets.h"
+xcrun clang -arch x86_64 -mmacosx-version-min=10.14 -fobjc-arc -O2 -Wall -Wextra \
+    -Wno-deprecated-declarations "${extra[@]}" -I "$work" -framework Foundation -framework IOKit \
+    "$root/tools/guest-install.m" "$root/tools/VIMFileTransaction.m" -o "$out"
+codesign --force --sign - "$out"

@@ -1,0 +1,12 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+mkdir -p "$root/Build/Probes"
+work=$(mktemp -d "$root/Build/Probes/guest-prepare.XXXXXX")
+xcrun clang -arch x86_64 -mmacosx-version-min=10.14 -fobjc-arc -O2 -Wall -Wextra -I "$root/vendor/xz-api" \
+    -DVIM_GUEST_PREPARE_TESTING -framework Foundation -framework Security -lz -llzma.5 \
+    "$root/tools/guest-prepare.m" -o "$work/guest-prepare-fixture"
+python3 "$root/scripts/test-mojave-staging.py" "$work/guest-prepare-fixture"
+python3 "$root/scripts/test-catalina-staging.py" "$work/guest-prepare-fixture"
+python3 "$root/scripts/test-guest-extract.py" "$work/guest-prepare-fixture"
+print "Fixture executable retained at $work (not a production build)."

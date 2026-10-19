@@ -1,0 +1,23 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+dsce_root="$repo_root/vendor/source/dsce"
+
+cd "$dsce_root"
+exec clang++ \
+    -DBUILDING_ALLOCATOR_UNIT_TESTS=1 \
+    -fmodules \
+    -fcxx-modules \
+    -std=c++20 \
+    -Wno-unused-getter-return-value \
+    -mmacosx-version-min=11 \
+    -I . \
+    -I apple \
+    -I apple/dyld/common \
+    -I apple/dyld/lsl \
+    -I apple/dyld/other-tools \
+    -I apple/libplatform/private \
+    -DDSCE_VERSION=10 \
+    Main.mm \
+    -o dsce

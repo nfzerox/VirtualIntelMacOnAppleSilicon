@@ -1,0 +1,110 @@
+#!/bin/zsh
+# Development bring-up staging only; never installs or touches Catalina.
+set -euo pipefail
+repo=${0:A:h:h}
+reference=${PVG_MOJAVE_REFERENCE:-"$repo/artifacts/mojave/reference/payload"}
+native=${PVG_MOJAVE_NATIVE:-"$repo/work/mojave/native"}
+sky_input=${PVG_MOJAVE_SKYLIGHT:-"$native/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight"}
+ioaccel_input=${PVG_MOJAVE_IOACCELERATOR:-"$repo/work/catalina/userland/IOAccelerator"}
+framebuffer=${PVG_MOJAVE_FRAMEBUFFER:-"$repo/artifacts/mojave/framebuffer-bootstrap/PVGFramebufferBootstrap.kext"}
+output=${1:?usage: build-mojave-candidate NEW_OUTPUT_DIRECTORY}
+for required in "$reference" "$native" "$sky_input" "$ioaccel_input" \
+    "$repo/resources/xcode/XcodeMojave.app" "$repo/resources/xcode/XcodeBigSur.app"; do
+    [[ -e $required ]] || { print -u2 "Missing Mojave build input: $required"; exit 66; }
+done
+[[ $output != --check-inputs ]] || exit 0
+[[ ! -e "$output" ]] || { print -u2 'output already exists'; exit 73; }
+[[ -d "$reference" && -d "$native" ]] || exit 66
+sdk="$repo/resources/xcode/XcodeMojave.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+ditto "$reference" "$output"
+for name in IOSurface IOGraphicsFamily IOAcceleratorFamily2 AppleParavirtGPU; do
+    bundle="$output/System/Library/Extensions/$name.kext"
+    codesign --remove-signature "$bundle"
+    binary="$bundle/Contents/MacOS/$name"
+    plist="$bundle/Contents/Info.plist"
+    if [[ ! -f "$binary" ]]; then binary="$bundle/$name"; plist="$bundle/Info.plist"; fi
+    python3 "$repo/scripts/patch-mojave-kext-dispatch.py" "$binary" "$binary"
+    /usr/libexec/PlistBuddy -c 'Set :LSMinimumSystemVersion 10.14' "$plist"
+    if [[ "$name" == IOAcceleratorFamily2 ]]; then
+        /usr/libexec/PlistBuddy -c 'Add :OSBundleLibraries:local.pvg.KernelCompat string 1.0.0' "$plist"
+    fi
+    python3 "$repo/scripts/sign-donor.py" "$reference/System/Library/Extensions/$name.kext" "$bundle"
+done
+ditto "$repo/work/build/PVGKernelCompat-Mojave/Build/Products/Release/PVGKernelCompat.kext" "$output/Library/Extensions/PVGKernelCompat.kext"
+ditto "$repo/work/build/PVGIOSurfaceABI-Mojave/Build/Products/Debug/PVGIOSurfaceABI.kext" "$output/Library/Extensions/PVGIOSurfaceABI.kext"
+ditto "$repo/vendor/source/Lilu/build/Debug/Lilu.kext" "$output/Library/Extensions/Lilu.kext"
+ditto "$framebuffer" "$output/Library/Extensions/PVGFramebufferBootstrap.kext"
+
+# Rebuild only the narrow user-space wrappers. Reuse already reconstructed,
+# verified donor images; there is no shared-cache extraction here.
+PVG_TARGET_OS=10.14 PVG_EXPERIMENTAL_LEGACY_AIR=1 "$repo/scripts/build-metalserializer" "$output/.serializer-build"
+ditto "$output/.serializer-build/MetalSerializer.framework" "$output/System/Library/PrivateFrameworks/MetalSerializer.framework"
+plugin="$output/System/Library/Extensions/AppleParavirtGPUMetal.bundle"
+install_name_tool -change /usr/lib/libobjc.A.dylib \
+    /System/Library/PrivateFrameworks/MetalSerializer.framework/Versions/A/PVGMojaveObjC.dylib \
+    "$plugin/Contents/MacOS/AppleParavirtGPUMetal"
+install_name_tool -change /System/Library/Frameworks/Metal.framework/Versions/A/Metal \
+    /System/Library/PrivateFrameworks/MetalSerializer.framework/Versions/A/PVGMojaveObjC.dylib \
+    "$plugin/Contents/MacOS/AppleParavirtGPUMetal"
+/usr/libexec/PlistBuddy -c 'Set :LSMinimumSystemVersion 10.14' "$plugin/Contents/Info.plist"
+codesign --force --sign - --preserve-metadata=entitlements "$plugin"
+gpu="$output/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries"
+xcrun clang -O2 -arch x86_64 -mmacosx-version-min=10.14 -isysroot "$sdk" \
+    -dynamiclib "$repo/compat/PVGCompilerPluginBridge/PVGPluginGPUCompilerBridge.c" \
+    "$gpu/libLLVM.dylib" -Wl,-reexport_library,"$gpu/libGPUCompiler.dylib" \
+    -install_name /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/PVGPluginGPUCompilerBridge.dylib \
+    -o "$gpu/PVGPluginGPUCompilerBridge.dylib"
+codesign --force --sign - --preserve-metadata=entitlements "$gpu/PVGPluginGPUCompilerBridge.dylib"
+
+# Mojave's IOAccelerator client has a 0x48-byte resource reply; the donor
+# requires 0x58. Use the loose Catalina client, while retaining Mojave's Metal
+# base classes and compiler. Pre-Big-Sur inputs need no cache extraction.
+ioaccel=System/Library/PrivateFrameworks/IOAccelerator.framework/Versions/A/IOAccelerator
+mkdir -p "$output/${ioaccel:h}"
+cp "$ioaccel_input" "$output/$ioaccel"
+install_name_tool -change /usr/lib/libSystem.B.dylib \
+    /System/Library/PrivateFrameworks/MetalSerializer.framework/Versions/A/PVGMojaveObjC.dylib \
+    "$output/$ioaccel"
+codesign --force --sign - --preserve-metadata=entitlements "$output/$ioaccel"
+
+xcrun clang -O2 -arch x86_64 -mmacosx-version-min=10.14 -isysroot "$sdk" \
+    -dynamiclib "$repo/compat/PVGMojaveArchive.c" \
+    -Wl,-reexport_library,"$sdk/usr/lib/libarchive.2.tbd" \
+    -install_name @loader_path/PVGMojaveArchive.dylib \
+    -o "$gpu/PVGMojaveArchive.dylib"
+install_name_tool -change /usr/lib/libarchive.2.dylib \
+    @loader_path/PVGMojaveArchive.dylib "$gpu/libGPUCompilerImpl.dylib"
+codesign --force --sign - --preserve-metadata=entitlements "$gpu/PVGMojaveArchive.dylib"
+codesign --force --sign - --preserve-metadata=entitlements "$gpu/libGPUCompilerImpl.dylib"
+
+xcrun clang -O2 -arch x86_64 -mmacosx-version-min=10.14 -isysroot "$sdk" \
+    -DPVG_GL_FIX_FETCH_METADATA=1 -dynamiclib "$repo/compat/PVGCompilerPluginBridge/PVGCompilerPluginBridge.c" \
+    "$native/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/3902/Libraries/libLLVM.dylib" \
+    -install_name /System/Library/Extensions/AppleParavirtGPUMetal.bundle/Contents/Resources/libAppleParavirtCompilerPlugin.dylib \
+    -o "$plugin/Contents/Resources/libAppleParavirtCompilerPlugin.dylib"
+codesign --force --sign - --preserve-metadata=entitlements "$plugin/Contents/Resources/libAppleParavirtCompilerPlugin.dylib"
+codesign --force --sign - --preserve-metadata=entitlements "$plugin"
+
+# Preserve Mojave's own frontend and XPC protocol. Its on-disk binaries are
+# universal; only patch the working x86_64 copies, never the saved originals.
+mtl=System/Library/PrivateFrameworks/MTLCompiler.framework/Versions
+ditto "$native/$mtl/3902" "$output/$mtl/3903"
+python3 "$repo/scripts/pvg_macho.py" thin "$native/$mtl/3902/MTLCompiler" "$output/MTLCompiler.native"
+perl "$repo/scripts/patch-guest-image.pl" compiler "$output/MTLCompiler.native" "$output/$mtl/3903/MTLCompiler"
+codesign --force --sign - --preserve-metadata=entitlements "$output/$mtl/3903/MTLCompiler"
+xpc=System/Library/Frameworks/Metal.framework/Versions/A/XPCServices/MTLCompilerService.xpc
+ditto "$native/$xpc" "$output/$xpc"
+python3 "$repo/scripts/pvg_macho.py" thin "$native/$xpc/Contents/MacOS/MTLCompilerService" "$output/MTLCompilerService.native"
+perl "$repo/scripts/patch-guest-image.pl" service "$output/MTLCompilerService.native" "$output/$xpc/Contents/MacOS/MTLCompilerService"
+codesign --force --sign - --preserve-metadata=entitlements "$output/$xpc"
+
+# Patch the actual Mojave image, never the Catalina reference binary.
+ditto "$native/System/Library/Frameworks/CoreDisplay.framework" "$output/System/Library/Frameworks/CoreDisplay.framework"
+core="$output/System/Library/Frameworks/CoreDisplay.framework/Versions/A/CoreDisplay"
+python3 "$repo/scripts/patch-mojave-coredisplay.py" "$core" "$core"
+codesign --force --sign - --preserve-metadata=entitlements "$core"
+sky=System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight
+mkdir -p "$output/${sky:h}"
+python3 "$repo/scripts/patch-mojave-skylight.py" "$sky_input" "$output/$sky" --metal-capability-report
+codesign --force --sign - --preserve-metadata=entitlements "$output/$sky"
+print "Staged development candidate: $output (guest-native patch sites checked; fresh installation still requires validation)"

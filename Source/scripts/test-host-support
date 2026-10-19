@@ -1,0 +1,9 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+mkdir -p "$root/Build/Probes"
+xcrun clang -fobjc-arc -fmodules -Wall -mmacosx-version-min=26.0 \
+    -I "$root/VirtualIntelMac" -framework Foundation \
+    "$root/probes/host-support-tests.m" "$root/VirtualIntelMac/VIMHostSupport.m" \
+    -o "$root/Build/Probes/host-support-tests"
+exec "$root/Build/Probes/host-support-tests"

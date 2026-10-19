@@ -1,0 +1,10 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+mkdir -p "$root/Build/Probes"
+xcrun clang -fobjc-arc -fmodules -Wall -mmacosx-version-min=26.0 \
+    -I "$root/VirtualIntelMac" -framework Foundation \
+    "$root/probes/app-guest-agent.m" "$root/VirtualIntelMac/VIMQMPConnection.m" \
+    "$root/VirtualIntelMac/VIMGuestAgent.m" \
+    -o "$root/Build/Probes/app-guest-agent"
+exec "$root/Build/Probes/app-guest-agent" "${@:?Provide the running VM guest-agent socket}"

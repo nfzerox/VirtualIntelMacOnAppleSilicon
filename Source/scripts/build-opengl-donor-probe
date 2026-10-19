@@ -1,0 +1,54 @@
+#!/bin/zsh
+# Prepare a development-only Big Sur renderer without touching installed GPUs.
+set -euo pipefail
+repo=${0:A:h:h}
+donor=${PVG_GL_DONOR:-/Volumes/Big Sur/System/Library/Extensions/AppleMetalOpenGLRenderer.bundle}
+output=${1:?usage: build-opengl-donor-probe NEW_OUTPUT_DIRECTORY}
+target=${PVG_TARGET_OS:-10.15}
+case $target in
+    10.14|10.14.*) target=10.14 ;;
+    10.15|10.15.*) target=10.15 ;;
+    11|11.*) target=11 ;;
+    *) exit 64 ;;
+esac
+[[ ! -e "$output" && -f "$donor/Contents/MacOS/AppleMetalOpenGLRenderer" ]] || exit 65
+sdk="$repo/resources/xcode/XcodeMojave.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+mkdir -p "$output"
+cp -RX "$donor" "$output/AppleMetalOpenGLRenderer.bundle"
+binary="$output/AppleMetalOpenGLRenderer.bundle/Contents/MacOS/AppleMetalOpenGLRenderer"
+if [[ $(lipo -archs "$binary") != x86_64 ]]; then
+    lipo "$binary" -thin x86_64 -output "$binary.thin"
+    mv "$binary.thin" "$binary"
+fi
+# The donor has one relative Objective-C method list. Catalina only accepts
+# those inside its immutable shared cache; expand it for an on-disk bundle.
+codesign --remove-signature "$binary"
+if [[ $target != 11 ]]; then
+    "$repo/research/dsce/dsce" legacy-objc "$binary" "$binary.legacy"
+    mv "$binary.legacy" "$binary"
+fi
+# All supported guests use the same adapter, including texture-view swizzle
+# transport. Do not retain a separate, stale Catalina/Big Sur implementation.
+/bin/zsh "$repo/scripts/build-opengl-metal-probe" "${binary:h}/PVGOpenGLMetal.dylib"
+install_name_tool -change /System/Library/Frameworks/Metal.framework/Versions/A/Metal \
+    @loader_path/PVGOpenGLMetal.dylib "$binary"
+install_name_tool -change /System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface \
+    @loader_path/PVGOpenGLMetal.dylib "$binary"
+if [[ $target == 10.14 ]]; then
+    python3 "$repo/scripts/patch-gl-argb-fallback.py" "$binary" "$binary.argb"
+    mv "$binary.argb" "$binary"
+    xcrun clang -O2 -arch x86_64 -mmacosx-version-min=10.14 -isysroot "$sdk" \
+        -dynamiclib "$repo/compat/PVGOpenGLProbe/PVGCGLPBufferCompat.m" \
+        -framework Foundation -Wl,-reexport_framework,OpenGL \
+        -install_name @loader_path/PVGCGLPBufferCompat.dylib \
+        -o "${binary:h}/PVGCGLPBufferCompat.dylib"
+    install_name_tool -change /System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL \
+        @loader_path/PVGCGLPBufferCompat.dylib "$binary"
+    # Reuse the installed backport's ObjC shim; do not register a duplicate
+    # _MTLObjectWithLabel class in another compatibility library.
+    install_name_tool -change /usr/lib/libobjc.A.dylib \
+        /System/Library/PrivateFrameworks/MetalSerializer.framework/Versions/A/PVGMojaveObjC.dylib "$binary"
+    codesign -f -s - --preserve-metadata=entitlements "${binary:h}/PVGCGLPBufferCompat.dylib"
+fi
+codesign -f -s - --preserve-metadata=entitlements "${binary:h}/PVGOpenGLMetal.dylib"
+python3 "$repo/scripts/sign-donor.py" "$donor" "$output/AppleMetalOpenGLRenderer.bundle"

@@ -1,0 +1,7 @@
+breakpoint set --name IOPresentmentEnd
+continue
+thread backtrace --count 16
+register read rdi rsi rdx rcx
+expression -f x -- (unsigned long long)$rdx
+process detach
+quit

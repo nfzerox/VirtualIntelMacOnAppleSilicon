@@ -1,0 +1,7 @@
+Virtual Intel Mac guest graphics release
+Guest: Intel Catalina 10.15.x (runtime baseline 19H15); donor: Big Sur 11.7.11 20G1443
+Wrapper and update-aware installer source checkpoint: e2c35a5c939eb78170037724709e8af0f23805f5
+Native CoreDisplay/compiler/service reference copies are freshly replaced from the guest during installation.
+dsce: 71eee52b6c43d34cc21674968e6ee92617201700
+Lilu: 0515f40b7f2a096adc85e832a4c6104fbd07f936
+MacKernelSDK: 05094e5e88cec7caedbfb35e8449ed0db94bf95b

@@ -1,0 +1,37 @@
+#!/bin/zsh
+set -euo pipefail
+
+repo_root=${0:A:h:h}
+project_dir="$repo_root/compat/PVGFramebufferBootstrap"
+target=${PVG_TARGET_OS:-10.15}
+case "$target" in
+    10.15) xcode_name=XcodeCatalina; build_name=PVGFramebufferBootstrap ;;
+    10.14) xcode_name=XcodeMojave; build_name=PVGFramebufferBootstrap-Mojave ;;
+    *) print -u2 "unsupported target: $target"; exit 64 ;;
+esac
+catalina_sdk="$repo_root/resources/xcode/$xcode_name.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+derived_data="$repo_root/work/build/$build_name"
+product="$derived_data/Build/Products/Release/PVGFramebufferBootstrap.kext"
+output=${1:-"$repo_root/artifacts/build/framebuffer-bootstrap"}
+[[ ! -e "$output" ]] || { print -u2 "output already exists: $output"; exit 73; }
+kernel_framework="$catalina_sdk/System/Library/Frameworks/Kernel.framework"
+
+xcodebuild \
+    -project "$project_dir/PVGFramebufferBootstrap.xcodeproj" \
+    -scheme PVGFramebufferBootstrap \
+    -configuration Release \
+    -derivedDataPath "$derived_data" \
+    SDKROOT=macosx \
+    HEADER_SEARCH_PATHS="$kernel_framework/PrivateHeaders $kernel_framework/Headers" \
+    LIBRARY_SEARCH_PATHS="$catalina_sdk/usr/lib" \
+    MACOSX_DEPLOYMENT_TARGET="$target" \
+    ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+    build
+
+mkdir -p "$output"
+ditto "$product" "$output/PVGFramebufferBootstrap.kext"
+/usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $target" "$output/PVGFramebufferBootstrap.kext/Contents/Info.plist"
+codesign --force --sign - "$output/PVGFramebufferBootstrap.kext"
+file "$output/PVGFramebufferBootstrap.kext/Contents/MacOS/PVGFramebufferBootstrap"
+nm -arch x86_64 -g "$output/PVGFramebufferBootstrap.kext/Contents/MacOS/PVGFramebufferBootstrap"
+printf '%s\n' "$output/PVGFramebufferBootstrap.kext"

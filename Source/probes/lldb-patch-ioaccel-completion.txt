@@ -1,0 +1,14 @@
+settings set auto-confirm true
+process attach --name WindowServer
+expression -l c -- void *$pvg_notify_setup = ((void *(*)(void *, const char *))dlsym)((void *)-2, "IOAccelDisplayPipeSetTransactionNotifyPort")
+expression -l c -- unsigned char *$pvg_notify_callback = (unsigned char *)$pvg_notify_setup + 0x114
+memory read --force --size 1 --format x --count 32 `$pvg_notify_callback`
+expression -l c -- unsigned long $pvg_page = (unsigned long)$pvg_notify_callback & ~0xfffUL
+expression -l c -- int $pvg_write_result = ((int (*)(unsigned int, unsigned long long, unsigned long long, int, int))mach_vm_protect)(((unsigned int (*)(void))mach_task_self)(), $pvg_page, 0x1000, 0, 0x13)
+expression -l c -- $pvg_write_result
+memory write --size 1 `$pvg_notify_callback + 0x11` 0x48 0x8b 0x72 0x18 0x90 0x90 0x90 0x90 0x90 0x90 0x90 0x90 0x90 0x90
+expression -l c -- int $pvg_restore_result = ((int (*)(unsigned int, unsigned long long, unsigned long long, int, int))mach_vm_protect)(((unsigned int (*)(void))mach_task_self)(), $pvg_page, 0x1000, 0, 0x5)
+expression -l c -- $pvg_restore_result
+memory read --force --size 1 --format x --count 32 `$pvg_notify_callback`
+process detach
+quit

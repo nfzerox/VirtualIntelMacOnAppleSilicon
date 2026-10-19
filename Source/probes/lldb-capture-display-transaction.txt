@@ -1,0 +1,10 @@
+breakpoint set --name IOAccelDisplayPipeTransactionEnd
+continue
+register read rdi
+expression -l c -- void *$pvg_transaction = (void *)$rdi
+expression -l c -- void *$pvg_input = (void *)((char *)$pvg_transaction + 0x40)
+expression -l c -- $pvg_transaction
+expression -l c -- $pvg_input
+memory read --force --binary --outfile /tmp/pvg-display-transaction.bin --count 0x108 `$pvg_input`
+process detach
+quit

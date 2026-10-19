@@ -1,0 +1,26 @@
+breakpoint set --name IOAccelDisplayPipeTransactionSetPlaneIOSurface
+continue
+register read rdi rsi rdx rcx r8
+expression -l c -- void *$pvg_surface = (void *)$rdx
+expression -l c -- unsigned long $pvg_width = ((unsigned long (*)(void *))IOSurfaceGetWidth)($pvg_surface)
+expression -l c -- unsigned long $pvg_height = ((unsigned long (*)(void *))IOSurfaceGetHeight)($pvg_surface)
+expression -l c -- unsigned long $pvg_bpr = ((unsigned long (*)(void *))IOSurfaceGetBytesPerRow)($pvg_surface)
+expression -l c -- unsigned long $pvg_size = ((unsigned long (*)(void *))IOSurfaceGetAllocSize)($pvg_surface)
+expression -l c -- unsigned int $pvg_format = ((unsigned int (*)(void *))IOSurfaceGetPixelFormat)($pvg_surface)
+expression -l c -- unsigned int $pvg_id = ((unsigned int (*)(void *))IOSurfaceGetID)($pvg_surface)
+expression -l c -- unsigned int $pvg_seed = 0
+expression -l c -- int $pvg_lock = ((int (*)(void *, unsigned int, unsigned int *))IOSurfaceLock)($pvg_surface, 1, &$pvg_seed)
+expression -l c -- void *$pvg_base = ((void *(*)(void *))IOSurfaceGetBaseAddress)($pvg_surface)
+expression -l c -- $pvg_width
+expression -l c -- $pvg_height
+expression -l c -- $pvg_bpr
+expression -l c -- $pvg_size
+expression -l c -- $pvg_format
+expression -l c -- $pvg_id
+expression -l c -- $pvg_seed
+expression -l c -- $pvg_lock
+expression -l c -- $pvg_base
+memory read --force --binary --outfile /tmp/pvg-display-surface.bin --count `$pvg_size` `$pvg_base`
+expression -l c -- ((int (*)(void *, unsigned int, unsigned int *))IOSurfaceUnlock)($pvg_surface, 1, &$pvg_seed)
+process detach
+quit

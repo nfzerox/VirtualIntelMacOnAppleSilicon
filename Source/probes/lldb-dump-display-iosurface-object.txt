@@ -1,0 +1,17 @@
+breakpoint set --name IOAccelDisplayPipeTransactionSetPlaneIOSurface
+continue
+register read rdi rsi rdx rcx r8
+expression -l c -- void *$pvg_surface = (void *)$rdx
+expression -l c -- unsigned int $pvg_id = ((unsigned int (*)(void *))IOSurfaceGetID)($pvg_surface)
+expression -l c -- unsigned int $pvg_planes = ((unsigned int (*)(void *))IOSurfaceGetPlaneCount)($pvg_surface)
+expression -l c -- unsigned int $pvg_seed = ((unsigned int (*)(void *))IOSurfaceGetSeed)($pvg_surface)
+expression -l c -- void *$pvg_client = *(void **)((char *)$pvg_surface + 8)
+expression -l c -- $pvg_surface
+expression -l c -- $pvg_client
+expression -l c -- $pvg_id
+expression -l c -- $pvg_planes
+expression -l c -- $pvg_seed
+memory read --force --binary --outfile /tmp/pvg-display-iosurface-object.bin --count 0x200 `$pvg_surface`
+memory read --force --binary --outfile /tmp/pvg-display-iosurface-client.bin --count 0x200 `$pvg_client`
+process detach
+quit

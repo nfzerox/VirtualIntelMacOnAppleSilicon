@@ -1,0 +1,17 @@
+[Defines]
+  INF_VERSION = 0x0001001B
+  BASE_NAME = VIMBootPolicy
+  FILE_GUID = DBCAAD88-3C91-41EB-A2DD-258599CF174A
+  MODULE_TYPE = UEFI_DRIVER
+  VERSION_STRING = 1.0
+  ENTRY_POINT = BootPolicyEntry
+[Sources]
+  BootPolicy.c
+[Packages]
+  MdePkg/MdePkg.dec
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiRuntimeServicesTableLib
+  BaseLib
+  BaseMemoryLib
+  IoLib

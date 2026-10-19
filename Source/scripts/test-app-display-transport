@@ -1,0 +1,10 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+mkdir -p "$root/Build/Probes"
+xcrun clang -fobjc-arc -fmodules -Wall -mmacosx-version-min=11.0 -arch x86_64 -arch arm64 \
+    -I "$root/VirtualIntelMac" -framework Cocoa -framework Metal -framework QuartzCore \
+    "$root/probes/app-display-transport.m" \
+    "$root/VirtualIntelMac/VIMDisplayConnection.m" "$root/VirtualIntelMac/VIMMetalView.m" \
+    -o "$root/Build/Probes/app-display-transport"
+exec "$root/Build/Probes/app-display-transport"

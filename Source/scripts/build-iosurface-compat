@@ -1,0 +1,30 @@
+#!/bin/zsh
+set -euo pipefail
+
+repo_root=${0:A:h:h}
+project_dir="$repo_root/compat/IOSurfacePVGCompat"
+catalina_sdk="$repo_root/resources/xcode/XcodeCatalina.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+derived_data="$repo_root/work/build/IOSurfacePVGCompat"
+product="$derived_data/Build/Products/Release/IOSurfacePVGCompat.kext"
+
+kernel_framework="$catalina_sdk/System/Library/Frameworks/Kernel.framework"
+
+# Xcode 11.7's IDE plug-ins do not initialize on the macOS 26 host. Current
+# xcodebuild supplies the build engine/linker, while every ABI-bearing header
+# and kmod startup archive is explicitly taken from the Catalina 10.15 SDK.
+xcodebuild \
+    -project "$project_dir/IOSurfacePVGCompat.xcodeproj" \
+    -scheme IOSurfacePVGCompat \
+    -configuration Release \
+    -derivedDataPath "$derived_data" \
+    SDKROOT=macosx \
+    HEADER_SEARCH_PATHS="$kernel_framework/PrivateHeaders $kernel_framework/Headers" \
+    LIBRARY_SEARCH_PATHS="$catalina_sdk/usr/lib" \
+    MACOSX_DEPLOYMENT_TARGET=10.15 \
+    ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+    build
+
+codesign --force --sign - "$product"
+file "$product/Contents/MacOS/IOSurfacePVGCompat"
+nm -arch x86_64 -g "$product/Contents/MacOS/IOSurfacePVGCompat"
+printf '%s\n' "$product"

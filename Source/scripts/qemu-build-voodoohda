@@ -1,0 +1,16 @@
+#!/bin/zsh
+# Build the Catalina/Mojave guest audio driver, not the embedded-IOAudio release.
+set -euo pipefail
+repo=${0:A:h:h}
+source_dir=${PVG_VOODOOHDA_SOURCE:-$repo/vendor/source/VoodooHDA}
+output=${PVG_VOODOOHDA_OUTPUT:-$repo/Build/VoodooHDA}
+headers="$repo/resources/xcode/XcodeMojave.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.14.sdk/System/Library/Frameworks/Kernel.framework/Headers"
+# The Release302 source is vendored directly, not a separate checkout.
+[[ -f "$headers/IOKit/audio/IOAudioEngine.h" ]] || exit 66
+xcodebuild -project "$source_dir/tranc/VoodooHDA.xcodeproj" \
+    -configuration Release -target VoodooHDA SDKROOT=macosx \
+    ARCHS=x86_64 VALID_ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES \
+    MACOSX_DEPLOYMENT_TARGET=10.14 __DIAGNOSE_INVALID_DEPLOYMENT_TARGET_AS_ERROR=NO \
+    "HEADER_SEARCH_PATHS=$headers" "CONFIGURATION_BUILD_DIR=$output" \
+    CODE_SIGNING_ALLOWED=NO
+codesign --force --sign - --timestamp=none "$output/VoodooHDA.kext"

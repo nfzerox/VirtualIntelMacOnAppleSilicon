@@ -1,0 +1,25 @@
+#!/bin/sh
+# Research only: process-local LLDB adapters, not the installed GL driver.
+# In the Mojave guest, after loading the research registration kext:
+# sudo sh ./run-mojave-native-gl-probe 127 --no-dither --pattern --attribute
+set -eu
+case "$(sw_vers -productVersion)" in 10.14.*) ;; *)
+    echo 'This debugger probe is only for the Mojave research guest.' >&2; exit 64;;
+esac
+if [ -n "${DYLD_INSERT_LIBRARIES:-}${DYLD_FRAMEWORK_PATH:-}${GL_RESOURCES:-}" ]; then
+    echo 'Remove injected libraries/framework overrides; this tests native OpenGL.' >&2
+    exit 64
+fi
+if [ -n "${PVG_NATIVE_REFERENCE_VERTEX_KEY:-}${PVG_NATIVE_ZERO_VERTEX_FETCH:-}${PVG_NATIVE_RECORD_ADAPTER:-}" ]; then
+    echo 'Do not combine the validated configuration adapter with rejected/forced-key experiments.' >&2
+    exit 64
+fi
+export PVG_NATIVE_CONFIG_SHADOW=1 PVG_NATIVE_GLSL_ADAPTER=1
+export PVG_NATIVE_RESOURCE_TYPE_NAMES=1 PVG_NATIVE_TEXTURE_INTRINSIC=1
+export PVG_NATIVE_SAMPLER_METADATA=1 PVG_NATIVE_DEFAULT_UNIFORM=1
+export PVG_NATIVE_AIR21_METADATA=1 PVG_NATIVE_STRICT_MATH=1
+export PVG_NATIVE_DUMP_IR=1 PVG_NATIVE_CODEGEN=11
+export PVG_GL_TEST_INTEL_PROFILE=1 PVG_GL_TEST_MOJAVE_LOWERING=1
+here=$(cd "$(dirname "$0")" && pwd)
+exec lldb -b -s "${PVG_GL_LLDB_SCRIPT:-$here/mojave-gl-native-mode0.lldb}" \
+    -- "${PVG_GL_PIXEL_PROBE:-$here/opengl-pixel-clear}" "$@"

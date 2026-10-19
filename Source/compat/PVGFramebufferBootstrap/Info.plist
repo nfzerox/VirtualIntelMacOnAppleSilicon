@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>English</string>
+    <key>CFBundleExecutable</key>
+    <string>PVGFramebufferBootstrap</string>
+    <key>CFBundleIdentifier</key>
+    <string>local.pvg.FramebufferBootstrap</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>PVGFramebufferBootstrap</string>
+    <key>CFBundlePackageType</key>
+    <string>KEXT</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.5.0</string>
+    <key>CFBundleVersion</key>
+    <string>1.5.0</string>
+    <key>IOKitPersonalities</key>
+    <dict>
+        <key>PVGFramebufferBootstrap</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>local.pvg.FramebufferBootstrap</string>
+            <key>IOClass</key>
+            <string>PVGFramebufferBootstrap</string>
+            <key>IOMatchCategory</key>
+            <string>local.pvg.FramebufferBootstrap</string>
+            <key>IOProbeScore</key>
+            <integer>1000</integer>
+            <key>IOProviderClass</key>
+            <string>AppleParavirtFramebuffer</string>
+        </dict>
+    </dict>
+    <key>LSMinimumSystemVersion</key>
+    <string>10.15</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Virtual Intel Mac compatibility extension.</string>
+    <key>OSBundleLibraries</key>
+    <dict>
+        <key>com.apple.driver.AppleParavirtGPU</key>
+        <string>1.0.0</string>
+        <key>com.apple.iokit.IOGraphicsFamily</key>
+        <string>585.2</string>
+        <key>com.apple.kpi.iokit</key>
+        <string>9.0.0b1</string>
+        <key>com.apple.kpi.libkern</key>
+        <string>9.0.0b1</string>
+    </dict>
+    <key>OSBundleRequired</key>
+    <string>Root</string>
+</dict>
+</plist>

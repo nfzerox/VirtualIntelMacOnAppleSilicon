@@ -1,0 +1,52 @@
+// !$*UTF8*$!
+{
+ archiveVersion = 1;
+ classes = {};
+ objectVersion = 50;
+ objects = {
+  A00000000000000000000001 = {isa = PBXProject; attributes = {LastUpgradeCheck = 0940;}; buildConfigurationList = A00000000000000000000020; compatibilityVersion = "Xcode 9.3"; developmentRegion = English; knownRegions = (English,); mainGroup = A00000000000000000000002; productRefGroup = A00000000000000000000003; projectDirPath = ""; projectRoot = ""; targets = (A00000000000000000000004,);};
+  A00000000000000000000002 = {isa = PBXGroup; children = (A00000000000000000000005,A00000000000000000000006,A00000000000000000000007,A00000000000000000000003,); sourceTree = "<group>";};
+  A00000000000000000000003 = {isa = PBXGroup; name = Products; children = (A00000000000000000000008,); sourceTree = "<group>";};
+  A00000000000000000000004 = {isa = PBXNativeTarget; buildConfigurationList = A00000000000000000000021; buildPhases = (A00000000000000000000010,A00000000000000000000011,A00000000000000000000012,A00000000000000000000013,); buildRules = (); dependencies = (); name = CarbonSketch; productName = CarbonSketch; productReference = A00000000000000000000008; productType = "com.apple.product-type.application";};
+  A00000000000000000000005 = {isa = PBXGroup; name = Source; path = Source; children = (B00000000000000000000001,B00000000000000000000002,B00000000000000000000003,B00000000000000000000004,B00000000000000000000005,B00000000000000000000006,B00000000000000000000007,B00000000000000000000008,); sourceTree = "<group>";};
+  A00000000000000000000006 = {isa = PBXGroup; name = Resources; children = (B00000000000000000000009,B00000000000000000000010,B00000000000000000000011,); sourceTree = "<group>";};
+  A00000000000000000000007 = {isa = PBXGroup; name = Frameworks; children = (B00000000000000000000012,B00000000000000000000013,); sourceTree = "<group>";};
+  A00000000000000000000008 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CarbonSketch.app; sourceTree = BUILT_PRODUCTS_DIR;};
+  B00000000000000000000001 = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.c.c; path = main.c; sourceTree = "<group>";};
+  B00000000000000000000002 = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.c.c; path = CSkObjects.c; sourceTree = "<group>";};
+  B00000000000000000000003 = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.c.c; path = CSkPrinting.c; sourceTree = "<group>";};
+  B00000000000000000000004 = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.c.c; path = CSkShapes.c; sourceTree = "<group>";};
+  B00000000000000000000005 = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.c.c; path = CSkToolPalette.c; sourceTree = "<group>";};
+  B00000000000000000000006 = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.c.c; path = CSkUtils.c; sourceTree = "<group>";};
+  B00000000000000000000007 = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = CSkWindow.c; sourceTree = "<group>";};
+  B00000000000000000000008 = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.c.c; path = NavServicesHandling.c; sourceTree = "<group>";};
+  B00000000000000000000009 = {isa = PBXFileReference; lastKnownFileType = folder; path = English.lproj; sourceTree = "<group>";};
+  B00000000000000000000010 = {isa = PBXFileReference; lastKnownFileType = sourcecode.rez; path = Resources/CSkResources.r; sourceTree = "<group>";};
+  B00000000000000000000011 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>";};
+  B00000000000000000000012 = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Carbon.framework; path = System/Library/Frameworks/Carbon.framework; sourceTree = SDKROOT;};
+  B00000000000000000000013 = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ApplicationServices.framework; path = System/Library/Frameworks/ApplicationServices.framework; sourceTree = SDKROOT;};
+  C00000000000000000000001 = {isa = PBXBuildFile; fileRef = B00000000000000000000001;};
+  C00000000000000000000002 = {isa = PBXBuildFile; fileRef = B00000000000000000000002;};
+  C00000000000000000000003 = {isa = PBXBuildFile; fileRef = B00000000000000000000003;};
+  C00000000000000000000004 = {isa = PBXBuildFile; fileRef = B00000000000000000000004;};
+  C00000000000000000000005 = {isa = PBXBuildFile; fileRef = B00000000000000000000005;};
+  C00000000000000000000006 = {isa = PBXBuildFile; fileRef = B00000000000000000000006;};
+  C00000000000000000000007 = {isa = PBXBuildFile; fileRef = B00000000000000000000007;};
+  C00000000000000000000008 = {isa = PBXBuildFile; fileRef = B00000000000000000000008;};
+  C00000000000000000000009 = {isa = PBXBuildFile; fileRef = B00000000000000000000009;};
+  C00000000000000000000010 = {isa = PBXBuildFile; fileRef = B00000000000000000000010;};
+  C00000000000000000000012 = {isa = PBXBuildFile; fileRef = B00000000000000000000012;};
+  C00000000000000000000013 = {isa = PBXBuildFile; fileRef = B00000000000000000000013;};
+  A00000000000000000000010 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (C00000000000000000000001,C00000000000000000000002,C00000000000000000000003,C00000000000000000000004,C00000000000000000000005,C00000000000000000000006,C00000000000000000000007,C00000000000000000000008,); runOnlyForDeploymentPostprocessing = 0;};
+  A00000000000000000000011 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (C00000000000000000000012,C00000000000000000000013,); runOnlyForDeploymentPostprocessing = 0;};
+  A00000000000000000000012 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (C00000000000000000000009,); runOnlyForDeploymentPostprocessing = 0;};
+  A00000000000000000000013 = {isa = PBXRezBuildPhase; buildActionMask = 2147483647; files = (C00000000000000000000010,); runOnlyForDeploymentPostprocessing = 0;};
+  A00000000000000000000020 = {isa = XCConfigurationList; buildConfigurations = (D00000000000000000000001,D00000000000000000000002,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug;};
+  A00000000000000000000021 = {isa = XCConfigurationList; buildConfigurations = (D00000000000000000000003,D00000000000000000000004,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug;};
+  D00000000000000000000001 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {ARCHS = i386; VALID_ARCHS = i386; ONLY_ACTIVE_ARCH = NO; SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 10.9; GCC_C_LANGUAGE_STANDARD = gnu99; GCC_OPTIMIZATION_LEVEL = 0; GCC_PREPROCESSOR_DEFINITIONS = ("$(inherited)","__ASSERT_MACROS_DEFINE_VERSIONS_WITHOUT_UNDERSCORES=1",); CLANG_ENABLE_MODULES = NO; CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = NO; GCC_WARN_ABOUT_DEPRECATED_FUNCTIONS = NO; CODE_SIGNING_ALLOWED = NO;};};
+  D00000000000000000000002 = {isa = XCBuildConfiguration; name = Release; buildSettings = {ARCHS = i386; VALID_ARCHS = i386; ONLY_ACTIVE_ARCH = NO; SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 10.9; GCC_C_LANGUAGE_STANDARD = gnu99; GCC_OPTIMIZATION_LEVEL = 2; GCC_PREPROCESSOR_DEFINITIONS = ("$(inherited)","__ASSERT_MACROS_DEFINE_VERSIONS_WITHOUT_UNDERSCORES=1",); GCC_WARN_ABOUT_DEPRECATED_FUNCTIONS = NO; CODE_SIGNING_ALLOWED = NO;};};
+  D00000000000000000000003 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {INFOPLIST_FILE = Info.plist; PRODUCT_NAME = CarbonSketch; PRODUCT_BUNDLE_IDENTIFIER = com.apple.CarbonSketch; COMBINE_HIDPI_IMAGES = YES;};};
+  D00000000000000000000004 = {isa = XCBuildConfiguration; name = Release; buildSettings = {INFOPLIST_FILE = Info.plist; PRODUCT_NAME = CarbonSketch; PRODUCT_BUNDLE_IDENTIFIER = com.apple.CarbonSketch; COMBINE_HIDPI_IMAGES = YES;};};
+ };
+ rootObject = A00000000000000000000001;
+}

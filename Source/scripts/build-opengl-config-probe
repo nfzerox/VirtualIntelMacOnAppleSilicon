@@ -1,0 +1,17 @@
+#!/bin/zsh
+# Isolated, opt-in Mojave donor configuration hooks, not an installer.
+set -euo pipefail
+repo=${0:A:h:h}
+output=${1:?usage: build-opengl-config-probe NEW_DYLIB}
+[[ ! -e $output ]] || exit 73
+sdk="$repo/resources/xcode/XcodeMojave.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+xcrun clang -Wall -Wextra -Werror -g -O2 -arch x86_64 \
+    -mmacosx-version-min=10.14 -isysroot "$sdk" -dynamiclib \
+    "$repo/compat/PVGOpenGLProbe/PVGGLConfig.c" \
+    "$repo/compat/PVGOpenGLProbe/PVGGLConfigHooks.c" \
+    "$repo/compat/PVGOpenGLProbe/PVGGLMetadata.c" \
+    "$repo/compat/PVGOpenGLProbe/PVGGLProgram.c" \
+    "$repo/compat/PVGOpenGLProbe/PVGGLCompanion.c" \
+    "$repo/compat/PVGOpenGLProbe/PVGGLLegacy.c" \
+    -install_name @loader_path/libPVGGLConfig.dylib -o "$output"
+codesign -f -s - "$output"

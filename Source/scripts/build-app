@@ -1,0 +1,346 @@
+#!/usr/bin/env python3
+"""Build the AppKit app, optionally packaging the existing development runtime.
+
+Default: fast local runtime packaging (no donor extraction or downloads).
+--ui-only: compile just the UI/harness, using explicit debug runtime preferences.
+--rebuild-runtime: build universal QEMU and the Intel helper from the fork.
+"""
+import argparse
+from datetime import datetime
+from pathlib import Path
+import subprocess
+import sys
+import runpy
+import tempfile
+import plistlib
+import os
+import shutil
+import platform
+
+# Xcode puts its Python 3.9 before Homebrew on some Intel builders. Select a
+# supported standard toolchain before starting any costly build or extraction.
+if sys.version_info < (3, 12):
+    candidates = [os.environ.get('VIM_BUILD_PYTHON', '')]
+    candidates += [shutil.which('python3.'+str(minor)) or '' for minor in (14, 13, 12)]
+    candidates += [str(Path(prefix)/('opt/python@3.'+str(minor)+'/bin/python3.'+str(minor)))
+                   for prefix in ('/opt/homebrew','/usr/local') for minor in (14,13,12)]
+    for candidate in candidates:
+        if not candidate or not Path(candidate).is_file(): continue
+        if subprocess.run([candidate,'-c','import sys;sys.exit(sys.version_info<(3,12))'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode == 0:
+            os.execv(candidate,[candidate,*sys.argv])
+    sys.exit('Building requires Python 3.12 or later. Install it with Homebrew, or set VIM_BUILD_PYTHON to its executable. Xcode’s Python 3.9 cannot build current QEMU safely.')
+
+source = Path(__file__).resolve().parents[1]
+if '--fresh-release' in sys.argv[1:]:
+    os.execv(sys.executable, [sys.executable, str(source/'scripts/build-release.py'),
+                            *(arg for arg in sys.argv[1:] if arg != '--fresh-release')])
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--ui-only', action='store_true')
+parser.add_argument('--package-release', action='store_true',
+                    help='verify and create release ZIP, receipt and SHA256SUMS; --output is a NEW FOLDER')
+parser.add_argument('--rebuild-runtime', action='store_true', help='compile universal QEMU and Intel helper before packaging')
+parser.add_argument('--rebuild-guest-tools', action='store_true', help='legacy option; guest tools and ABI drivers are now always rebuilt')
+parser.add_argument('--runtime-bin', type=Path, help='reuse a runtime produced by build-app-runtime.py')
+parser.add_argument('--runtime-build-directory', type=Path,
+                    help='with --rebuild-runtime, reuse a dedicated QEMU build directory')
+parser.add_argument('--dependencies', type=Path, help='static dependency build directory (also used by privileged helpers)')
+parser.add_argument('--firmware-build', type=Path, help='quiet RELEASE firmware built from the pinned vendored source')
+parser.add_argument('--boot-policy-build', type=Path, help='rebuilt EFI runtime policy components')
+parser.add_argument('--jobs', type=int, default=4, help='parallel runtime build jobs')
+parser.add_argument('--qemu', type=Path, default=source/'vendor/qemu')
+parser.add_argument('--output', type=Path, help='new packaged .app path; never overwritten')
+parser.add_argument('--configuration', choices=['Debug', 'Release'], default='Debug')
+parser.add_argument('--signing-identity', default=os.environ.get('VIM_CODESIGN_IDENTITY'),
+                    help='persistent Keychain signing identity; preserves the app identity across development updates')
+args = parser.parse_args()
+if args.package_release:
+    if args.ui_only:
+        parser.error('--package-release requires the complete bundled app, not --ui-only')
+    if not any(arg == '--configuration' or arg.startswith('--configuration=') for arg in sys.argv):
+        args.configuration = 'Release'
+    if args.configuration != 'Release':
+        parser.error('--package-release requires --configuration Release')
+    directory = args.output or (Path(os.environ.get('VIM_BUILD_SCRATCH') or source/'Build/Products') /
+                                ('Release-'+datetime.now().strftime('%Y%m%d-%H%M%S')))
+    if directory.exists() or directory.suffix == '.app':
+        parser.error('--package-release --output must be a new folder, not an .app path')
+    args.output = directory/'Virtual Intel Mac.app'
+sys.path.insert(0, str(source/'scripts'))
+from build_signing import resolve_identity
+import build_freshness as freshness
+def source_state():
+    revision = subprocess.check_output(['git','-C',str(source),'rev-parse','HEAD'],text=True).strip()
+    tree = subprocess.check_output(['git','-C',str(source),'rev-parse','HEAD^{tree}'],text=True).strip()
+    modified = subprocess.check_output(['git','-C',str(source.parent),'diff','--name-only','-z','HEAD'])
+    untracked = subprocess.check_output(['git','-C',str(source.parent),'ls-files','--others','--exclude-standard','-z'])
+    return {'SourceCommit':revision, 'SourceTree':tree,
+            'WorkingTreeSHA256':freshness.identity(freshness.manifest([('checkout',source.parent)])),
+            'UncommittedPaths':sorted({os.fsdecode(p) for p in (modified+untracked).split(b'\0') if p})}
+initial_source_state = source_state() if args.package_release else None
+args.signing_identity = resolve_identity(source, args.signing_identity)
+# Nested runtime/helper builds must inherit this exact selection, including
+# public-source builders whose local receipt lives outside a clean clone.
+os.environ['VIM_CODESIGN_IDENTITY'] = args.signing_identity
+runtime_cache = source/'Build/RuntimeLocation.plist'
+def runtime_matches_checkout(receipt, checkout, directory):
+    """A fast build must not silently package an older QEMU experiment."""
+    # The committed tree of the QEMU source folder, which may be a folder
+    # inside this repository (Source/vendor/qemu) or a separate checkout.
+    revision = subprocess.run(['git', '-C', str(checkout), 'rev-parse', 'HEAD:./'],
+                              capture_output=True, text=True)
+    if revision.returncode or receipt.get('QEMURevision') != revision.stdout.strip():
+        return False
+    clean = subprocess.run(['git', '-C', str(checkout), 'status', '--porcelain', '--untracked-files=no', '--', '.'],
+                           capture_output=True)
+    return (clean.returncode == 0 and not clean.stdout.strip()
+            and freshness.current(receipt, freshness.snapshot(source, 'runtime', checkout),
+                                  directory, ('qemu-system-x86_64','qemu-img','apple-gfx-helper')))
+
+def supports_sound_recovery(runtime):
+    try:
+        result = subprocess.run([str(runtime/'qemu-system-x86_64'), '-device',
+                                 'virtio-sound-pci,help'], capture_output=True,
+                                text=True, timeout=15)
+        return result.returncode == 0 and 'x-apple-reconfigure=' in result.stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+if args.ui_only and args.output:
+    parser.error('--output is for packaged builds, not --ui-only')
+if args.ui_only and (args.rebuild_runtime or args.runtime_bin or args.rebuild_guest_tools):
+    parser.error('UI-only mode does not build or package runtime executables')
+if args.rebuild_runtime and args.runtime_bin:
+    parser.error('choose --rebuild-runtime or --runtime-bin, not both')
+if args.runtime_build_directory and not args.rebuild_runtime:
+    parser.error('--runtime-build-directory requires --rebuild-runtime')
+guest_tools = source/'prebuilt/tools'
+if args.runtime_bin and not args.ui_only:
+    receipt = freshness.load(args.runtime_bin/'BuildReceipt.plist')
+    if not runtime_matches_checkout(receipt, args.qemu, args.runtime_bin):
+        print('Explicit runtime is stale or lacks verifiable fingerprints; rebuilding, not bypassing freshness.',flush=True)
+        args.runtime_bin = None
+if not args.ui_only and not args.rebuild_runtime and not args.runtime_bin and runtime_cache.is_file():
+    try:
+        cached = plistlib.loads(runtime_cache.read_bytes())
+        candidate = Path(cached['Directory'])
+        if candidate.is_absolute() and all((candidate/name).is_file() for name in
+            ('qemu-system-x86_64', 'qemu-img', 'apple-gfx-helper', 'BuildReceipt.plist')):
+            receipt = plistlib.loads((candidate/'BuildReceipt.plist').read_bytes())
+            if (set(receipt.get('HostArchitectures', [])) == {'arm64', 'x86_64'}
+                    and receipt.get('MinimumHostVersion') == '11.0'
+                    and receipt.get('AppDisplayMaxDimension') == 8192
+                    and receipt.get('AppleANSIKeyboard') is True
+                    and receipt.get('AudioDeviceSelection') is True
+                    and receipt.get('DisplayScalePolicy') is True
+                    and receipt.get('DisplayPowerEvents') is True
+                    and receipt.get('GuestDisplayPowerEvents') is True
+                    and receipt.get('DirectDMG') is True
+                    and receipt.get('DeploymentTargetChecked') is True
+                    and receipt.get('USBPassthrough') is True
+                    and receipt.get('USBRedirection') is True
+                    and runtime_matches_checkout(receipt, args.qemu, candidate)
+                    and supports_sound_recovery(candidate)):
+                args.runtime_bin = candidate
+    except (ValueError, KeyError, TypeError, OSError, plistlib.InvalidFileException):
+        pass  # A stale cache is not a reason to break an otherwise valid build.
+if not args.ui_only and not args.runtime_bin and not args.rebuild_runtime:
+    print('No reusable universal runtime found; rebuilding once.', flush=True)
+    args.rebuild_runtime = True
+if args.rebuild_runtime:
+    args.runtime_bin = source/'Build'/('AppRuntime-'+datetime.now().strftime('%Y%m%d-%H%M%S'))
+    runtime_command = [sys.executable, str(source/'scripts/build-app-runtime.py'),
+                       '--qemu', str(args.qemu), '--output', str(args.runtime_bin), '--jobs', str(args.jobs)]
+    if args.runtime_build_directory:
+        runtime_command += ['--build-directory', str(args.runtime_build_directory)]
+    if args.dependencies:
+        runtime_command += ['--dependencies', str(args.dependencies)]
+    subprocess.run(runtime_command, check=True)
+if not args.ui_only:
+    runtime_receipt = freshness.load(args.runtime_bin/'BuildReceipt.plist')
+    args.dependencies = freshness.ensure_dependencies(source,
+        args.dependencies or Path(runtime_receipt['DependencyPrefixes']), args.jobs)
+    # Firmware and EFI policy have independent inputs. Changing either must not
+    # rely on a QEMU rebuild to notice it. Legacy receipts rebuild once.
+    firmware_rebuilt = False
+    firmware_cache = source/'Build/FirmwareLocation.plist'
+    candidate = args.firmware_build or Path(freshness.load(firmware_cache).get('Directory',
+                                                     str(source/'prebuilt/firmware')))
+    firmware_receipt = freshness.load(candidate/'BuildReceipt.plist')
+    if (firmware_receipt.get('Configuration') != 'RELEASE' or firmware_receipt.get('VerboseDiagnostics')
+            or not freshness.current(firmware_receipt, freshness.snapshot(source,'firmware'), candidate,
+                                     ('OVMF_CODE.fd','OVMF_VARS.fd'))):
+        print('Quiet firmware inputs changed or lack verifiable fingerprints; rebuilding.',flush=True)
+        work = Path(tempfile.mkdtemp(prefix='FirmwareCache-',dir=source/'Build'))
+        subprocess.run([sys.executable,str(source/'scripts/build-guest-firmware.py'),'--bootstrap-tools',
+                        '--configuration','RELEASE','--jobs',str(args.jobs),'--work',str(work)],check=True)
+        candidate = work/'Output-RELEASE'
+        firmware_rebuilt = True
+    args.firmware_build = candidate
+    from importlib.util import spec_from_file_location, module_from_spec
+    spec = spec_from_file_location('boot_policy_recipe',source/'scripts/build-boot-policy.py')
+    policy_recipe = module_from_spec(spec); spec.loader.exec_module(policy_recipe)
+    args.boot_policy_build = args.boot_policy_build or source/'Build/BootPolicy/Output'
+    policy_receipt = freshness.load(args.boot_policy_build/'BuildReceipt.plist')
+    policy_hashes = policy_receipt.get('Hashes',{})
+    policy_current = (policy_receipt.get('SourceFiles') == policy_recipe.inputs() and bool(policy_hashes)
+                      and policy_receipt.get('BuildFingerprint') == policy_recipe.fingerprint())
+    try:
+        policy_current = policy_current and all(freshness.digest(args.boot_policy_build/name)==checksum
+                                               for name,checksum in policy_hashes.items())
+    except OSError:
+        policy_current = False
+    if not policy_current:
+        subprocess.run([sys.executable,str(source/'scripts/build-boot-policy.py'),'--bootstrap-tools',
+                        '--jobs',str(args.jobs)],check=True)
+        args.boot_policy_build = source/'Build/BootPolicy/Output'
+    if not supports_sound_recovery(args.runtime_bin):
+        parser.error('This QEMU runtime lacks Big Sur sound recovery. Rebuild with --rebuild-runtime.')
+    # These small native tools must match the host protocol, including desktop
+    # readiness and GL staging. Never silently ship stale prebuilt helpers.
+    if not args.ui_only:
+        guest_tools = source/'Build'/('GuestTools-'+datetime.now().strftime('%Y%m%d-%H%M%S-%f'))
+        subprocess.run([sys.executable, str(source/'scripts/build-guest-tools.py'),
+                        '--output', str(guest_tools)], check=True)
+    # These small project-owned drivers are always rebuilt. The historical
+    # Apple donor seeds remain intentional, hash-verified binary inputs.
+    import hashlib
+    drivers = guest_tools/'IOSurfaceABI'
+    for guest, target, suffix in (('mojave','10.14','-Mojave'),('catalina','10.15','')):
+        environment = dict(os.environ, PVG_TARGET_OS=target)
+        subprocess.run(['/bin/zsh',str(source/'scripts/build-iosurface-abi')],env=environment,check=True)
+        product = source/('work/build/PVGIOSurfaceABI'+suffix)/'Build/Products/Debug/PVGIOSurfaceABI.kext'
+        shutil.copytree(product,drivers/guest/product.name,symlinks=True)
+    (drivers/'SHA256SUMS').write_text(''.join(
+        hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.relative_to(drivers).as_posix()+'\n'
+        for p in sorted(drivers.rglob('*')) if p.is_file()))
+    if not (args.qemu/'pc-bios').is_dir():
+        parser.error(f'QEMU source is missing at {args.qemu}. Supply --qemu with a QEMU source folder.')
+    required = [args.runtime_bin/name for name in ('qemu-system-x86_64', 'qemu-img', 'apple-gfx-helper')]
+    required.extend(guest_tools/name for name in ('guest-image-patch', 'guest-status', 'guest-macho', 'guest-prepare', 'guest-install', 'guest-progress', 'guest-display', 'codesign_allocate'))
+    missing = [str(p) for p in required if not p.is_file()]
+    if missing:
+        parser.error('Fast runtime inputs missing (use --ui-only for UI development):\n'+'\n'.join(missing))
+    if not args.output:
+        scratch = Path(os.environ.get('VIM_BUILD_SCRATCH') or source/'Build/Products')
+        args.output = scratch/('AppBuild-'+datetime.now().strftime('%Y%m%d-%H%M%S'))/'Virtual Intel Mac.app'
+    if args.output.exists() or args.output.suffix != '.app':
+        parser.error('--output must be a new .app path')
+derived = source/'Build/App'
+log = source/'Build/build-app.log'
+log.parent.mkdir(parents=True, exist_ok=True)
+command = ['xcodebuild', '-project', str(source/'VirtualIntelMac.xcodeproj'),
+           '-scheme', 'Virtual Intel Mac', '-configuration', args.configuration,
+           '-derivedDataPath', str(derived), 'CODE_SIGNING_ALLOWED=NO',
+           'ARCHS=arm64 x86_64', 'ONLY_ACTIVE_ARCH=NO',
+           'MACOSX_DEPLOYMENT_TARGET=15.0', '__DIAGNOSE_INVALID_DEPLOYMENT_TARGET_AS_ERROR=NO',
+           'OTHER_CFLAGS=$(inherited) -Werror=unguarded-availability-new', 'clean', 'build']
+print('Building Virtual Intel Mac…', flush=True)
+with log.open('w') as stream:
+    result = subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT)
+if result.returncode:
+    print(f'Build failed. Details: {log}', file=sys.stderr)
+    sys.exit(result.returncode)
+app = derived/'Build/Products'/args.configuration/'Virtual Intel Mac.app'
+app_info = plistlib.loads((app/'Contents/Info.plist').read_bytes())
+if app_info.get('LSMinimumSystemVersion') != '15.0':
+    sys.exit('Build refused: the main app must target macOS 15.0; runtime dependencies remain macOS 11.0.')
+if (app_info.get('CFBundleIconName') != 'AppIcon'
+        or not (app/'Contents/Resources/AppIcon.icns').is_file()):
+    sys.exit('Build refused: compile the AppIcon.icon Icon Composer source as the app icon.')
+# Xcode's incremental resource phase can retain removed resources. Never carry
+# the superseded hardcoded app/folder icons into a newly packaged app.
+for name in ('VirtualIntelMac.icns', 'FolderIcon.icns'):
+    (app/'Contents/Resources'/name).unlink(missing_ok=True)
+if args.ui_only:
+    firmware_stage = tempfile.TemporaryDirectory(prefix='vim-build-firmware-')
+    firmware_inputs = Path(firmware_stage.name)
+    packager = runpy.run_path(str(source/'scripts/package-app-runtime.py'))
+    packager['extract_host_inputs'](source, firmware_inputs,
+                                  'app-firmware-inputs.tar.gz', 'app-firmware-SHA256SUMS')
+    boot_policy=args.boot_policy_build or source/'prebuilt/firmware/BootPolicy'
+    firmware_code, _ = packager['quiet_firmware'](source, args.qemu)
+    for guest in ('mojave', 'catalina', 'bigsur'):
+        boot = firmware_inputs/guest/'BOOT.img'
+        destination = source/'Build/DevelopmentFirmware'/guest/'EFI.img'
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        # Generate a new candidate before replacing our derived build output.
+        candidate = destination.with_name('EFI-'+datetime.now().strftime('%Y%m%d%H%M%S%f')+'.img')
+        policy_options=['--runtime-policy',str(boot_policy)]
+        if guest=='bigsur':policy_options+=['--bigsur-gl-registration',str(boot_policy/'PVGOpenGLProbe.kext')]
+        subprocess.run([sys.executable, str(source/'scripts/make-efi-disk.py'),
+                        str(boot), str(candidate), '--quiet',*policy_options], check=True)
+        candidate.replace(destination)
+        for obsolete in ('EFI-Privacy.img','EFI-GL.img','EFI-Privacy-GL.img'):
+            destination.with_name(obsolete).unlink(missing_ok=True)
+        import shutil
+        for leaf in ('CODE.fd', 'VARS.fd'):
+            shutil.copyfile(firmware_code if leaf=='CODE.fd' else firmware_inputs/leaf, destination.parent/leaf)
+    # UI-only iterations still read the user's library on removable volumes.
+    # Use the same designated identity as packaged builds, not a new unsigned
+    # executable that loses the host's existing privacy approvals each time.
+    subprocess.run(['codesign','--force','--sign',args.signing_identity or '-',str(app)],check=True)
+    subprocess.run(['codesign','--verify','--deep','--strict',str(app)],check=True)
+    print(f'UI/harness build: {app}\nRuntime is not bundled in this mode.')
+else:
+    package_command = [sys.executable, str(source/'scripts/package-app-runtime.py'),
+                       '--app', str(app), '--output', str(args.output), '--qemu', str(args.qemu),
+                       '--guest-tools', str(guest_tools), '--configuration', args.configuration]
+    if args.runtime_bin:
+        package_command += ['--runtime-bin', str(args.runtime_bin)]
+    if args.signing_identity:
+        package_command += ['--signing-identity', args.signing_identity]
+    if args.dependencies:
+        package_command += ['--dependencies', str(args.dependencies)]
+    if args.firmware_build:
+        package_command += ['--firmware-build', str(args.firmware_build)]
+    if args.boot_policy_build:
+        package_command += ['--boot-policy-build',str(args.boot_policy_build)]
+    result = subprocess.run(package_command)
+    if result.returncode:
+        sys.exit(result.returncode)
+    # A newer SDK can declare libc functions older hosts and guests lack; their
+    # weak imports would be NULL there. Refuse the package rather than ship it.
+    sys.path.insert(0, str(source/'scripts'))
+    import deployment_target
+    donor = args.output/'Contents/Resources/Runtime/Donor'  # unmodified Apple binaries
+    for path in sorted(args.output.rglob('*')):
+        if donor in path.parents:
+            continue
+        if path.is_file() and not path.is_symlink() and path.open('rb').read(4) in (
+                b'\xca\xfe\xba\xbe', b'\xcf\xfa\xed\xfe', b'\xce\xfa\xed\xfe'):
+            try:
+                deployment_target.check_weak_libsystem_imports(path)
+            except RuntimeError as error:
+                sys.exit(f'Package refused: {error}')
+    if args.runtime_bin:
+        if not runtime_matches_checkout(runtime_receipt,args.qemu,args.runtime_bin):
+            sys.exit('Runtime inputs or compiled outputs changed during packaging; rerun.')
+        if not freshness.current(freshness.load(args.dependencies/'BuildReceipt.plist'),
+                                  freshness.snapshot(source,'dependencies'),args.dependencies):
+            sys.exit('Dependency inputs or compiled outputs changed during packaging; rerun.')
+        if not freshness.current(freshness.load(args.firmware_build/'BuildReceipt.plist'),
+                                  freshness.snapshot(source,'firmware'),args.firmware_build):
+            sys.exit('Firmware inputs or compiled outputs changed during packaging; rerun.')
+        # Publish only after complete packaging/signature verification succeeds.
+        cache_candidate = runtime_cache.with_suffix('.plist.new')
+        cache_candidate.write_bytes(plistlib.dumps({'Directory':str(args.runtime_bin.resolve())}))
+        cache_candidate.replace(runtime_cache)
+    firmware_cache.write_bytes(plistlib.dumps({'Directory':str(args.firmware_build.resolve())}))
+    if args.package_release:
+        if source_state() != initial_source_state:
+            sys.exit('Source changed during the build. No release ZIP was created; rerun.')
+        subprocess.run([sys.executable,str(source/'scripts/verify-release-build.py'),'--app',str(args.output),
+                        '--source',str(source),'--configuration','Release'],check=True)
+        packaging = plistlib.loads((args.output/'Contents/Resources/Runtime/Packaging.plist').read_bytes())
+        receipt = {**initial_source_state, 'FormatVersion':2, 'Configuration':'Release',
+            'CleanCheckout':False, 'WorkingTreeClean':not initial_source_state['UncommittedPaths'],
+            'ReusedBuildOutputs':True, 'RuntimeRebuilt':args.rebuild_runtime,
+            'GuestToolsRebuilt':True, 'GuestDriversRebuilt':True, 'FirmwareRebuilt':firmware_rebuilt,
+            'FreshnessVerified':True, 'RuntimeFingerprint':runtime_receipt['Freshness']['Fingerprint'],
+            'BuilderArchitecture':platform.machine(), 'Xcode':freshness.command_version('xcodebuild','-version'),
+            'SDKVersion':freshness.command_version('xcrun','--show-sdk-version'),
+            'PythonVersion':platform.python_version(), 'HostSigningIdentity':packaging['HostSigningIdentity'],
+            'BuildVerificationPassed':True, 'RuntimeQualificationPassed':False, 'Notarized':False}
+        release = runpy.run_path(str(source/'scripts/build-release.py'))
+        release['finalize'](args.output,args.output.parent,receipt,
+                            Path(tempfile.mkdtemp(prefix='vim-release-package-',dir='/private/var/tmp')))
+    print(f'Ready for development testing: {args.output}\nStock-host qualification remains required.')

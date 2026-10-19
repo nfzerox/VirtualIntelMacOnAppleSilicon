@@ -1,0 +1,42 @@
+#!/bin/zsh
+set -euo pipefail
+
+if (( EUID != 0 )) || (( $# != 0 )); then
+    print -u2 'usage: sudo catalina-restore-mipmap-probe'
+    exit 64
+fi
+
+target=/System/Library/PrivateFrameworks/MetalSerializer.framework
+backup=${PVG_BACKUP_ROOT:-$HOME/PVGBackups}/metalserializer-pre-mipmap-probe/displaced
+failed=${PVG_BACKUP_ROOT:-$HOME/PVGBackups}/metalserializer-pre-mipmap-probe-v2/failed-probe
+expected_probe=e8e8f0a8aef0a8eb47265d257c44f11ef8d0ef3a28a0a2164441156436e09186
+expected_original=9939c2773fb57f34b0cf8b3c9b1f144be567af9377682a58aee475c6378d6efb
+
+[[ $(sw_vers -productVersion) == 10.15.7 && $(sw_vers -buildVersion) == 19H15 ]] || {
+    print -u2 'refusing non-19H15 Catalina target'
+    exit 65
+}
+[[ -d $backup && ! -e $failed ]] || {
+    print -u2 'backup missing or probe destination already exists'
+    exit 73
+}
+[[ $(shasum -a 256 $target/Versions/A/MetalSerializer | awk '{print $1}') == $expected_probe ]] || {
+    print -u2 'refusing to replace an unexpected current framework'
+    exit 65
+}
+[[ $(shasum -a 256 $backup/Versions/A/MetalSerializer | awk '{print $1}') == $expected_original ]] || {
+    print -u2 'backup does not match expected wrapper'
+    exit 65
+}
+codesign --verify --deep --strict $backup
+mount -uw /
+mv $target $failed
+mv $backup $target
+if ! codesign --verify --deep --strict $target; then
+    mv $target $backup
+    mv $failed $target
+    print -u2 'backup failed verification; diagnostic probe restored'
+    exit 74
+fi
+sync
+print 'Mipmap probe removed; nontracing wrapper restored. Reboot into PVG.'

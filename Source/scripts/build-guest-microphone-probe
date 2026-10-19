@@ -1,0 +1,20 @@
+#!/bin/zsh
+set -euo pipefail
+source_root=${0:A:h:h}
+output=${1:?Usage: build-guest-microphone-probe NEW.app [BUNDLE_ID]}
+bundle_id=${2:-com.virtualintelmac.microphone-probe}
+[[ "$bundle_id" == com.virtualintelmac.* && "$bundle_id" != *[^A-Za-z0-9.-]* ]] || { print -u2 'Use a com.virtualintelmac.* test bundle identifier'; exit 1; }
+[[ ! -e "$output" && "$output" == *.app ]] || { print -u2 'Use a new .app output path'; exit 1; }
+mkdir -p "$output/Contents/MacOS"
+xcrun clang -arch x86_64 -mmacosx-version-min=10.14 -fobjc-arc -O2 \
+  -framework AppKit -framework AVFoundation -framework CoreMedia -framework CoreAudio \
+  "$source_root/probes/guest-microphone.m" -o "$output/Contents/MacOS/MicrophoneProbe"
+/usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string $bundle_id" \
+  -c 'Add :CFBundleExecutable string MicrophoneProbe' \
+  -c 'Add :CFBundleName string Microphone Permission Test' \
+  -c 'Add :CFBundlePackageType string APPL' \
+  -c 'Add :CFBundleVersion string 1' \
+  -c 'Add :NSMicrophoneUsageDescription string Check that this virtual Mac asks for microphone permission. Audio is never saved.' \
+  "$output/Contents/Info.plist"
+codesign --force --sign - "$output"
+codesign --verify --strict "$output"

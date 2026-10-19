@@ -1,0 +1,12 @@
+breakpoint set --name IOPresentmentEnd
+breakpoint set --name IOAccelDisplayPipeTransactionEnd
+continue
+expression -l c -- unsigned long long $pvg_outer_timestamp = $rdx
+breakpoint disable 1
+continue
+expression -l c -- unsigned long long $pvg_pipe_timestamp = *(unsigned long long *)($rdi + 0x48)
+expression -f x -- $pvg_outer_timestamp
+expression -f x -- $pvg_pipe_timestamp
+expression -l c -- (long long)($pvg_pipe_timestamp - $pvg_outer_timestamp)
+process detach
+quit

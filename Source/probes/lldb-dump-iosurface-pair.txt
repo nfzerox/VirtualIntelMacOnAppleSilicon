@@ -1,0 +1,32 @@
+expression -l c -- void *$pvg_s1 = ((void *(*)(unsigned int))IOSurfaceLookup)(1)
+expression -l c -- void *$pvg_s3 = ((void *(*)(unsigned int))IOSurfaceLookup)(3)
+expression -l c -- void *$pvg_c1 = *(void **)((char *)$pvg_s1 + 8)
+expression -l c -- void *$pvg_c3 = *(void **)((char *)$pvg_s3 + 8)
+expression -l c -- unsigned long $pvg_s1_width = ((unsigned long (*)(void *))IOSurfaceGetWidth)($pvg_s1)
+expression -l c -- unsigned long $pvg_s1_height = ((unsigned long (*)(void *))IOSurfaceGetHeight)($pvg_s1)
+expression -l c -- unsigned long $pvg_s1_bpr = ((unsigned long (*)(void *))IOSurfaceGetBytesPerRow)($pvg_s1)
+expression -l c -- unsigned long $pvg_s1_size = ((unsigned long (*)(void *))IOSurfaceGetAllocSize)($pvg_s1)
+expression -l c -- unsigned long $pvg_s3_width = ((unsigned long (*)(void *))IOSurfaceGetWidth)($pvg_s3)
+expression -l c -- unsigned long $pvg_s3_height = ((unsigned long (*)(void *))IOSurfaceGetHeight)($pvg_s3)
+expression -l c -- unsigned long $pvg_s3_bpr = ((unsigned long (*)(void *))IOSurfaceGetBytesPerRow)($pvg_s3)
+expression -l c -- unsigned long $pvg_s3_size = ((unsigned long (*)(void *))IOSurfaceGetAllocSize)($pvg_s3)
+expression -l c -- $pvg_s1
+expression -l c -- $pvg_c1
+expression -l c -- $pvg_s1_width
+expression -l c -- $pvg_s1_height
+expression -l c -- $pvg_s1_bpr
+expression -l c -- $pvg_s1_size
+expression -l c -- $pvg_s3
+expression -l c -- $pvg_c3
+expression -l c -- $pvg_s3_width
+expression -l c -- $pvg_s3_height
+expression -l c -- $pvg_s3_bpr
+expression -l c -- $pvg_s3_size
+memory read --force --binary --outfile /tmp/pvg-iosurface-1-object.bin --count 0x200 `$pvg_s1`
+memory read --force --binary --outfile /tmp/pvg-iosurface-1-client.bin --count 0x400 `$pvg_c1`
+memory read --force --binary --outfile /tmp/pvg-iosurface-3-object.bin --count 0x200 `$pvg_s3`
+memory read --force --binary --outfile /tmp/pvg-iosurface-3-client.bin --count 0x400 `$pvg_c3`
+expression -l c -- ((void (*)(void *))CFRelease)($pvg_s1)
+expression -l c -- ((void (*)(void *))CFRelease)($pvg_s3)
+process detach
+quit

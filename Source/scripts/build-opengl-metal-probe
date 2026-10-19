@@ -1,0 +1,29 @@
+#!/bin/zsh
+# Isolated research wrapper; no donor rebuild or installation.
+set -euo pipefail
+repo=${0:A:h:h}
+output=${1:?usage: build-opengl-metal-probe NEW_DYLIB}
+[[ ! -e $output ]] || exit 73
+flags=(-arch x86_64)
+if [[ ${2:-} == --bigsur ]]; then
+    flags+=(-mmacosx-version-min=11.0)
+elif [[ $# == 1 ]]; then
+    sdk="$repo/resources/xcode/XcodeMojave.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+    flags+=(-mmacosx-version-min=10.14 -isysroot "$sdk")
+else
+    print -u2 'Only --bigsur is accepted as an optional second argument.'; exit 64
+fi
+xcrun clang -O2 "${flags[@]}" \
+    -dynamiclib "$repo/compat/PVGOpenGLProbe/PVGOpenGLMetal.m" \
+    "$repo/compat/PVGOpenGLProbe/PVGGLDrawable.m" \
+    "$repo/compat/PVGOpenGLProbe/PVGGLConfig.c" \
+    "$repo/compat/PVGOpenGLProbe/PVGGLConfigHooks.c" \
+    "$repo/compat/PVGOpenGLProbe/PVGGLCodegen.c" \
+    "$repo/compat/PVGOpenGLProbe/PVGGLMetadata.c" \
+    "$repo/compat/PVGOpenGLProbe/PVGGLProgram.c" \
+    "$repo/compat/PVGOpenGLProbe/PVGGLCompanion.c" \
+    "$repo/compat/PVGOpenGLProbe/PVGGLLegacy.c" \
+    "$repo/compat/PVGOpenGLProbe/PVGGLARB.c" \
+    -framework Foundation -Wl,-reexport_framework,Metal -Wl,-reexport_framework,IOSurface \
+    -install_name @loader_path/PVGOpenGLMetal.dylib -o "$output"
+codesign -f -s - "$output"

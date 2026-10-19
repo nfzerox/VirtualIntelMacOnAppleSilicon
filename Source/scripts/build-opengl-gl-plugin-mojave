@@ -1,0 +1,38 @@
+#!/bin/zsh
+set -euo pipefail
+repo=${0:A:h:h}
+input=${1:?usage: build-opengl-gl-plugin-mojave INPUT_PLUGIN NEW_DIRECTORY MATCHING_GLVM_HELPER}
+output=${2:?new output directory required}
+helper=${3:?matching libGLVMPlugin3902.dylib required as third argument}
+[[ -f $input && -f $helper && ! -e $output ]] || exit 65
+mkdir -p "$output"
+cp "$input" "$output/libGLDPlugin3902.dylib"
+# The donor uses dlopen, not a load command, for its matching GLVM helper.
+# Keep the matching compiler helper with the driver, not in a user's home.
+# OGLCodeGenService performs the load in another process: @loader_path would
+# resolve against the service, not this plugin. Use a short sealed code name
+# that fits the donor's existing path storage without shifting Mach-O data.
+cp "$helper" "$output/libGLVMPlugin3902.dylib"
+install_name_tool -id /System/Library/Extensions/AppleMetalOpenGLRenderer.bundle/Contents/MacOS/GVM "$output/libGLVMPlugin3902.dylib"
+python3 - "$output/libGLDPlugin3902.dylib" '/System/Library/Extensions/AppleMetalOpenGLRenderer.bundle/Contents/MacOS/GVM' <<'PY'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); data=p.read_bytes()
+old=b'/System/Library/Frameworks/OpenGL.framework/Libraries/libGLVMPlugin3902.dylib\0'
+new=sys.argv[2].encode()+b'\0'
+if data.count(old)!=1 or len(new)>len(old):
+    raise SystemExit('GLVM helper path must fit unique donor string')
+p.write_bytes(data.replace(old,new.ljust(len(old),b'\0')))
+PY
+sdk="$repo/resources/xcode/XcodeMojave.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+xcrun clang -O2 -mmacosx-version-min=10.14 -isysroot "$sdk" -dynamiclib \
+    "$repo/compat/PVGOpenGLProbe/PVGGLConstantNumbers.m" \
+    -Wl,-reexport_framework,Foundation -install_name @loader_path/PVGGLFoundation.dylib \
+    -o "$output/PVGGLFoundation.dylib"
+install_name_tool -change /System/Library/Frameworks/Foundation.framework/Versions/C/Foundation \
+    @loader_path/PVGGLFoundation.dylib "$output/libGLDPlugin3902.dylib"
+install_name_tool -change /usr/lib/libobjc.A.dylib \
+    /System/Library/PrivateFrameworks/MetalSerializer.framework/Versions/A/PVGMojaveObjC.dylib \
+    "$output/libGLDPlugin3902.dylib"
+codesign -f -s - "$output/PVGGLFoundation.dylib"
+codesign -f -s - "$output/libGLDPlugin3902.dylib"
+codesign -f -s - "$output/libGLVMPlugin3902.dylib"

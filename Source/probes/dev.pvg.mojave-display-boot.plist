@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>dev.pvg.mojave-display-boot</string>
+<key>ProgramArguments</key><array>
+<string>/usr/sbin/dtrace</string><string>-Z</string><string>-s</string>
+<string>/Users/Shared/pvg-probes/mojave-display-boot.d</string>
+<string>-o</string><string>/Users/Shared/pvg-probes/pvg-display-boot.log</string>
+</array>
+<key>RunAtLoad</key><true/>
+<key>StandardErrorPath</key><string>/Users/Shared/pvg-probes/pvg-display-boot.err</string>
+</dict></plist>

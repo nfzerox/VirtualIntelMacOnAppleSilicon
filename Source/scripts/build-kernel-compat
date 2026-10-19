@@ -1,0 +1,43 @@
+#!/bin/zsh
+set -euo pipefail
+
+repo_root=${0:A:h:h}
+project_dir="$repo_root/compat/PVGKernelCompat"
+target=${PVG_TARGET_OS:-10.15}
+case "$target" in
+    10.15) xcode_name=XcodeCatalina; build_name=PVGKernelCompat; extra_flags='' ;;
+    10.14) xcode_name=XcodeMojave; build_name=PVGKernelCompat-Mojave; extra_flags='-DPVG_MOJAVE=1' ;;
+    10.13) xcode_name=XcodeHighSierra; build_name=PVGKernelCompat-HighSierra; extra_flags='-DPVG_MOJAVE=1 -DPVG_HIGH_SIERRA=1' ;;
+    *) print -u2 "unsupported target: $target"; exit 64 ;;
+esac
+catalina_sdk="$repo_root/resources/xcode/$xcode_name.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+derived_data="$repo_root/work/build/$build_name"
+product="$derived_data/Build/Products/Release/PVGKernelCompat.kext"
+
+kernel_framework="$catalina_sdk/System/Library/Frameworks/Kernel.framework"
+extra_headers=''
+if [[ $target == 10.13 ]]; then
+    extra_headers="$repo_root/research/xnu-4903.270.47/libkern"
+fi
+
+# The current xcodebuild supplies only the build engine and linker. All
+# ABI-bearing headers and the kmod startup archive come from Xcode 11.7's
+# Catalina SDK so virtual calls and C++ layouts are compiled for 10.15.
+xcodebuild \
+    -project "$project_dir/PVGKernelCompat.xcodeproj" \
+    -scheme PVGKernelCompat \
+    -configuration Release \
+    -derivedDataPath "$derived_data" \
+    SDKROOT=macosx \
+    HEADER_SEARCH_PATHS="$kernel_framework/Headers $extra_headers" \
+    LIBRARY_SEARCH_PATHS="$catalina_sdk/usr/lib" \
+    MACOSX_DEPLOYMENT_TARGET="$target" \
+    OTHER_CPLUSPLUSFLAGS="$extra_flags" \
+    ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+    build
+
+/usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $target" "$product/Contents/Info.plist"
+codesign --force --sign - "$product"
+file "$product/Contents/MacOS/PVGKernelCompat"
+nm -arch x86_64 -g "$product/Contents/MacOS/PVGKernelCompat"
+printf '%s\n' "$product"

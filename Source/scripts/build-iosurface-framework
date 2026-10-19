@@ -1,0 +1,57 @@
+#!/bin/zsh
+set -euo pipefail
+
+repo_root=${0:A:h:h}
+cache="$repo_root/work/bigsur/System/Library/dyld/dyld_shared_cache_x86_64"
+output=${1:-"$repo_root/artifacts/build/iosurface-framework-bigsur"}
+template=${PVG_CATALINA_IOSURFACE_TEMPLATE:-"$repo_root/work/catalina/framework-templates/IOSurface.framework"}
+framework_rel=System/Library/Frameworks/IOSurface.framework/Versions/A
+extract_root="$output/extract"
+source_image="$extract_root/Out/$framework_rel/IOSurface"
+image="$output/$framework_rel/IOSurface"
+framework="$output/System/Library/Frameworks/IOSurface.framework"
+
+if [[ -e "$output" ]]; then
+    print -u2 "output already exists: $output"
+    exit 73
+fi
+[[ -f "$cache" ]] || {
+    print -u2 "Big Sur dyld cache is missing: $cache"
+    exit 66
+}
+[[ -d "$template" ]] || {
+    print -u2 "Catalina IOSurface framework template is missing: $template"
+    print -u2 "copy it from the target guest before building the payload"
+    exit 66
+}
+
+"$repo_root/scripts/build-dsce"
+mkdir -p "$extract_root" "${framework:h}"
+(
+    cd "$extract_root"
+    "$repo_root/vendor/source/dsce/dsce" "$cache" \
+        "/$framework_rel/IOSurface"
+)
+
+# Keep Catalina's framework bundle layout and resource metadata, while replacing
+# its executable with the protocol-matched Big Sur client. The complete bundle
+# must be signed on the modern host: Catalina's older codesign rewrites dsce's
+# LC_DYLD_INFO streams and corrupts their ULEB encodings.
+ditto "$template" "$framework"
+
+# The 20G1443 client matches IOSurface 290.8.2's user-client protocol.  It has
+# only Foundation/CoreFoundation/IOKit/libSystem dependencies already present
+# on Catalina; lower the load gate without changing that protocol.
+xcrun vtool -set-build-version macos 10.15 11.7 -replace \
+    -output "$image" "$source_image"
+chmod 755 "$image"
+codesign --force --deep --sign - --preserve-metadata=entitlements "$framework"
+codesign --verify --deep --strict --verbose=2 "$framework"
+dyld_info -objc "$image" >/dev/null
+dyld_info -exports "$image" >/dev/null
+otool -L "$image" | grep -q \
+    '/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface' || {
+        print -u2 "unexpected IOSurface install name"
+        exit 70
+    }
+printf '%s\n' "$output"

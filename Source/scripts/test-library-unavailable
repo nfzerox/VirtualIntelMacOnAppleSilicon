@@ -1,0 +1,15 @@
+#!/bin/zsh
+# Run after an app build; reuse the actual compiled UI objects, not substitutes.
+set -euo pipefail
+root=${0:A:h:h}
+architecture=${1:-$(uname -m)}
+configuration=${2:-Release}
+objects=("$root/Build/App/Build/Intermediates.noindex/VirtualIntelMac.build/$configuration/Virtual Intel Mac.build/Objects-normal/$architecture/"*.o(N))
+objects=( ${objects:#*/main.o} )
+(( ${#objects} )) || { print -u2 'Build the app first with Source/Build.command.'; exit 1; }
+mkdir -p "$root/Build/Probes"
+output="$root/Build/Probes/library-unavailable-tests-$architecture"
+xcrun clang -arch "$architecture" -mmacosx-version-min=15.0 -fobjc-arc -fmodules \
+    -I "$root/VirtualIntelMac" -framework Cocoa "$root/probes/library-unavailable-tests.m" \
+    "${objects[@]}" -o "$output"
+exec "$output" "$root/VirtualIntelMac/Assets.xcassets/tigerWallpaper.imageset/art.jpg"

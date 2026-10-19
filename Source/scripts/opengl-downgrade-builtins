@@ -1,0 +1,18 @@
+#!/bin/zsh
+# Research-only guest step. Build probes/metal-library-bitcode.m and
+# probes/air-bitcode-probe.c first. Output is a NEW directory of AIR modules;
+# link them on the host with the target Xcode's metallib. Does not install.
+set -euo pipefail
+library=${1:?usage: opengl-downgrade-builtins DONOR_METALLIB NEW_DIRECTORY PROBE_DIRECTORY}
+output=${2:?}
+probes=${3:?}
+[[ -f $library && ! -e $output && -x $probes/metal-library-bitcode && -x $probes/air-bitcode-probe ]] || exit 65
+export PVG_LLVM_IMAGE=/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/libLLVM.dylib
+export PVG_GPU_IMAGE=/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/libGPUCompiler.dylib
+"$probes/metal-library-bitcode" "$library" --all "$output"
+modules=("$output"/*.bc(N))
+(( ${#modules} > 0 )) || exit 65
+for module in "${modules[@]}"; do
+    "$probes/air-bitcode-probe" "$module" "${module%.bc}.air" > "${module%.bc}.ll"
+done
+print "Downgraded ${#modules} modules for ${PVG_AIR_OS_TARGET:-10.15}; link *.air with the matching Xcode metallib tool."

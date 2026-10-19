@@ -1,0 +1,10 @@
+breakpoint set -S provideImageData:bytesPerRow:origin::size::userInfo:
+continue
+expression -- void *$pixels = (void *)$rdx
+register read rdi rdx rcx r8 r9
+thread backtrace -c 12
+breakpoint disable
+thread step-out
+memory read --format x --size 1 --count 64 $pixels
+detach
+quit

@@ -1,0 +1,8 @@
+# Research only, process-local. Change config after populateConfigData returns.
+# Mojave gleLinkProgram maps mode0 to PP codegen1, mode1 to2, mode2 to10.
+# Unlike mojave-gl-codegen.lldb, do not skip any null-stream operations.
+command script import /Users/Shared/pvg-probes/mojave_gl_mode0.py
+run
+thread backtrace all
+register read
+quit

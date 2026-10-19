@@ -1,0 +1,8 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+mkdir -p "$root/Build/Probes"
+xcrun clang -fobjc-arc -fmodules -framework Foundation -I "$root/VirtualIntelMac" \
+    "$root/probes/app-qmp-exit-events.m" "$root/VirtualIntelMac/VIMQMPConnection.m" \
+    -o "$root/Build/Probes/app-qmp-exit-events"
+exec "$root/Build/Probes/app-qmp-exit-events"

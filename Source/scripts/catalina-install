@@ -1,0 +1,131 @@
+#!/bin/zsh
+set -euo pipefail
+
+if (( EUID != 0 )); then
+    print -u2 "catalina-install must run as root"
+    exit 77
+fi
+if (( $# != 2 )); then
+    print -u2 "usage: catalina-install payload-root backup-root"
+    exit 64
+fi
+
+payload=${1:A}
+backup=${2:A}
+
+[[ $(sw_vers -productVersion) == 10.15.7 ]] || {
+    print -u2 "refusing non-Catalina target"
+    exit 65
+}
+[[ $(sw_vers -buildVersion) == 19H15 ]] || {
+    print -u2 "refusing non-19H15 target"
+    exit 65
+}
+
+# Catalina's system volume remains read-only after a normal boot even when SIP
+# is disabled.  The payload targets /System, so make the mount writable before
+# creating any backup state or moving a target.
+mount -uw /
+mount | awk '$3 == "/" { if ($0 ~ /read-only/) exit 1; found=1 } END { exit !found }' || {
+    print -u2 "failed to remount / read-write"
+    exit 74
+}
+[[ ! -e "$backup" ]] || {
+    print -u2 "backup already exists: $backup"
+    exit 73
+}
+
+targets=(
+    /System/Library/Extensions/IOSurface.kext
+    /System/Library/Extensions/IOGraphicsFamily.kext
+    /System/Library/Extensions/IOAcceleratorFamily2.kext
+    /System/Library/Extensions/AppleParavirtGPU.kext
+    /Library/Extensions/PVGKernelCompat.kext
+    /Library/Extensions/Lilu.kext
+    /Library/Extensions/PVGIOSurfaceABI.kext
+    /Library/Extensions/PVGFramebufferBootstrap.kext
+    /System/Library/Extensions/AppleParavirtGPUMetal.bundle
+    /System/Library/PrivateFrameworks/MetalSerializer.framework
+    /System/Library/Frameworks/Metal.framework/Versions/A/XPCServices/MTLCompilerService.xpc
+    /System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3903
+    /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001
+    /System/Library/Frameworks/Metal.framework/Versions/A/Resources/MTLRaytracingRuntime.rtlib
+    /System/Library/Frameworks/Metal.framework/Versions/A/Resources/MTLBVHBuilder.metallib
+    /System/Library/Frameworks/Metal.framework/Versions/A/Resources/MTLECBE.metallib
+)
+
+# The superseded hybrid bridge exports methods that the coherent Big Sur
+# IOSurface now owns. It must not remain available to the prelinked kernel.
+remove_targets=(
+    /Library/Extensions/IOSurfacePVGCompat.kext
+)
+
+mkdir -p "$backup/originals" "$backup/absent" "$backup/displaced"
+sw_vers > "$backup/sw_vers.txt"
+uname -a > "$backup/uname.txt"
+kextstat > "$backup/kextstat-before.txt"
+ls -ldeO@ $targets > "$backup/target-metadata-before.txt" 2>&1 || true
+ls -ldeO@ $remove_targets >> "$backup/target-metadata-before.txt" 2>&1 || true
+
+for target in $targets; do
+    source="$payload$target"
+    [[ -e "$source" ]] || {
+        print -u2 "payload path missing: $source"
+        exit 66
+    }
+    if [[ -e "$target" ]]; then
+        mkdir -p "$backup/originals${target:h}" "$backup/displaced${target:h}"
+        # System bundles carry com.apple.rootless/restricted metadata that APFS
+        # will not reproduce in a directory on the Data volume.  Save content
+        # without those attributes and record the original metadata above.
+        ditto --noextattr --noacl "$target" "$backup/originals$target"
+        mv "$target" "$backup/displaced$target"
+    else
+        mkdir -p "$backup/absent${target:h}"
+        touch "$backup/absent$target"
+    fi
+    mkdir -p "${target:h}"
+    ditto "$source" "$target"
+done
+
+for target in $remove_targets; do
+    if [[ -e "$target" ]]; then
+        mkdir -p "$backup/originals${target:h}" "$backup/displaced${target:h}"
+        ditto --noextattr --noacl "$target" "$backup/originals$target"
+        mv "$target" "$backup/displaced$target"
+    else
+        mkdir -p "$backup/absent${target:h}"
+        touch "$backup/absent$target"
+    fi
+done
+
+chown -R root:wheel $targets
+chmod -R go-w $targets
+
+codesign --verify --strict --verbose=2 \
+    /System/Library/Extensions/IOGraphicsFamily.kext \
+    /System/Library/Extensions/IOAcceleratorFamily2.kext \
+    /System/Library/Extensions/IOSurface.kext \
+    /System/Library/Extensions/AppleParavirtGPU.kext \
+    /Library/Extensions/PVGKernelCompat.kext \
+    /Library/Extensions/Lilu.kext \
+    /Library/Extensions/PVGIOSurfaceABI.kext \
+    /Library/Extensions/PVGFramebufferBootstrap.kext \
+    /System/Library/Extensions/AppleParavirtGPUMetal.bundle \
+    /System/Library/PrivateFrameworks/MetalSerializer.framework/Versions/A/MetalSerializer \
+    /System/Library/PrivateFrameworks/MetalSerializer.framework/Versions/A/MetalSerializerOriginal \
+    /System/Library/Frameworks/Metal.framework/Versions/A/XPCServices/MTLCompilerService.xpc \
+    /System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3903/MTLCompiler \
+    /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/*.dylib
+
+kextutil -n -t -D -c \
+    -r /System/Library/Extensions \
+    -r /Library/Extensions \
+    /System/Library/Extensions/AppleParavirtGPU.kext \
+    2>&1 | tee "$backup/kextutil-before-cache.txt"
+
+touch /System/Library/Extensions /Library/Extensions
+kextcache -system-caches 2>&1 | tee "$backup/kextcache-system-install.txt"
+kextcache -system-prelinked-kernel 2>&1 | tee "$backup/kextcache-install.txt"
+sync
+print "Catalina PVG payload installed; reboot required"

@@ -1,0 +1,18 @@
+settings set auto-confirm true
+process attach --name WindowServer
+expression -l c -- void *$pvg_encoder_class = ((void *(*)(const char *))objc_getClass)("MTLSerializerRenderCommandEncoder")
+expression -l c -- void *$pvg_pipeline_sel = ((void *(*)(const char *))sel_registerName)("setRenderPipelineState:")
+expression -l c -- void *$pvg_texture_sel = ((void *(*)(const char *))sel_registerName)("setFragmentTexture:atIndex:")
+expression -l c -- void *$pvg_end_sel = ((void *(*)(const char *))sel_registerName)("endEncoding")
+expression -l c -- void *$pvg_pipeline_imp = ((void *(*)(void *, void *))class_getMethodImplementation)($pvg_encoder_class, $pvg_pipeline_sel)
+expression -l c -- void *$pvg_texture_imp = ((void *(*)(void *, void *))class_getMethodImplementation)($pvg_encoder_class, $pvg_texture_sel)
+expression -l c -- void *$pvg_end_imp = ((void *(*)(void *, void *))class_getMethodImplementation)($pvg_encoder_class, $pvg_end_sel)
+expression -l c -- $pvg_encoder_class
+expression -l c -- $pvg_pipeline_imp
+expression -l c -- $pvg_texture_imp
+expression -l c -- $pvg_end_imp
+image lookup --address `$pvg_pipeline_imp`
+image lookup --address `$pvg_texture_imp`
+image lookup --address `$pvg_end_imp`
+process detach
+quit

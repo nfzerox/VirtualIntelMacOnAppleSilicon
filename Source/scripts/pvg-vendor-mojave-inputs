@@ -1,0 +1,26 @@
+#!/bin/zsh
+# Maintainer-only: archive explicit loose reference inputs, never a dyld cache.
+set -euo pipefail
+repo=${0:A:h:h}
+(( $# == 4 )) || { print -u2 'usage: pvg-vendor-mojave-inputs NATIVE_ROOT STOCK_SKYLIGHT CATALINA_IOACCELERATOR NEW_ARCHIVE'; exit 64; }
+native=${1:A}; sky=${2:A}; client=${3:A}; output=${4:A}
+[[ -d $native && -s $sky && -s $client && ! -e $output ]] || exit 66
+stage=$(mktemp -d /private/var/tmp/pvg-mojave-inputs.XXXXXX)
+paths=(
+    System/Library/Frameworks/CoreDisplay.framework
+    System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3902
+    System/Library/Frameworks/Metal.framework/Versions/A/XPCServices/MTLCompilerService.xpc
+    System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/3902/Libraries/libLLVM.dylib
+)
+for input in $paths; do
+    [[ -e "$native/$input" ]] || { print -u2 "Missing $native/$input"; exit 66; }
+    mkdir -p "$stage/mojave-inputs/native/${input:h}"
+    ditto --noextattr --noacl "$native/$input" "$stage/mojave-inputs/native/$input"
+done
+sky_path=System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight
+mkdir -p "$stage/mojave-inputs/native/${sky_path:h}" "$stage/mojave-inputs/catalina"
+cp "$sky" "$stage/mojave-inputs/native/$sky_path"
+cp "$client" "$stage/mojave-inputs/catalina/IOAccelerator"
+(cd "$stage/mojave-inputs"; find . -type f -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256) > "$stage/MOJAVE-INPUTS.sha256"
+COPYFILE_DISABLE=1 tar -czf "$output" -C "$stage" mojave-inputs MOJAVE-INPUTS.sha256
+print "Mojave reference inputs: $output; scratch: $stage"

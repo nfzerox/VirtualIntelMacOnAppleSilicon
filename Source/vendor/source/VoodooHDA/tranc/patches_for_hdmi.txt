@@ -1,0 +1,351 @@
+The active pin number (the one connected with a live HDMI monitor/sink)
+could be identified on hotplug events.
+
+This scheme still does not support two connected monitors.
+
+Signed-off-by: Wu Fengguang <fengguang.wu at intel.com>
+---
+ sound/pci/hda/patch_intelhdmi.c |   48 +++++++++++++++++++++++-------
+ 1 file changed, 37 insertions(+), 11 deletions(-)
+
+--- sound-2.6.orig/sound/pci/hda/patch_intelhdmi.c
++++ sound-2.6/sound/pci/hda/patch_intelhdmi.c
+@@ -35,8 +35,7 @@
+
+ static hda_nid_t cvt_nid;	/* audio converter */
+ static hda_nid_t pin_nid;	/* HDMI output pin */
+-
+-#define INTEL_HDMI_EVENT_TAG		0x08
++static hda_nid_t *hdmi_pins;	/* available output pins */
+
+ struct intel_hdmi_spec {
+ 	struct hda_multi_out multiout;
+@@ -217,14 +216,14 @@ static void hdmi_write_dip_byte(struct h
+ 	snd_hda_codec_write(codec, nid, 0, AC_VERB_SET_HDMI_DIP_DATA, val);
+ }
+
+-static void hdmi_enable_output(struct hda_codec *codec)
++static void hdmi_enable_output(struct hda_codec *codec, hda_nid_t nid)
+ {
+ 	/* Unmute */
+-	if (get_wcaps(codec, pin_nid) & AC_WCAP_OUT_AMP)
+-		snd_hda_codec_write(codec, pin_nid, 0,
++	if (get_wcaps(codec, nid) & AC_WCAP_OUT_AMP)
++		snd_hda_codec_write(codec, nid, 0,
+ 				AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_UNMUTE);
+ 	/* Enable pin out */
+-	snd_hda_codec_write(codec, pin_nid, 0,
++	snd_hda_codec_write(codec, nid, 0,
+ 			    AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT);
+ }
+
+@@ -485,6 +484,7 @@ static void hdmi_setup_audio_infoframe(s
+
+ static void hdmi_intrinsic_event(struct hda_codec *codec, unsigned int res)
+ {
++	int tag = res >> AC_UNSOL_RES_TAG_SHIFT;
+ 	int pind = !!(res & AC_UNSOL_RES_PD);
+ 	int eldv = !!(res & AC_UNSOL_RES_ELDV);
+
+@@ -493,6 +493,16 @@ static void hdmi_intrinsic_event(struct
+ 		pind, eldv);
+
+ 	if (pind && eldv) {
++		/*
++		 * We default to the first HDMI PIN initially, and
++		 * switch active pin on hotplug events.
++		 */
++		if (pin_nid != tag) {
++			printk(KERN_INFO
++			       "HDMI: switch active pin %#x to %#x\n",
++			       pin_nid, tag);
++			pin_nid = tag;
++		}
+ 		hdmi_parse_eld(codec);
+ 		/* TODO: do real things about ELD */
+ 	}
+@@ -520,10 +530,15 @@ static void hdmi_non_intrinsic_event(str
+
+ static void intel_hdmi_unsol_event(struct hda_codec *codec, unsigned int res)
+ {
++	int i;
+ 	int tag = res >> AC_UNSOL_RES_TAG_SHIFT;
+ 	int subtag = (res & AC_UNSOL_RES_SUBTAG) >> AC_UNSOL_RES_SUBTAG_SHIFT;
+
+-	if (tag != INTEL_HDMI_EVENT_TAG) {
++	for (i = 0; hdmi_pins[i]; i++)
++		if (tag == hdmi_pins[i])
++			break;
++
++	if (!hdmi_pins[i]) {
+ 		snd_printd(KERN_INFO "Unexpected HDMI event tag 0x%x\n", tag);
+ 		return;
+ 	}
+@@ -619,11 +634,14 @@ static int intel_hdmi_build_controls(str
+
+ static int intel_hdmi_init(struct hda_codec *codec)
+ {
+-	hdmi_enable_output(codec);
++	int i;
+
+-	snd_hda_codec_write(codec, pin_nid, 0,
+-			    AC_VERB_SET_UNSOLICITED_ENABLE,
+-			    AC_USRSP_EN | INTEL_HDMI_EVENT_TAG);
++	for (i = 0; hdmi_pins[i]; i++) {
++		hdmi_enable_output(codec, hdmi_pins[i]);
++		snd_hda_codec_write(codec, hdmi_pins[i], 0,
++				    AC_VERB_SET_UNSOLICITED_ENABLE,
++				    AC_USRSP_EN | hdmi_pins[i]);
++	}
+ 	return 0;
+ }
+
+@@ -667,15 +685,23 @@ static int do_patch_intel_hdmi(struct hd
+
+ static int patch_intel_hdmi(struct hda_codec *codec)
+ {
++	static hda_nid_t g45_pins[] = { 0x03, 0 }; /* 0: terminator */
++
+ 	cvt_nid = 0x02;
+ 	pin_nid = 0x03;
++	hdmi_pins = g45_pins;
++
+ 	return do_patch_intel_hdmi(codec);
+ }
+
+ static int patch_intel_hdmi_ibexpeak(struct hda_codec *codec)
+ {
++	static hda_nid_t p55_pins[] = { 0x04, 0x05, 0x06, 0 };
++
+ 	cvt_nid = 0x02;
+ 	pin_nid = 0x04;
++	hdmi_pins = p55_pins;
++
+ 	return do_patch_intel_hdmi(codec);
+ }
+
+//----------------------------------------------------------
+Some new HDMI commands were added recently to the HDA driver.
+This patch makes hda-emu support these new commands (or at least,
+not output errors).
+
+Signed-off-by: David Henningsson <david.henningsson at canonical.com>
+---
+ hda-int.c           | 53 +++++++++++++++++++++++++++++++++++++++++++++++++++++
+ include/hda-types.h |  2 ++
+ 2 files changed, 55 insertions(+)
+
+diff --git a/hda-int.c b/hda-int.c
+index ef90fe8..6dd862d 100644
+--- a/hda-int.c
++++ b/hda-int.c
+@@ -823,6 +823,52 @@ static int get_cvt_channel_count(struct xhda_codec *codec,
+ 	return node->cvt_channel_count;
+ }
+ 
++static int get_asp_channel_slot(struct xhda_codec *codec,
++				struct xhda_node *node, unsigned int cmd)
++{
++	return (node->asp_channel_slot[cmd & 0xf] << 4) + (cmd & 0xf);
++}
++
++static int set_asp_channel_slot(struct xhda_codec *codec,
++				struct xhda_node *node, unsigned int cmd)
++{
++	node->asp_channel_slot[cmd & 0xf] = (cmd & 0xf0) >> 4;
++	return 0;
++}
++
++static int set_dip_index(struct xhda_codec *codec,
++			 struct xhda_node *node, unsigned int cmd)
++{
++	return 0; /* FIXME */
++}
++
++static int set_dip_data(struct xhda_codec *codec,
++			struct xhda_node *node, unsigned int cmd)
++{
++	return 0; /* FIXME */
++}
++
++static int get_dip_size(struct xhda_codec *codec,
++			struct xhda_node *node, unsigned int cmd)
++{
++	if (cmd & 0x8)
++		return 128; /* ELD buffer size */
++	return 32; /* DIP buffer size */
++}
++
++static int set_dip_xmitctrl(struct xhda_codec *codec,
++			    struct xhda_node *node, unsigned int cmd)
++{
++	node->dip_xmitctrl = cmd & 0xc0;
++	return 0;
++}
++
++static int get_dip_xmitctrl(struct xhda_codec *codec,
++			    struct xhda_node *node, unsigned int cmd)
++{
++	return node->dip_xmitctrl;
++}
++
+ 
+ /*
+  * parameters
+@@ -1063,6 +1109,10 @@ static struct xhda_verb_table verb_tbl[] = {
+ 	{ 0x71e, set_config_def_2, "set_config_def_2" },
+ 	{ 0x71f, set_config_def_3, "set_config_def_3" },
+ 	{ 0x72d, set_cvt_channel_count, "set_cvt_channel_count" },
++	{ 0x730, set_dip_index, "set_dip_index" },
++	{ 0x731, set_dip_data, "set_dip_data" },
++	{ 0x732, set_dip_xmitctrl, "set_dip_xmitctrl" },
++	{ 0x734, set_asp_channel_slot, "set_asp_channel_slot" },
+ 	{ 0x7ff, set_codec_reset, "set_codec_reset" },
+ 	{ 0xf00, get_parameters, "get_parameters" },
+ 	{ 0xf01, get_connect_sel, "get_connect_sel" },
+@@ -1087,6 +1137,9 @@ static struct xhda_verb_table verb_tbl[] = {
+ 	{ 0xf1c, get_config_default, "get_config_default" },
+ 	{ 0xf20, get_ssid, "get_ssid" },
+ 	{ 0xf2d, get_cvt_channel_count, "get_cvt_channel_count" },
++	{ 0xf2e, get_dip_size, "get_dip_size" },
++	{ 0xf32, get_dip_xmitctrl, "get_dip_xmitctrl" },
++	{ 0xf34, get_asp_channel_slot, "get_asp_channel_slot" },
+ 	{}
+ };
+ 
+diff --git a/include/hda-types.h b/include/hda-types.h
+index fe6b31f..46bfc67 100644
+--- a/include/hda-types.h
++++ b/include/hda-types.h
+@@ -58,6 +58,8 @@ struct xhda_node {
+ 	unsigned char gpio_wake, gpio_unsol, gpio_sticky;
+ 	unsigned int coef_idx;
+ 	unsigned char cvt_channel_count;
++	unsigned char asp_channel_slot[16];
++	unsigned char dip_xmitctrl;
+ 	struct xhda_coef_table *coef_tbl;
+ 	struct xhda_node *next;
+ };
+-- 
+1.9.1
+
+//-------------------------------------------------------------------
+For DP audio support, infoframe needs to be different. Based on
+get_conn_type result we pack either HDMI or DP infoframe.
+
+Signed-off-by: Subhransu S. Prusty <subhransu.s.prusty at intel.com>
+Signed-off-by: Vinod Koul <vinod.koul at intel.com>
+---
+ sound/soc/codecs/hdac_hdmi.c | 74 ++++++++++++++++++++++++++++++++++++++------
+ 1 file changed, 64 insertions(+), 10 deletions(-)
+
+diff --git a/sound/soc/codecs/hdac_hdmi.c b/sound/soc/codecs/hdac_hdmi.c
+index 3ad5abe..9bd559d 100644
+--- a/sound/soc/codecs/hdac_hdmi.c
++++ b/sound/soc/codecs/hdac_hdmi.c
+@@ -253,27 +253,75 @@ hdac_hdmi_set_dip_index(struct hdac_ext_device *hdac, hda_nid_t pin_nid,
+ 				AC_VERB_SET_HDMI_DIP_INDEX, val);
+ }
+ 
++struct dp_audio_infoframe {
++	u8 type; /* 0x84 */
++	u8 len;  /* 0x1b */
++	u8 ver;  /* 0x11 << 2 */
++
++	u8 CC02_CT47;	/* match with HDMI infoframe from this on */
++	u8 SS01_SF24;
++	u8 CXT04;
++	u8 CA;
++	u8 LFEPBL01_LSV36_DM_INH7;
++};
++
+ static int hdac_hdmi_setup_audio_infoframe(struct hdac_ext_device *hdac,
+ 				hda_nid_t cvt_nid, hda_nid_t pin_nid)
+ {
+ 	uint8_t buffer[HDMI_INFOFRAME_HEADER_SIZE + HDMI_AUDIO_INFOFRAME_SIZE];
+ 	struct hdmi_audio_infoframe frame;
+-	u8 *dip = (u8 *)&frame;
++	struct dp_audio_infoframe dp_ai;
++	struct hdac_hdmi_priv *hdmi = hdac->private_data;
++	struct hdac_hdmi_pin *pin;
++	u8 *dip;
+ 	int ret;
+ 	int i;
++	const u8 *eld_buf;
++	u8 conn_type;
++	int channels = 2;
+ 
+-	hdmi_audio_infoframe_init(&frame);
++	list_for_each_entry(pin, &hdmi->pin_list, head) {
++		if (pin->nid == pin_nid)
++			break;
++	}
+ 
+-	/* Default stereo for now */
+-	frame.channels = 2;
++	eld_buf = pin->eld.eld_buffer;
++	conn_type = drm_eld_get_conn_type(eld_buf);
+ 
+ 	/* setup channel count */
+ 	snd_hdac_codec_write(&hdac->hdac, cvt_nid, 0,
+-			    AC_VERB_SET_CVT_CHAN_COUNT, frame.channels - 1);
++			    AC_VERB_SET_CVT_CHAN_COUNT, channels - 1);
+ 
+-	ret = hdmi_audio_infoframe_pack(&frame, buffer, sizeof(buffer));
+-	if (ret < 0)
+-		return ret;
++	switch (conn_type) {
++	case DRM_ELD_CONN_TYPE_HDMI:
++		hdmi_audio_infoframe_init(&frame);
++
++		/* Default stereo for now */
++		frame.channels = channels;
++
++		ret = hdmi_audio_infoframe_pack(&frame, buffer, sizeof(buffer));
++		if (ret < 0)
++			return ret;
++
++		dip = (u8 *)&frame;
++		break;
++
++	case DRM_ELD_CONN_TYPE_DP:
++		memset(&dp_ai, 0, sizeof(dp_ai));
++		dp_ai.type	= 0x84;
++		dp_ai.len	= 0x1b;
++		dp_ai.ver	= 0x11 << 2;
++		dp_ai.CC02_CT47	= channels - 1;
++		dp_ai.CA	= 0;
++
++		dip = (u8 *)&dp_ai;
++		break;
++
++	default:
++		dev_err(&hdac->hdac.dev, "Invalid connection type: %d\n",
++						conn_type);
++		return -EIO;
++	}
+ 
+ 	/* stop infoframe transmission */
+ 	hdac_hdmi_set_dip_index(hdac, pin_nid, 0x0, 0x0);
+@@ -283,9 +331,15 @@ static int hdac_hdmi_setup_audio_infoframe(struct hdac_ext_device *hdac,
+ 
+ 	/*  Fill infoframe. Index auto-incremented */
+ 	hdac_hdmi_set_dip_index(hdac, pin_nid, 0x0, 0x0);
+-	for (i = 0; i < sizeof(frame); i++)
+-		snd_hdac_codec_write(&hdac->hdac, pin_nid, 0,
++	if (conn_type == DRM_ELD_CONN_TYPE_HDMI) {
++		for (i = 0; i < sizeof(frame); i++)
++			snd_hdac_codec_write(&hdac->hdac, pin_nid, 0,
+ 				AC_VERB_SET_HDMI_DIP_DATA, dip[i]);
++	} else {
++		for (i = 0; i < sizeof(dp_ai); i++)
++			snd_hdac_codec_write(&hdac->hdac, pin_nid, 0,
++				AC_VERB_SET_HDMI_DIP_DATA, dip[i]);
++	}
+ 
+ 	/* Start infoframe */
+ 	hdac_hdmi_set_dip_index(hdac, pin_nid, 0x0, 0x0);
+-- 
+1.9.1
+
+

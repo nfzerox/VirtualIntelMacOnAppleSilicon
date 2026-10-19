@@ -1,0 +1,9 @@
+--- !tapi-tbd
+tbd-version: 4
+targets: [ x86_64-macos ]
+install-name: '/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/3902/Libraries/libLLVM.dylib'
+exports:
+  - targets: [ x86_64-macos ]
+    symbols: [ _LLVMWriteBitcodeToMemoryBuffer, _LLVMGetBufferStart,
+               _LLVMGetBufferSize, _LLVMDisposeMemoryBuffer ]
+...

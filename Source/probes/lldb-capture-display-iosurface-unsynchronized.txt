@@ -1,0 +1,21 @@
+settings set auto-confirm true
+process attach --name WindowServer
+breakpoint set --name IOAccelDisplayPipeTransactionSetPlaneIOSurface
+continue
+register read rdi rsi rdx rcx r8
+expression -l c -- void *$pvg_surface = (void *)$rdx
+expression -l c -- unsigned long $pvg_width = ((unsigned long (*)(void *))IOSurfaceGetWidth)($pvg_surface)
+expression -l c -- unsigned long $pvg_height = ((unsigned long (*)(void *))IOSurfaceGetHeight)($pvg_surface)
+expression -l c -- unsigned long $pvg_bpr = ((unsigned long (*)(void *))IOSurfaceGetBytesPerRow)($pvg_surface)
+expression -l c -- unsigned long $pvg_size = ((unsigned long (*)(void *))IOSurfaceGetAllocSize)($pvg_surface)
+expression -l c -- unsigned int $pvg_id = ((unsigned int (*)(void *))IOSurfaceGetID)($pvg_surface)
+expression -l c -- void *$pvg_base = ((void *(*)(void *))IOSurfaceGetBaseAddress)($pvg_surface)
+expression -l c -- $pvg_width
+expression -l c -- $pvg_height
+expression -l c -- $pvg_bpr
+expression -l c -- $pvg_size
+expression -l c -- $pvg_id
+expression -l c -- $pvg_base
+memory read --force --binary --outfile /tmp/pvg-display-surface-unsynchronized.bin --count `$pvg_size` `$pvg_base`
+process detach
+quit

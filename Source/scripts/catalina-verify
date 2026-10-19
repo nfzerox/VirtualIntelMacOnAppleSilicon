@@ -1,0 +1,63 @@
+#!/bin/zsh
+set -euo pipefail
+
+if (( $# != 1 )); then
+    print -u2 "usage: catalina-verify metal-compute-smoke.m"
+    exit 64
+fi
+
+source_file=${1:A}
+[[ -f "$source_file" ]] || {
+    print -u2 "probe source missing: $source_file"
+    exit 66
+}
+[[ $(sw_vers -productVersion) == 10.15.7 && \
+   $(sw_vers -buildVersion) == 19H15 ]] || {
+    print -u2 "verification requires Catalina 10.15.7 build 19H15"
+    exit 65
+}
+
+temporary=$(mktemp -d /tmp/pvg-verify.XXXXXX)
+temporary_parent=${temporary:h}
+temporary_name=${temporary:t}
+trap '(cd "$temporary_parent" && find "$temporary_name" -depth -delete)' EXIT
+probe="$temporary/metal-compute-smoke"
+
+xcrun clang -arch x86_64 -mmacosx-version-min=10.15 -fobjc-arc -fblocks \
+    "$source_file" -framework Foundation -framework Metal -o "$probe"
+codesign -f -s - "$probe"
+
+print 'BOOT'
+uptime
+sw_vers
+
+print 'KEXTS'
+kextstat | egrep \
+    'IOGraphicsFamily|IOAcceleratorFamily2|AppleParavirtGPU|local.pvg|as.vit9696.Lilu'
+
+print 'ACCELERATOR'
+ioreg -lw0 -r -n AppleParavirtAccelerator | egrep \
+    'MetalPlugin|AccelCaps|IOAccelDisplayPipeCapabilities|AGCInfo'
+
+print 'DISPLAY'
+system_profiler SPDisplaysDataType
+
+print 'COUNTERS BEFORE'
+ioreg -lw0 -r -n AppleParavirtAccelerator | tr ',' '\n' | egrep \
+    'agpTextureCreationCount|hardwareWaitTime|fSubmissionsSinceLastCheck|fLastSubmissionPID'
+
+print 'COMPUTE'
+for iteration in 1 2 3 4 5; do
+    "$probe"
+done
+
+print 'COUNTERS AFTER'
+ioreg -lw0 -r -n AppleParavirtAccelerator | tr ',' '\n' | egrep \
+    'agpTextureCreationCount|hardwareWaitTime|fSubmissionsSinceLastCheck|fLastSubmissionPID'
+
+print 'COMPILER ROUTE'
+strings -a \
+    /System/Library/Frameworks/Metal.framework/Versions/A/XPCServices/MTLCompilerService.xpc/Contents/MacOS/MTLCompilerService | \
+    grep '/Versions/3903/MTLCompiler'
+
+print 'PASS: Catalina PVG compute stack is accelerated'

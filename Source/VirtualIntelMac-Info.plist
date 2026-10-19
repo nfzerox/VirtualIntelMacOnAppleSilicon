@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>NSRemovableVolumesUsageDescription</key><string>Allow a USB drive you choose to be connected to your virtual Mac instead of this Mac.</string>
+    <key>CFBundleDocumentTypes</key><array><dict>
+        <key>CFBundleTypeName</key><string>Virtual Intel Mac</string>
+        <key>CFBundleTypeRole</key><string>Editor</string>
+        <key>LSHandlerRank</key><string>Owner</string>
+        <key>LSItemContentTypes</key><array><string>com.mac.virtualintelmac.machine</string></array>
+        <key>LSTypeIsPackage</key><true/>
+    </dict></array>
+    <key>UTExportedTypeDeclarations</key><array><dict>
+        <key>UTTypeIdentifier</key><string>com.mac.virtualintelmac.machine</string>
+        <key>UTTypeDescription</key><string>Virtual Intel Mac</string>
+        <key>UTTypeConformsTo</key><array><string>com.apple.package</string></array>
+        <key>UTTypeTagSpecification</key><dict>
+            <key>public.filename-extension</key><array><string>vintelmac</string></array>
+        </dict>
+    </dict></array>
+</dict></plist>

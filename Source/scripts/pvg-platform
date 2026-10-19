@@ -1,0 +1,24 @@
+#!/bin/zsh
+# Source from installer/build scripts. PVG_TARGET_OS is a build-only override;
+# installation callers pass the actual guest version explicitly.
+pvg_release_archive() {
+    local directory=$1
+    if [[ -f "$directory/guest-payload.tar.xz" && ! -f "$directory/guest-payload.tar.gz" ]]; then
+        print -r -- "$directory/guest-payload.tar.xz"
+    elif [[ -f "$directory/guest-payload.tar.gz" && ! -f "$directory/guest-payload.tar.xz" ]]; then
+        print -r -- "$directory/guest-payload.tar.gz"
+    else
+        print -u2 'Expected exactly one XZ or gzip guest release archive.';return 66
+    fi
+}
+pvg_platform() {
+    case $1 in
+        10.14|10.14.*) pvg_target=10.14; pvg_name=Mojave; pvg_xcode=XcodeMojave
+            pvg_release="$repo/prebuilt/mojave"
+            pvg_targets="$repo/support/install-targets-mojave.txt" ;;
+        10.15|10.15.*) pvg_target=10.15; pvg_name=Catalina; pvg_xcode=XcodeCatalina
+            pvg_release="$repo/prebuilt"
+            pvg_targets="$repo/support/install-targets.txt" ;;
+        *) print -u2 "Unsupported guest version: $1 (requires Intel Mojave or Catalina)"; return 65 ;;
+    esac
+}

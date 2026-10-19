@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Configuration</key>
+	<string>RELEASE</string>
+	<key>EDKRevision</key>
+	<string>2970e5699ba6267f3384ffab20f96647578aebc8</string>
+	<key>GuestArchitecture</key>
+	<string>x86_64</string>
+	<key>Hashes</key>
+	<dict>
+		<key>OVMF_CODE.fd</key>
+		<string>ef8d11e9b6caed4b1cfc80fe405cb36092214898804dc241282711fc45b41e18</string>
+		<key>OVMF_VARS.fd</key>
+		<string>5d2ac383371b408398accee7ec27c8c09ea5b74a0de0ceea6513388b15be5d1e</string>
+	</dict>
+	<key>QuietBoot</key>
+	<true/>
+	<key>S3MemoryBinGuard</key>
+	<true/>
+	<key>Tools</key>
+	<dict>
+		<key>acpica-unix2-20260408.tar.gz</key>
+		<string>5fcef9f0d00ffaffaaa82aa49c5ea9687986e8a7bd60929e298cc99a6741ae24</string>
+		<key>llvm-mingw-20261006-ucrt-macos-universal.tar.xz</key>
+		<string>a7a19b11048e89372637d26279cdb7c430ed3cf8c1e224310421312bf986ebf6</string>
+		<key>nasm-3.02.tar.xz</key>
+		<string>87336eba53b4acfe917424ab5d500d2b0054d9f5148d35c2273ccf2cfb712f0d</string>
+	</dict>
+	<key>VerboseDiagnostics</key>
+	<false/>
+</dict>
+</plist>

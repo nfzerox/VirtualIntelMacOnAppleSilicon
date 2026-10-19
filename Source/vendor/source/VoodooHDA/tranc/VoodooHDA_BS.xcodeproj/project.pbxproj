@@ -1,0 +1,352 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 46;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		120156031244377E00611BC7 /* AppleAudioClip.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 12BDC91012440B5D00B327AE /* AppleAudioClip.cpp */; settings = {COMPILER_FLAGS = "-Wno-unused-function -fvisibility=hidden"; }; };
+		12BDC90E12440B4E00B327AE /* TigerAdditionals.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 12BDC90C12440B4E00B327AE /* TigerAdditionals.cpp */; };
+		12F24FCC12860D9600B294D6 /* PCMBlitterLib.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CEF7C0A40EF74C2700A14C68 /* PCMBlitterLib.cpp */; settings = {COMPILER_FLAGS = "-fvisibility=hidden"; }; };
+		CE5D398B0EF4784000140715 /* Parser.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CE5D398A0EF4784000140715 /* Parser.cpp */; };
+		CE6725A40EF078B100FAFBED /* VoodooHDADevice.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CE6725A00EF078B100FAFBED /* VoodooHDADevice.cpp */; };
+		CE6725A60EF078B100FAFBED /* VoodooHDAEngine.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CE6725A20EF078B100FAFBED /* VoodooHDAEngine.cpp */; };
+		CE709B500EFF2AA400EE77FF /* VoodooHDAUserClient.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CE709B4E0EFF2AA400EE77FF /* VoodooHDAUserClient.cpp */; };
+		CE9337FE0EF226E000776BCD /* Tables.c in Sources */ = {isa = PBXBuildFile; fileRef = CE9337FC0EF226E000776BCD /* Tables.c */; };
+		E5A3BD951E7095C100F91F3D /* PCMBlitterLibX86.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CEF7C0A70EF74C2700A14C68 /* PCMBlitterLibX86.cpp */; settings = {COMPILER_FLAGS = "-fvisibility=hidden"; }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		12BDC90C12440B4E00B327AE /* TigerAdditionals.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = TigerAdditionals.cpp; sourceTree = "<group>"; };
+		12BDC90D12440B4E00B327AE /* TigerAdditionals.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = TigerAdditionals.h; sourceTree = "<group>"; };
+		12BDC91012440B5D00B327AE /* AppleAudioClip.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AppleAudioClip.cpp; sourceTree = "<group>"; };
+		12BDC91112440B5D00B327AE /* AppleAudioClip.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AppleAudioClip.h; sourceTree = "<group>"; };
+		12BDC91212440B5D00B327AE /* AppleAudioCommon.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AppleAudioCommon.h; sourceTree = "<group>"; };
+		32D94FCF0562CBF700B6AF17 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		32D94FD00562CBF700B6AF17 /* VoodooHDA.kext */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VoodooHDA.kext; sourceTree = BUILT_PRODUCTS_DIR; };
+		CE45220E0EF210FD00600B68 /* Models.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Models.h; sourceTree = "<group>"; };
+		CE45220F0EF210FD00600B68 /* Private.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Private.h; sourceTree = "<group>"; };
+		CE4522100EF210FD00600B68 /* Registers.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Registers.h; sourceTree = "<group>"; };
+		CE4522110EF210FD00600B68 /* Verbs.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Verbs.h; sourceTree = "<group>"; };
+		CE4F4C380F04274500AF2B7B /* OssCompat.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = OssCompat.h; sourceTree = "<group>"; };
+		CE5D398A0EF4784000140715 /* Parser.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Parser.cpp; sourceTree = "<group>"; };
+		CE6725A00EF078B100FAFBED /* VoodooHDADevice.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VoodooHDADevice.cpp; sourceTree = "<group>"; };
+		CE6725A10EF078B100FAFBED /* VoodooHDADevice.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VoodooHDADevice.h; sourceTree = "<group>"; };
+		CE6725A20EF078B100FAFBED /* VoodooHDAEngine.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VoodooHDAEngine.cpp; sourceTree = "<group>"; };
+		CE6725A30EF078B100FAFBED /* VoodooHDAEngine.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VoodooHDAEngine.h; sourceTree = "<group>"; };
+		CE6725A80EF078BB00FAFBED /* License.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = License.h; sourceTree = "<group>"; };
+		CE6725D60EF0880E00FAFBED /* Common.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Common.h; sourceTree = "<group>"; };
+		CE709B4E0EFF2AA400EE77FF /* VoodooHDAUserClient.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VoodooHDAUserClient.cpp; sourceTree = "<group>"; };
+		CE709B4F0EFF2AA400EE77FF /* VoodooHDAUserClient.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VoodooHDAUserClient.h; sourceTree = "<group>"; };
+		CE709B520EFF2AAF00EE77FF /* Shared.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Shared.h; sourceTree = "<group>"; };
+		CE9337FC0EF226E000776BCD /* Tables.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = Tables.c; sourceTree = "<group>"; };
+		CE9337FD0EF226E000776BCD /* Tables.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Tables.h; sourceTree = "<group>"; };
+		CEF7C0A40EF74C2700A14C68 /* PCMBlitterLib.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PCMBlitterLib.cpp; sourceTree = "<group>"; };
+		CEF7C0A50EF74C2700A14C68 /* PCMBlitterLib.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PCMBlitterLib.h; sourceTree = "<group>"; };
+		CEF7C0A60EF74C2700A14C68 /* PCMBlitterLibDispatch.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PCMBlitterLibDispatch.h; sourceTree = "<group>"; };
+		CEF7C0A70EF74C2700A14C68 /* PCMBlitterLibX86.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PCMBlitterLibX86.cpp; sourceTree = "<group>"; };
+		E51C926F166379C30054B6D1 /* iSubTypes.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = iSubTypes.h; sourceTree = "<group>"; };
+		E567864F1FC21ACD000CC2CA /* private_xmmintrin.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = private_xmmintrin.h; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		32D94FCB0562CBF700B6AF17 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		089C166AFE841209C02AAC07 /* VoodooHDA */ = {
+			isa = PBXGroup;
+			children = (
+				247142CAFF3F8F9811CA285C /* Source */,
+				089C167CFE841241C02AAC07 /* Resources */,
+				19C28FB6FE9D52B211CA2CBB /* Products */,
+			);
+			name = VoodooHDA;
+			sourceTree = "<group>";
+		};
+		089C167CFE841241C02AAC07 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				32D94FCF0562CBF700B6AF17 /* Info.plist */,
+			);
+			name = Resources;
+			sourceTree = "<group>";
+		};
+		19C28FB6FE9D52B211CA2CBB /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				32D94FD00562CBF700B6AF17 /* VoodooHDA.kext */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		247142CAFF3F8F9811CA285C /* Source */ = {
+			isa = PBXGroup;
+			children = (
+				12BDC91012440B5D00B327AE /* AppleAudioClip.cpp */,
+				12BDC91112440B5D00B327AE /* AppleAudioClip.h */,
+				12BDC91212440B5D00B327AE /* AppleAudioCommon.h */,
+				CE6725D60EF0880E00FAFBED /* Common.h */,
+				E51C926F166379C30054B6D1 /* iSubTypes.h */,
+				CE6725A80EF078BB00FAFBED /* License.h */,
+				CE45220E0EF210FD00600B68 /* Models.h */,
+				CE4F4C380F04274500AF2B7B /* OssCompat.h */,
+				CE5D398A0EF4784000140715 /* Parser.cpp */,
+				CEF7C0A40EF74C2700A14C68 /* PCMBlitterLib.cpp */,
+				CEF7C0A50EF74C2700A14C68 /* PCMBlitterLib.h */,
+				CEF7C0A60EF74C2700A14C68 /* PCMBlitterLibDispatch.h */,
+				CEF7C0A70EF74C2700A14C68 /* PCMBlitterLibX86.cpp */,
+				CE45220F0EF210FD00600B68 /* Private.h */,
+				CE4522100EF210FD00600B68 /* Registers.h */,
+				CE709B520EFF2AAF00EE77FF /* Shared.h */,
+				CE9337FC0EF226E000776BCD /* Tables.c */,
+				CE9337FD0EF226E000776BCD /* Tables.h */,
+				12BDC90C12440B4E00B327AE /* TigerAdditionals.cpp */,
+				12BDC90D12440B4E00B327AE /* TigerAdditionals.h */,
+				CE4522110EF210FD00600B68 /* Verbs.h */,
+				CE6725A00EF078B100FAFBED /* VoodooHDADevice.cpp */,
+				CE6725A10EF078B100FAFBED /* VoodooHDADevice.h */,
+				CE6725A20EF078B100FAFBED /* VoodooHDAEngine.cpp */,
+				CE6725A30EF078B100FAFBED /* VoodooHDAEngine.h */,
+				CE709B4E0EFF2AA400EE77FF /* VoodooHDAUserClient.cpp */,
+				CE709B4F0EFF2AA400EE77FF /* VoodooHDAUserClient.h */,
+				E567864F1FC21ACD000CC2CA /* private_xmmintrin.h */,
+			);
+			name = Source;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXHeadersBuildPhase section */
+		32D94FC50562CBF700B6AF17 /* Headers */ = {
+			isa = PBXHeadersBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXHeadersBuildPhase section */
+
+/* Begin PBXNativeTarget section */
+		32D94FC30562CBF700B6AF17 /* VoodooHDA */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1DEB91D908733DB10010E9CD /* Build configuration list for PBXNativeTarget "VoodooHDA" */;
+			buildPhases = (
+				32D94FC50562CBF700B6AF17 /* Headers */,
+				32D94FC70562CBF700B6AF17 /* Resources */,
+				32D94FC90562CBF700B6AF17 /* Sources */,
+				32D94FCB0562CBF700B6AF17 /* Frameworks */,
+				32D94FCC0562CBF700B6AF17 /* Rez */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = VoodooHDA;
+			productInstallPath = "$(SYSTEM_LIBRARY_DIR)/Extensions";
+			productName = VoodooHDA;
+			productReference = 32D94FD00562CBF700B6AF17 /* VoodooHDA.kext */;
+			productType = "com.apple.product-type.kernel-extension.iokit";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		089C1669FE841209C02AAC07 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 1410;
+				TargetAttributes = {
+					32D94FC30562CBF700B6AF17 = {
+						DevelopmentTeam = "sergey.slice@gmail.com";
+					};
+				};
+			};
+			buildConfigurationList = 1DEB91DD08733DB10010E9CD /* Build configuration list for PBXProject "VoodooHDA_BS" */;
+			compatibilityVersion = "Xcode 3.2";
+			developmentRegion = en;
+			hasScannedForEncodings = 1;
+			knownRegions = (
+				ja,
+				de,
+				en,
+				fr,
+				Base,
+			);
+			mainGroup = 089C166AFE841209C02AAC07 /* VoodooHDA */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				32D94FC30562CBF700B6AF17 /* VoodooHDA */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		32D94FC70562CBF700B6AF17 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXRezBuildPhase section */
+		32D94FCC0562CBF700B6AF17 /* Rez */ = {
+			isa = PBXRezBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXRezBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		32D94FC90562CBF700B6AF17 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CE6725A40EF078B100FAFBED /* VoodooHDADevice.cpp in Sources */,
+				CE6725A60EF078B100FAFBED /* VoodooHDAEngine.cpp in Sources */,
+				CE9337FE0EF226E000776BCD /* Tables.c in Sources */,
+				CE5D398B0EF4784000140715 /* Parser.cpp in Sources */,
+				CE709B500EFF2AA400EE77FF /* VoodooHDAUserClient.cpp in Sources */,
+				12BDC90E12440B4E00B327AE /* TigerAdditionals.cpp in Sources */,
+				120156031244377E00611BC7 /* AppleAudioClip.cpp in Sources */,
+				12F24FCC12860D9600B294D6 /* PCMBlitterLib.cpp in Sources */,
+				E5A3BD951E7095C100F91F3D /* PCMBlitterLibX86.cpp in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		1DEB91DB08733DB10010E9CD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = x86_64;
+				CLANG_ANALYZER_SECURITY_FLOATLOOPCOUNTER = YES;
+				CLANG_ANALYZER_SECURITY_INSECUREAPI_STRCPY = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGN_ENTITLEMENTS = "";
+				CODE_SIGN_IDENTITY = "-";
+				CURRENT_PROJECT_VERSION = 3.0.2;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				INFOPLIST_FILE = Info.plist;
+				LIBRARY_SEARCH_PATHS = "$(PROJECT_DIR)/MacKernelSDK/Library/universal";
+				MACOSX_DEPLOYMENT_TARGET = "$(RECOMMENDED_MACOSX_DEPLOYMENT_TARGET)";
+				MARKETING_VERSION = 3.0.2;
+				MODULE_NAME = org.voodoo.driver.VoodooHDA;
+				MODULE_VERSION = "$(CURRENT_PROJECT_VERSION)";
+				OTHER_CFLAGS = (
+					"-fno-stack-protector",
+					"-DMULTICHANNEL",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "org.voodoo.driver.${PRODUCT_NAME:identifier}";
+				PRODUCT_NAME = VoodooHDA;
+				SDKROOT = macosx;
+				STRIPFLAGS = "";
+				STRIP_STYLE = "non-global";
+				WARNING_CFLAGS = (
+					"-Wall",
+					"-Wextra",
+				);
+				WRAPPER_EXTENSION = kext;
+			};
+			name = Release;
+		};
+		1DEB91DF08733DB10010E9CD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_STATIC_ANALYZER_MODE = deep;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_ENTITLEMENTS = "";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = YES;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 2.9.3;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEPLOYMENT_POSTPROCESSING = YES;
+				DYLIB_COMPATIBILITY_VERSION = "$(CURRENT_PROJECT_VERSION)";
+				DYLIB_CURRENT_VERSION = "$(CURRENT_PROJECT_VERSION)";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_ENABLE_CPP_EXCEPTIONS = NO;
+				GCC_ENABLE_CPP_RTTI = NO;
+				GCC_ENABLE_OBJC_EXCEPTIONS = NO;
+				GCC_FAST_MATH = YES;
+				GCC_GENERATE_DEBUGGING_SYMBOLS = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = fast;
+				GCC_PREPROCESSOR_DEFINITIONS = MULTICHANNEL;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_SIGN_COMPARE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_LABEL = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 10.11;
+				MODULE_VERSION = "$(CURRENT_PROJECT_VERSION)";
+				OTHER_CFLAGS = (
+					"-fno-stack-protector",
+					"-DMULTICHANNEL",
+				);
+				OTHER_LDFLAGS = "-Wl,-no_source_version";
+				SDKROOT = macosx;
+				STRIPFLAGS = "";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1DEB91D908733DB10010E9CD /* Build configuration list for PBXNativeTarget "VoodooHDA" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1DEB91DB08733DB10010E9CD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1DEB91DD08733DB10010E9CD /* Build configuration list for PBXProject "VoodooHDA_BS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1DEB91DF08733DB10010E9CD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 089C1669FE841209C02AAC07 /* Project object */;
+}

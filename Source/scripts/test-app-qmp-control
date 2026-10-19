@@ -1,0 +1,15 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+qemu=${1:-}
+if [[ -z $qemu && -f $root/Build/RuntimeLocation.plist ]]; then
+    runtime=$(/usr/libexec/PlistBuddy -c 'Print :Directory' "$root/Build/RuntimeLocation.plist")
+    qemu=$runtime/qemu-system-x86_64
+fi
+[[ -x $qemu ]] || { print -u2 'Pass the universal qemu-system-x86_64 executable as the first argument.'; exit 64; }
+mkdir -p "$root/Build/Probes"
+xcrun clang -fobjc-arc -fmodules -Wall -mmacosx-version-min=11.0 -arch x86_64 -arch arm64 \
+    -I "$root/VirtualIntelMac" -framework Foundation \
+    "$root/probes/app-qmp-control.m" "$root/VirtualIntelMac/VIMQMPConnection.m" \
+    -o "$root/Build/Probes/app-qmp-control"
+exec "$root/Build/Probes/app-qmp-control" "$qemu"

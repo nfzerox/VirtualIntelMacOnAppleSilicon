@@ -1,0 +1,38 @@
+option('git_werror',
+    type: 'feature',
+    value: 'auto',
+    description: 'use -Werror if building from GIT')
+
+option('fuzzing',
+    type : 'feature',
+    value : 'disabled',
+    description : 'Enable libFuzzer integration')
+
+option('fuzzing-engine',
+    type : 'string',
+    value : 'standalone',
+    description : 'Location of prebuilt fuzzing engine library or "standalone" for built-in driver')
+
+option('fuzzing-install-dir',
+    type : 'string',
+    description : 'Installation directory for fuzzing binaries')
+
+option('stack_protector',
+    type : 'feature',
+    value : 'enabled',
+    description : 'Build usbredir\'s with stack-protector')
+
+option('tools',
+    type : 'feature',
+    value : 'enabled',
+    description : 'Build usbredir\'s tools such as usbredirect')
+
+option('tests',
+    type : 'feature',
+    value : 'enabled',
+    description : 'Build usbredir\'s tests such as filter')
+
+option('extra-checks',
+    type : 'boolean',
+    value : false,
+    description : 'Enable extra checks on code. Do not use for production')

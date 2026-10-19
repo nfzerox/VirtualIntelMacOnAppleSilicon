@@ -1,0 +1,43 @@
+#!/bin/zsh
+# Exact-build development deployment, deliberately not a product installer.
+set -euo pipefail
+(( EUID == 0 )) || { print -u2 'run as root'; exit 77; }
+[[ $(sw_vers -buildVersion) == 18G103 ]] || exit 65
+csrutil status | grep -q disabled || exit 77
+sysctl -n kern.bootargs | grep -q 'amfi_get_out_of_my_way=0x1' || exit 77
+payload=${1:A}
+manifest=${2:A}
+backup=${3:A}
+[[ -d "$payload" && -s "$manifest" && ! -e "$backup" ]] || exit 64
+targets=("${(@f)$(<"$manifest")}")
+for target in $targets; do
+    [[ "$target" == /System/Library/* || "$target" == /Library/Extensions/* ]] || exit 65
+    [[ -e "$payload$target" ]] || { print -u2 "missing: $target"; exit 66; }
+done
+mkdir -p "$backup/originals" "$backup/absent"
+sw_vers > "$backup/version.txt"
+for target in $targets; do
+    if [[ -e "$target" ]]; then
+        mkdir -p "$backup/originals${target:h}"
+        ditto --noextattr --norsrc "$target" "$backup/originals$target"
+    else
+        mkdir -p "$backup/absent${target:h}"
+        touch "$backup/absent$target"
+    fi
+done
+touch "$backup/backup-complete"
+for target in $targets; do
+    staged="${target:h}/.pvg-mojave-new-${target:t}"
+    displaced="${target:h}/.pvg-mojave-old-${target:t}"
+    [[ ! -e "$staged" && ! -e "$displaced" ]] || exit 73
+    mkdir -p "${target:h}"
+    ditto --noextattr --norsrc "$payload$target" "$staged"
+    chown -R root:wheel "$staged"
+    [[ ! -e "$target" ]] || mv "$target" "$displaced"
+    mv "$staged" "$target"
+    print "installed $target"
+done
+touch /System/Library/Extensions /Library/Extensions
+kextcache -i / > "$backup/kextcache.log" 2>&1
+touch "$backup/install-complete"
+print "Installation and boot cache completed. Backup: $backup"

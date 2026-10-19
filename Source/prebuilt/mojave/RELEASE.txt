@@ -1,0 +1,11 @@
+Virtual Intel Mac guest graphics release
+Guest: Intel Mojave 10.14.x; native patch layouts validated at install time; donor: Big Sur 11.7.11 20G1443
+Packaging/signature checks are not fresh-guest or workload certification.
+Source revision: 4b3aa3468aa668e1577078ce6a907725edaff547 (see git status at packaging time)
+dsce: 2014a24126d53c5a4585f040c1eaa0a35d7bacc6
+Lilu: 0515f40b7f2a096adc85e832a4c6104fbd07f936 (vendored source pin; checkout unavailable)
+MacKernelSDK: 05094e5e88cec7caedbfb35e8449ed0db94bf95b (vendored source pin; checkout unavailable)
+
+GL compatibility policy refresh: a1ea8ebe2fdd40e1e1753c4060c624d41c08412a (plus working-tree policy refresh script).
+Restored exact Apple CVMServer JIT entitlements; enabled Aperture/iPhoto AppKit root layer backing.
+Guest-native staging still merges preferences and re-signs its universal OpenGL framework.

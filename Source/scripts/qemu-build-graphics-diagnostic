@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""Incremental local diagnostic build using a configured QEMU build's recipes.
+
+Not a replacement for a fresh Ninja build. Requires every other object already
+built. Keeps the normal QEMU executable intact and uses its usual HVF signing
+recipe, without changing host security settings.
+"""
+import json
+import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+
+build = Path(sys.argv[1] if len(sys.argv)>1 else
+             Path(__file__).resolve().parents[1]/'Build/qemu/build-pvg').resolve()
+output = sys.argv[2] if len(sys.argv)>2 else 'qemu-system-x86_64-paging'
+if not output.startswith('qemu-system-x86_64-') or Path(output).name != output:
+    raise SystemExit('Output must be a diagnostic QEMU basename')
+entries = json.loads((build/'compile_commands.json').read_text())
+for source in ('/hw/display/apple-gfx.m', '/target/i386/hvf/hvf.c', '/ui/cocoa.m'):
+    entry = next(e for e in entries if e['file'].endswith(source))
+    subprocess.run(shlex.split(entry['command']), cwd=entry['directory'], check=True, timeout=45)
+lines = (build/'build.ninja').read_text().splitlines()
+index = next(i for i,line in enumerate(lines)
+             if line.startswith('build qemu-system-x86_64-unsigned: objc_LINKER '))
+inputs_line = lines[index].split(': objc_LINKER ',1)[1].split(' |')[0]
+arguments_line = lines[index+1]
+if '$' in inputs_line+arguments_line or not arguments_line.startswith(' LINK_ARGS = '):
+    raise SystemExit('Unexpected generated recipe; inspect rather than guessing')
+inputs = shlex.split(inputs_line)
+if 'libsystem.a.p/hw_display_apple-gfx.m.o' not in inputs:
+    raise SystemExit('Graphics object absent from link recipe')
+arguments = shlex.split(arguments_line.split(' = ',1)[1])
+subprocess.run(['clang','-m64','-o',output+'-unsigned']+inputs+arguments,
+               cwd=build,check=True,timeout=60)
+rez = subprocess.check_output(['xcrun','--find','Rez'],text=True).strip()
+environment = dict(os.environ)
+environment['PATH'] = str(Path(rez).parent)+os.pathsep+environment.get('PATH','')
+subprocess.run([str(build.parent/'scripts/entitlement.sh'),
+                output,output+'-unsigned',
+                '../pc-bios/qemu.rsrc','../accel/hvf/entitlements.plist'],
+               cwd=build,env=environment,check=True,timeout=30)
+print(build/output)

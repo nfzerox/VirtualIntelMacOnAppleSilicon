@@ -1,0 +1,15 @@
+#!/bin/zsh
+set -euo pipefail
+repo=${0:A:h:h}
+(cd "$repo/vendor"; shasum -a 256 -c SHA256SUMS)
+while read -r dependency revision; do
+    target="$repo/vendor/source/$dependency"
+    [[ -d $target && ! -e $target/.git ]] || {
+        print -u2 "Missing ordinary vendored source: $dependency ($revision)."
+        exit 66
+    }
+done < "$repo/support/build-dependencies.txt"
+mkdir -p "$repo/vendor/source/dsce/apple"
+for dep in dyld libplatform objc4; do
+    [[ -e "$repo/vendor/source/dsce/apple/$dep" ]] || ln -s "../../$dep" "$repo/vendor/source/dsce/apple/$dep"
+done

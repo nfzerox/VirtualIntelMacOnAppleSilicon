@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pvgbackport.exec-fault-trace</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/sbin/dtrace</string>
+        <string>-s</string>
+        <string>/var/tmp/pvg-dtrace-exec-fault.d</string>
+        <string>-o</string>
+        <string>/var/tmp/pvg-boot-exec-fault.dtrace</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>StandardErrorPath</key>
+    <string>/var/tmp/pvg-boot-exec-fault.stderr</string>
+</dict>
+</plist>

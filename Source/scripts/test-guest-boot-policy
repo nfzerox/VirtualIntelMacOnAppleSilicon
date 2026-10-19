@@ -1,0 +1,10 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+work=$(mktemp -d /tmp/vim-boot-policy-tests.XXXXXX)
+xcrun clang -fobjc-arc -O2 -Wall -Wextra -Wno-deprecated-declarations -framework Foundation \
+    "$root/probes/guest-boot-policy.m" "$root/tools/VIMFileTransaction.m" -o "$work/guest"
+"$work/guest"
+xcrun clang -fobjc-arc -O2 -Wall -Wextra -framework Foundation -I "$root/VirtualIntelMac" \
+    "$root/probes/guest-boot-policy-host.m" "$root/VirtualIntelMac/VIMGuestBootPolicy.m" -o "$work/host"
+"$work/host"

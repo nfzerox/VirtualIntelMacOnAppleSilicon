@@ -1,0 +1,8 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+out=$(mktemp -d /tmp/vim-reconcile-tests.XXXXXX)
+xcrun clang -fobjc-arc -fmodules -framework Foundation -I "$root/VirtualIntelMac" \
+    "$root/probes/installation-reconcile-tests.m" \
+    "$root/VirtualIntelMac/VIMGuestInstallation.m" "$root/VirtualIntelMac/VIMGuestBootPolicy.m" -o "$out/test"
+"$out/test"

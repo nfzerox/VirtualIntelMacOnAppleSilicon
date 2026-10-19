@@ -1,0 +1,123 @@
+#!/bin/zsh
+set -euo pipefail
+
+repo_root=${0:A:h:h}
+output=${1:-"$repo_root/artifacts/build/compiler-stack-catalina-pvg"}
+catalina_cache="$repo_root/work/catalina/System/Library/dyld/dyld_shared_cache_x86_64"
+bigsur_cache="$repo_root/work/bigsur/System/Library/dyld/dyld_shared_cache_x86_64"
+catalina_service="${PVG_INPUT_ROOT:-$repo_root}/work/catalina/compiler/MTLCompilerService"
+catalina_service_bundle="${PVG_INPUT_ROOT:-$repo_root}/work/catalina/compiler/MTLCompilerService.xpc"
+bigsur_resources="${PVG_INPUT_ROOT:-$repo_root}/work/bigsur/compiler-files/System/Library"
+extracted="${PVG_INPUT_ROOT:-$repo_root}/research/dsce/Out/System/Library/PrivateFrameworks"
+sdk="$repo_root/resources/xcode/XcodeCatalina.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+
+if [[ -e "$output" ]]; then
+    print -u2 "output already exists: $output"
+    exit 73
+fi
+required_inputs=("$catalina_service")
+[[ -n ${PVG_INPUT_ROOT:-} ]] || required_inputs+=("$catalina_cache" "$bigsur_cache")
+for required in $required_inputs; do
+    [[ -f "$required" ]] || {
+        print -u2 "compiler input missing: $required"
+        exit 66
+    }
+done
+[[ -d "$catalina_service_bundle" && -d "$bigsur_resources" ]] || {
+    print -u2 "compiler bundle resources are missing"
+    exit 66
+}
+
+# Preserve Catalina's complete compiler island: XPC protocol, MTLCompiler,
+# helper, ComposeFilters, GPUCompiler 3902, and LLVM 3902. Big Sur contributes
+# only the backend used behind the PVG plugin's serialized-bitcode membrane.
+if [[ -z ${PVG_INPUT_ROOT:-} ]]; then
+"$repo_root/scripts/build-dsce"
+(
+    cd "$repo_root/vendor/source/dsce"
+    ./dsce "$catalina_cache" \
+        /System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3902/
+    ./dsce "$bigsur_cache" \
+        /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/
+)
+fi
+
+xpc_rel=Frameworks/Metal.framework/Versions/A/XPCServices/MTLCompilerService.xpc
+mtl_rel=PrivateFrameworks/MTLCompiler.framework/Versions/3903
+gpu_rel=PrivateFrameworks/GPUCompiler.framework/Versions/31001
+metal_resources_rel=Frameworks/Metal.framework/Versions/A/Resources
+mkdir -p "$output/System/Library/Frameworks/Metal.framework/Versions/A/XPCServices" \
+    "$output/System/Library/Frameworks/Metal.framework/Versions/A/Resources" \
+    "$output/System/Library/PrivateFrameworks/MTLCompiler.framework/Versions" \
+    "$output/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions"
+
+ditto "$catalina_service_bundle" "$output/System/Library/$xpc_rel"
+service="$output/System/Library/$xpc_rel/Contents/MacOS/MTLCompilerService"
+cp -p "$catalina_service" "$service"
+old_service_path='/System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3902/MTLCompiler'
+new_service_path='/System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3903/MTLCompiler'
+[[ $(LC_ALL=C grep -aFo "$old_service_path" "$service" | wc -l) -eq 1 ]]
+perl -0pi -e \
+    's{/System/Library/PrivateFrameworks/MTLCompiler\.framework/Versions/3902/MTLCompiler}{/System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3903/MTLCompiler}g' \
+    "$service"
+[[ $(LC_ALL=C grep -aFo "$new_service_path" "$service" | wc -l) -eq 1 ]]
+
+mtl_root="$output/System/Library/$mtl_rel"
+mtl="$mtl_root/MTLCompiler"
+mkdir -p "$mtl_root"
+cp -p "$extracted/MTLCompiler.framework/Versions/3902/MTLCompiler" "$mtl"
+
+# Catalina's compiler has a fixed plugin allowlist. Replace one obsolete Intel
+# entry with the equal-sized PVG path; make no LLVM, helper, or request-layout
+# changes to this image.
+old_plugin='AppleIntelHD4000GraphicsMTLDriver.bundle/Contents/MacOS/libMTLIntelCompilerPlugin.dylib'
+new_plugin='AppleParavirtGPUMetal.bundle/Contents/Resources/libAppleParavirtCompilerPlugin.dylib'
+[[ $(LC_ALL=C grep -aFo "$old_plugin" "$mtl" | wc -l) -eq 1 ]]
+perl -0pi -e \
+    's{AppleIntelHD4000GraphicsMTLDriver\.bundle/Contents/MacOS/libMTLIntelCompilerPlugin\.dylib}{AppleParavirtGPUMetal.bundle/Contents/Resources/libAppleParavirtCompilerPlugin.dylib\x00\x00\x00}g' \
+    "$mtl"
+[[ $(LC_ALL=C grep -aFo "$new_plugin" "$mtl" | wc -l) -eq 1 ]]
+
+# Install the matched Big Sur GPUCompiler/LLVM backend for the real PVG plugin.
+# These images are never passed a Catalina C++ object.
+gpu_root="$output/System/Library/$gpu_rel"
+# The archived guest files carry APFS compression flags. A plain recursive
+# copy materializes their contents without trying to reproduce those flags in
+# a restricted build root.
+cp -R "$bigsur_resources/$gpu_rel" "$gpu_root"
+gpu_libraries="$gpu_root/Libraries"
+mkdir -p "$gpu_libraries"
+cp -p "$extracted/GPUCompiler.framework/Versions/31001/Libraries/"*.dylib \
+    "$gpu_libraries/"
+for resource in MTLRaytracingRuntime.rtlib MTLBVHBuilder.metallib MTLECBE.metallib; do
+    cp -p "$bigsur_resources/$metal_resources_rel/$resource" \
+        "$output/System/Library/$metal_resources_rel/$resource"
+done
+
+for image in "$gpu_libraries"/lib*.dylib; do
+    xcrun vtool -set-build-version macos 10.15 11.7 -replace \
+        -output "$image.patched" "$image"
+    mv "$image.patched" "$image"
+done
+
+# The real PVG plugin's official AIR downgrade stamps Big Sur's deployment
+# target on render functions. Re-export the matched GPUCompiler while wrapping
+# only that call to restore the Catalina triple through LLVM's C API.
+xcrun clang -arch x86_64 -mmacosx-version-min=10.15 -isysroot "$sdk" \
+    -dynamiclib \
+    "$repo_root/compat/PVGCompilerPluginBridge/PVGPluginGPUCompilerBridge.c" \
+    "$gpu_libraries/libLLVM.dylib" \
+    -Wl,-reexport_library,"$gpu_libraries/libGPUCompiler.dylib" \
+    -install_name \
+    /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/PVGPluginGPUCompilerBridge.dylib \
+    -o "$gpu_libraries/PVGPluginGPUCompilerBridge.dylib"
+
+chmod 755 "$service" "$mtl" "$gpu_libraries"/*.dylib
+python3 "$repo_root/scripts/sign-donor.py" "$catalina_service" "$service"
+python3 "$repo_root/scripts/sign-donor.py" "$catalina_service_bundle" "$output/System/Library/$xpc_rel" --deep
+for image in "$mtl" "$gpu_libraries"/*.dylib; do
+    codesign --force --sign - --preserve-metadata=entitlements "$image"
+    dyld_info -objc "$image" >/dev/null
+done
+codesign --verify --deep --strict "$output/System/Library/$xpc_rel"
+printf '%s\n' "$output"

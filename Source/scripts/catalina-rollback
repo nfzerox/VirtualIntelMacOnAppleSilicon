@@ -1,0 +1,73 @@
+#!/bin/zsh
+set -euo pipefail
+
+if (( EUID != 0 )); then
+    print -u2 "catalina-rollback must run as root"
+    exit 77
+fi
+if (( $# != 1 )); then
+    print -u2 "usage: catalina-rollback backup-root"
+    exit 64
+fi
+
+backup=${1:A}
+iosurface_framework=/System/Library/Frameworks/IOSurface.framework
+[[ -d "$backup/originals" && -d "$backup/absent" ]] || {
+    print -u2 "invalid backup root: $backup"
+    exit 66
+}
+
+mount -uw /
+mount | awk '$3 == "/" { if ($0 ~ /read-only/) exit 1; found=1 } END { exit !found }' || {
+    print -u2 "failed to remount / read-write"
+    exit 74
+}
+
+targets=(
+    /System/Library/Extensions/IOSurface.kext
+    /System/Library/Extensions/IOGraphicsFamily.kext
+    /System/Library/Extensions/IOAcceleratorFamily2.kext
+    /System/Library/Extensions/AppleParavirtGPU.kext
+    /System/Library/Frameworks/IOSurface.framework
+    /Library/Extensions/PVGKernelCompat.kext
+    /Library/Extensions/IOSurfacePVGCompat.kext
+    /Library/Extensions/PVGFramebufferBootstrap.kext
+    /System/Library/Extensions/AppleParavirtGPUMetal.bundle
+    /System/Library/PrivateFrameworks/MetalSerializer.framework
+    /System/Library/Frameworks/Metal.framework/Versions/A/XPCServices/MTLCompilerService.xpc
+    /System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3903
+    /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001
+    /System/Library/Frameworks/Metal.framework/Versions/A/Resources/MTLRaytracingRuntime.rtlib
+    /System/Library/Frameworks/Metal.framework/Versions/A/Resources/MTLBVHBuilder.metallib
+    /System/Library/Frameworks/Metal.framework/Versions/A/Resources/MTLECBE.metallib
+)
+
+failed="$backup/failed-installed"
+mkdir -p "$failed"
+for target in $targets; do
+    if [[ -e "$target" ]]; then
+        mkdir -p "$failed${target:h}"
+        mv "$target" "$failed$target"
+    fi
+    if [[ -e "$backup/originals$target" ]]; then
+        mkdir -p "${target:h}"
+        ditto --noextattr --noacl "$backup/originals$target" "$target"
+        chown -R root:wheel "$target"
+        chmod -R go-w "$target"
+    elif [[ ! -e "$backup/absent$target" ]]; then
+        print -u2 "backup has no state marker for $target"
+        exit 65
+    fi
+done
+
+chown -R root:wheel "$iosurface_framework"
+chmod -R go-w "$iosurface_framework"
+codesign --verify --deep --strict --verbose=2 "$iosurface_framework"
+
+touch /System/Library/Extensions /Library/Extensions
+kextcache -system-caches 2>&1 | tee "$backup/kextcache-system-rollback.txt"
+kextcache -system-prelinked-kernel 2>&1 | tee "$backup/kextcache-rollback.txt"
+update_dyld_shared_cache -force -arch x86_64 2>&1 | \
+    tee "$backup/update-dyld-cache-rollback.txt"
+sync
+print "Catalina PVG payload rolled back; reboot required"

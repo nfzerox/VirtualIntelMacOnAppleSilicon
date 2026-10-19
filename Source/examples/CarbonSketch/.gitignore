@@ -1,0 +1,5 @@
+build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+CarbonSketch.app.sit

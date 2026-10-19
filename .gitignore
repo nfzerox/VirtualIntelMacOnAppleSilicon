@@ -1,0 +1,16 @@
+.DS_Store
+resources/
+research/
+artifacts/
+work/
+*.ghidra
+*.rep
+compat/*/build/
+Source/compat/*/build/
+Source/config-temp/
+Source/config.log
+__pycache__/
+*.xcuserstate
+xcuserdata/
+DerivedData/
+Source/Build/

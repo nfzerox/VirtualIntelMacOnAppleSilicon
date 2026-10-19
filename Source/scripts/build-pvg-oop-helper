@@ -1,0 +1,20 @@
+#!/bin/zsh
+# Build the experimental Intel helper; does not modify or launch any VM.
+set -euo pipefail
+root=${0:A:h:h}
+qemu=${PVG_QEMU_SOURCE:-$root/vendor/qemu}
+output=${PVG_OOP_HELPER_OUTPUT:-$root/artifacts/host-arm64/apple-gfx-helper}
+shadow=${PVG_OOP_SHADOW_SOURCE:-$qemu/hw/display/apple-gfx-legacy-shadow.m}
+[[ -f $shadow ]] || { print -u2 "Missing shadow implementation: $shadow"; exit 66; }
+[[ -f $qemu/hw/display/apple-gfx-helper.m ]] || {
+    print -u2 "Missing QEMU source at $qemu; set PVG_QEMU_SOURCE."; exit 1
+}
+mkdir -p "${output:h}"
+xcrun clang -arch x86_64 -mmacosx-version-min=11.0 -O2 -Wall -Wextra \
+    -I "$qemu/hw/display" \
+    -framework Foundation -framework Metal -framework CoreGraphics \
+    "$qemu/hw/display/apple-gfx-helper.m" \
+    "$shadow" \
+    "$root/compat/PVGHostAIRRepair.m" -o "$output"
+codesign --force --sign - "$output"
+print "Built $output"

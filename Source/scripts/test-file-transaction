@@ -1,0 +1,12 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+mkdir -p "$root/Build/Probes"
+work=$(mktemp -d "$root/Build/Probes/file-transaction.XXXXXX")
+for probe in file-transaction file-transaction-interruption; do
+    xcrun clang -fobjc-arc -O2 -Wall -Wextra -Wno-deprecated-declarations \
+        -DVIM_TRANSACTION_TESTING -framework Foundation \
+        "$root/tools/VIMFileTransaction.m" "$root/probes/$probe.m" -o "$work/$probe"
+    "$work/$probe"
+done
+print "Fixture executables retained at $work; these are not production tools."

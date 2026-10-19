@@ -1,0 +1,53 @@
+#!/usr/bin/expect -f
+
+if {$argc < 2} {
+    puts stderr "usage: PVG_SSH_PASSWORD=... ssh-expect host command ?arg ...?"
+    exit 64
+}
+if {![info exists env(PVG_SSH_PASSWORD)]} {
+    puts stderr "PVG_SSH_PASSWORD is not set"
+    exit 64
+}
+
+if {[info exists env(PVG_SSH_TIMEOUT)]} {
+    set timeout $env(PVG_SSH_TIMEOUT)
+} else {
+    set timeout 60
+}
+set host [lindex $argv 0]
+set remote_argv [lrange $argv 1 end]
+set connect_timeout 15
+if {[info exists env(PVG_SSH_CONNECT_TIMEOUT)]} {
+    set connect_timeout $env(PVG_SSH_CONNECT_TIMEOUT)
+    if {![string is integer -strict $connect_timeout] || $connect_timeout < 1 || $connect_timeout > 120} {
+        puts stderr "PVG_SSH_CONNECT_TIMEOUT must be 1..120"
+        exit 64
+    }
+}
+set ssh_options [list -o StrictHostKeyChecking=accept-new -o "ConnectTimeout=$connect_timeout"]
+if {[info exists env(PVG_SSH_CONTROL_PATH)]} {
+    lappend ssh_options -o ControlMaster=auto -o ControlPersist=300 \
+        -o "ControlPath=$env(PVG_SSH_CONTROL_PATH)"
+}
+if {[info exists env(PVG_SSH_TTY)] && $env(PVG_SSH_TTY) eq "1"} {
+    lappend ssh_options -tt
+}
+
+spawn ssh {*}$ssh_options -- $host {*}$remote_argv
+expect {
+    -nocase -re {password:} {
+        send -- "$env(PVG_SSH_PASSWORD)\r"
+        exp_continue
+    }
+    eof {}
+    timeout {
+        puts stderr "ssh timed out"
+        exit 124
+    }
+}
+
+catch wait result
+if {[llength $result] >= 4} {
+    exit [lindex $result 3]
+}
+exit 1

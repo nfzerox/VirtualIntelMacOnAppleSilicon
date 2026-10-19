@@ -1,0 +1,21 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+scratch=$(mktemp -d /tmp/vim-download-test.XXXXXX)
+mkdir -p "$scratch/mirror/content/downloads/vim-test" "$root/Build/Probes"
+mkfile 8m "$scratch/mirror/content/downloads/vim-test/Payload.pkg"
+python3 "$root/scripts/installer-mock-server.py" --root "$scratch/mirror" --port 0 \
+    --bytes-per-second 2097152 --ready-file "$scratch/port" > "$scratch/server.log" 2>&1 &
+server_pid=$!
+trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+for attempt in {1..50}; do
+    [[ -s "$scratch/port" ]] && break
+    sleep 0.1
+done
+[[ -s "$scratch/port" ]] || { print -u2 "Mirror failed: $scratch/server.log"; exit 1; }
+xcrun clang -fobjc-arc -fmodules -Wall -mmacosx-version-min=26.0 \
+    -I "$root/VirtualIntelMac" -framework Foundation \
+    "$root/probes/installer-download-tests.m" "$root/VirtualIntelMac/VIMDownload.m" \
+    "$root/VirtualIntelMac/VIMInstallerCatalog.m" -o "$root/Build/Probes/installer-download-tests"
+"$root/Build/Probes/installer-download-tests" "http://127.0.0.1:$(<"$scratch/port")" "$scratch/transfer"
+print "Evidence retained in $scratch"

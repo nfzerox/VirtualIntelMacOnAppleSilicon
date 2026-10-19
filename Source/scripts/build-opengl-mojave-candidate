@@ -1,0 +1,39 @@
+#!/bin/zsh
+# Assemble the coherent GL addition to an existing Mojave Metal payload.
+# No guest writes and no promotion of the shipped Metal-only release.
+set -euo pipefail
+repo=${0:A:h:h}
+(( $# == 6 )) || {
+    print -u2 'usage: build-opengl-mojave-candidate NEW_OUTPUT BIGSUR_RENDERER_BUNDLE BIGSUR_GLD_PLUGIN CATALINA_OPENGL_FRAMEWORK MOJAVE_OPENGL MOJAVE_BUILTINS_METALLIB'
+    exit 64
+}
+output=${1:A}
+renderer=${2:A}
+plugin=${3:A}
+frontend=${4:A}
+native=${5:A}
+builtins=${6:A}
+[[ ! -e $output && -d $renderer && -f $plugin && -d $frontend && -d $native && -s $builtins ]] || exit 65
+mkdir -p "$output"
+export PVG_TARGET_OS=10.14
+PVG_GL_DONOR="$renderer" /bin/zsh "$repo/scripts/build-opengl-donor-probe" "$output/renderer"
+/bin/zsh "$repo/scripts/build-opengl-gl-plugin-mojave" "$plugin" "$output/plugin" \
+    "$frontend/Versions/A/Libraries/libGLVMPlugin3902.dylib"
+python3 "$repo/scripts/build-opengl-mojave-frontend.py" "$frontend" "$native" "$output/frontend"
+ditto --noextattr --noacl "$output/frontend/payload" "$output/payload"
+mkdir -p "$output/payload/usr/lib"
+/bin/zsh "$repo/scripts/build-mojave-surface-helper" "$output/payload/usr/lib/PVGGLIOKit.dylib"
+bundle="$output/payload/System/Library/Extensions/AppleMetalOpenGLRenderer.bundle"
+mkdir -p "${bundle:h}"
+ditto --noextattr --noacl "$output/renderer/AppleMetalOpenGLRenderer.bundle" "$bundle"
+mkdir -p "$bundle/Contents/PlugIns"
+cp "$output/plugin/libGLDPlugin3902.dylib" "$output/plugin/PVGGLFoundation.dylib" "$bundle/Contents/PlugIns/"
+cp "$output/plugin/libGLVMPlugin3902.dylib" "$bundle/Contents/MacOS/GVM"
+# The original Big Sur builtins use Metal 2.3. Mojave rejects their blit/MSAA
+# pipelines even when ordinary GL shaders work. Require the lowered library.
+cp "$builtins" "$bundle/Contents/Resources/default.metallib"
+codesign --force --sign - "$bundle"
+codesign --verify --deep --strict "$bundle"
+print "GL candidate staged at $output/payload"
+print 'Requires the existing Metal stack, compiler bridge and GL registration service.'
+print 'Not a standalone installer; no release was promoted.'

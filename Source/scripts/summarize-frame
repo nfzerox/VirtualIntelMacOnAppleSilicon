@@ -1,0 +1,9 @@
+#!/bin/bash
+# Read only the supplied app-owned frame; never capture the host desktop.
+set -euo pipefail
+source_dir="$(cd "$(dirname "$0")/.." && pwd)"
+mkdir -p "$source_dir/Build/Probes"
+xcrun clang -fobjc-arc -fmodules -Wall -arch x86_64 -arch arm64 \
+  -mmacosx-version-min=11.0 -framework Cocoa \
+  "$source_dir/probes/frame-summary.m" -o "$source_dir/Build/Probes/frame-summary"
+exec "$source_dir/Build/Probes/frame-summary" "$@"

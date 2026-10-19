@@ -1,0 +1,2 @@
+/Library/GPUBundles/AppleParavirtGPUMetal.bundle
+/Library/GPUBundles/AppleMetalOpenGLRenderer.bundle

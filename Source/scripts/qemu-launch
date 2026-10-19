@@ -1,0 +1,136 @@
+#!/bin/zsh
+# Launch only external QEMU working disks; never attach Parallels source images.
+set -euo pipefail
+repo=${0:A:h:h}
+case ${1:-} in
+    catalina) guest=Catalina; ssh_port=22015; mac_address=52:54:00:15:00:01 ;;
+    mojave) guest=Mojave; ssh_port=22014; mac_address=52:54:00:14:00:01 ;;
+    highsierra) guest=HighSierra; ssh_port=22013; mac_address=52:54:00:13:00:01 ;;
+    bigsur) guest=BigSur; ssh_port=22011; mac_address=52:54:00:11:00:01 ;;
+    *) print -u2 'usage: zsh scripts/qemu-launch catalina|mojave|highsierra|bigsur'; exit 64 ;;
+esac
+slug=$1
+ssh_port=${PVG_QEMU_SSH_PORT:-$ssh_port}
+qmp_socket=${PVG_QEMU_QMP_SOCKET:-/tmp/pvg-$slug-qmp.sock}
+cpu=host
+default_accel=hvf
+qemu_source=${PVG_QEMU_SOURCE:-$repo/vendor/qemu}
+default_build=$repo/Build/qemu/build-pvg
+if [[ $(uname -m) == arm64 ]]; then
+    default_accel=tcg
+    default_build=$repo/Build/qemu/build-arm64-pvg
+fi
+accelerator=${PVG_QEMU_ACCEL:-$default_accel}
+vcpus=${PVG_QEMU_CPUS:-2}
+memory_mb=${PVG_QEMU_MEMORY_MB:-4096}
+[[ $vcpus == <-> && $memory_mb == <-> ]] &&
+    (( vcpus >= 1 && vcpus <= 64 && memory_mb >= 1024 )) || {
+    print -u2 'PVG_QEMU_CPUS must be 1..64; PVG_QEMU_MEMORY_MB must be at least 1024.'
+    exit 64
+}
+case $accelerator in
+    hvf) accelerator_args=(-accel hvf) ;;
+    tcg)
+        accelerator_args=(-accel tcg,thread=multi)
+        # Optional controlled experiment: retain more translated guest code.
+        # Leave QEMU's default unchanged until a timed comparison qualifies it.
+        if [[ -n ${PVG_QEMU_TB_SIZE_MB:-} ]]; then
+            [[ $PVG_QEMU_TB_SIZE_MB == <-> ]] &&
+                (( PVG_QEMU_TB_SIZE_MB >= 64 && PVG_QEMU_TB_SIZE_MB <= 2048 )) || {
+                print -u2 'PVG_QEMU_TB_SIZE_MB must be 64..2048.'; exit 64;
+            }
+            accelerator_args=(-accel "tcg,thread=multi,tb-size=$PVG_QEMU_TB_SIZE_MB")
+        fi
+        tcg_cpu_default=Penryn,vendor=GenuineIntel,+sse4.2,+popcnt
+        if [[ $(uname -m) == arm64 ]]; then
+            # QEMU maps these to ARM crypto helpers. Mojave's GCM path assumes
+            # PCLMUL accompanies AES: advertising AES alone panics at boot.
+            tcg_cpu_default+=,+aes,+pclmulqdq
+            if [[ ${PVG_TCG_PCID_CONTEXTS:-0} == 1 ]]; then
+                tcg_cpu_default+=,+pcid
+            fi
+        fi
+        cpu=${PVG_QEMU_TCG_CPU:-$tcg_cpu_default}
+        ;;
+    *) print -u2 'PVG_QEMU_ACCEL must be hvf or tcg'; exit 64 ;;
+esac
+# Mojave XNU rejects this Intel host's newer model before console startup.
+# Keep HVF and host features, but present the supported Skylake model identity.
+[[ ($slug == mojave || $slug == highsierra) && $accelerator == hvf ]] && cpu=host,model=94
+qemu=${PVG_QEMU_BINARY:-${PVG_QEMU_BUILD:-$default_build}/qemu-system-x86_64}
+state="$repo/artifacts/qemu"
+vars=${PVG_QEMU_VARS:-$state/firmware-$slug/VARS.fd}
+serial_log=${PVG_QEMU_SERIAL_LOG:-$state/$slug-serial.log}
+disk=${PVG_QEMU_DISK:-${PVG_VM_STORAGE:?Set PVG_VM_STORAGE to the folder holding prepared qcow2 disks, or PVG_QEMU_DISK}/$guest-working.qcow2}
+opencore=${PVG_QEMU_OPENCORE:-$state/opencore-$slug/OpenCore.iso}
+[[ -x $qemu && -f $disk && -f $opencore &&
+   -f $vars ]] || {
+    print -u2 'Missing QEMU, external working disk, or prepared OpenCore/firmware.'; exit 66;
+}
+cd "$repo"
+memory_args=()
+if [[ -n ${PVG_OOP_HELPER:-} ]]; then
+    [[ -x $PVG_OOP_HELPER && -f ${PVG_OOP_DONOR:-} ]] || {
+        print -u2 'OOP mode requires an executable helper and Intel donor binary.'; exit 66
+    }
+    # Intel guest scanout relies on preserved IOSurface pixels during partial
+    # updates. Apple tile GPUs otherwise expose black trails. Set 0 for A/B.
+    if [[ $(uname -m) == arm64 ]]; then
+        export PVG_PRESERVE_IOSURFACE=${PVG_PRESERVE_IOSURFACE:-1}
+    fi
+    # Share the same physical RAM with the helper; never use an APFS RAM file.
+    memory_args=(-object "memory-backend-shm,id=pvg-ram,size=${memory_mb}M,share=on")
+    memory_args+=(-machine memory-backend=pvg-ram)
+fi
+graphics_args=(-vga none -device '{"driver":"apple-gfx-pci","display-modes":["1920x1200@60","1680x1050@60","1440x900@60","1280x800@60","1024x768@60"]}')
+# Installation/bootstrap only: a stock older guest has no PVG driver yet.
+case ${PVG_QEMU_GRAPHICS:-pvg} in
+    pvg) ;;
+    std) graphics_args=(-vga std) ;;
+    *) print -u2 'PVG_QEMU_GRAPHICS must be pvg or std'; exit 64 ;;
+esac
+audio_args=()
+# Both guests have VoodooHDA. Expose duplex hardware by default; the host
+# microphone still requires normal macOS privacy permission. Set 0 to disable
+# audio, or playback to avoid opening host capture at all.
+if [[ ${PVG_QEMU_AUDIO:-1} == playback ]]; then
+    audio_args=(-audiodev sdl,id=audio0 -device intel-hda,id=hda
+                -device hda-output,bus=hda.0,audiodev=audio0)
+elif [[ ${PVG_QEMU_AUDIO:-1} == 1 ]]; then
+    audio_args=(-audiodev sdl,id=audio0 -device intel-hda,id=hda
+                -device hda-duplex,bus=hda.0,audiodev=audio0)
+fi
+# Explicit host-only diagnostic; never injected into the guest or enabled by
+# default. Set immediately before exec so native shell utilities are unaffected.
+if [[ -n ${PVG_QEMU_EXCEPTION_PROBE:-} ]]; then
+    export DYLD_INSERT_LIBRARIES=$PVG_QEMU_EXCEPTION_PROBE
+fi
+launch_prefix=()
+if [[ -n ${PVG_NATIVE_INTEL_GEOMETRY:-} ]]; then
+    [[ -x $repo/artifacts/host-arm64/host-spawn-4k ]] || {
+        print -u2 'Missing native 4K process launcher'; exit 66
+    }
+    launch_prefix=("$repo/artifacts/host-arm64/host-spawn-4k")
+    if [[ -n ${PVG_QEMU_EXCEPTION_PROBE:-} ]]; then
+        export PVG_SPAWN_INSERT_LIBRARIES=$PVG_QEMU_EXCEPTION_PROBE
+        unset DYLD_INSERT_LIBRARIES
+    fi
+fi
+exec "${launch_prefix[@]}" "$qemu" -name "$guest QEMU Apple PVG" \
+    -L "${PVG_QEMU_FIRMWARE_DIR:-$qemu_source/pc-bios}" \
+    -machine q35 "${accelerator_args[@]}" -cpu "$cpu" -smp "$vcpus" -m "$memory_mb" "${memory_args[@]}" -nodefaults "${graphics_args[@]}" \
+    -display cocoa,zoom-to-fit=on -device ich9-usb-ehci1,id=usb \
+    -device usb-kbd,id=keyboard,bus=usb.0 -device usb-tablet,id=tablet,bus=usb.0 \
+    "${audio_args[@]}" \
+    -device 'isa-applesmc,osk=ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc' \
+    -smbios type=2 \
+    -drive "if=pflash,format=raw,readonly=on,file=$state/firmware-$slug/CODE.fd" \
+    -drive "if=pflash,format=raw,file=$vars" \
+    -drive "id=opencore,if=none,format=raw,readonly=on,file=$opencore" \
+    -device ide-cd,bus=ide.0,drive=opencore,bootindex=1 \
+    -drive "id=macos,if=none,format=qcow2,file=$disk" \
+    -device ide-hd,bus=ide.1,drive=macos,bootindex=2,rotation_rate=1 \
+    -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:$ssh_port-:22" \
+    -device "e1000-82545em,netdev=net0,mac=$mac_address" \
+    -qmp "unix:$qmp_socket,server=on,wait=off" \
+    -serial "file:$serial_log" -monitor none -no-reboot

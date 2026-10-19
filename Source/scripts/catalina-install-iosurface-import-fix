@@ -1,0 +1,26 @@
+#!/bin/bash
+set -euo pipefail
+test "$(id -u)" = 0
+test "$(sw_vers -buildVersion)" = 19H15
+test "$#" -ge 1 && test "$#" -le 2
+mount -uw /
+source_kext=$1
+backup=${2:-${PVG_BACKUP_ROOT:-$HOME/PVGBackups}/iosurface-abi-before-port-import}
+target=/Library/Extensions/PVGIOSurfaceABI.kext
+test ! -e "$backup"
+test -f /System/Library/PrelinkedKernels/prelinkedkernel
+codesign --verify --deep --strict "$source_kext"
+mkdir -p "$backup"
+ditto "$target" "$backup/PVGIOSurfaceABI.kext"
+ditto "$source_kext" "$target"
+chown -R root:wheel "$target"
+chmod -R go-w "$target"
+codesign --verify --deep --strict "$target"
+touch /Library/Extensions
+kextcache -i / > "$backup/kextcache.log" 2>&1
+# This VM's boot.efi still reads the System-volume prelinked kernel, while
+# Catalina's cache builder writes the Data-volume Apple path. Retain both.
+cp -p /System/Library/PrelinkedKernels/prelinkedkernel "$backup/prelinkedkernel"
+cp -p /Library/Apple/System/Library/PrelinkedKernels/prelinkedkernel /System/Library/PrelinkedKernels/prelinkedkernel
+sync
+echo "Installed IOSurface ABI adapter. Reboot required."

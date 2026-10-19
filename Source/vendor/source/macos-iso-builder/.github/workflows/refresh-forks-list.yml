@@ -1,0 +1,181 @@
+name: Refresh forks list
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Run every 6 hours
+  workflow_dispatch:
+
+jobs:
+  refresh-forks:
+    if: github.repository_owner == 'LongQT-sea' # Be mindful of free public resources
+    runs-on: ubuntu-slim
+    permissions:
+      contents: write # needed to create releases
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Fetch fork data
+        id: fetch_forks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PAST_15_DAYS=$(date -u -d '15 days ago' +%Y-%m-%dT%H:%M:%SZ)
+
+          curl --silent --show-error --fail \
+            --retry 5 --retry-delay 2 --retry-max-time 60 --retry-connrefused \
+            --connect-timeout 10 --max-time 30 \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/forks?sort=newest&per_page=100" \
+            > forks.json
+
+          jq --arg date "$PAST_15_DAYS" \
+            '[.[] | select(.created_at > $date) | {
+              owner: .owner.login,
+              name: .name,
+              html_url: .html_url,
+              created_at: .created_at
+            }]' forks.json > recent_forks.json
+
+          # Iterate through each fork to get the latest successful run
+          echo "[" > runs_data.json
+          FIRST=true
+
+          while IFS= read -r fork; do
+            OWNER=$(echo "$fork" | jq -r '.owner')
+            REPO=$(echo "$fork" | jq -r '.name')
+            CREATED=$(echo "$fork" | jq -r '.created_at')
+
+            RUN_INFO=$(curl --silent --show-error \
+              --retry 3 --retry-delay 2 --retry-max-time 30 --retry-connrefused \
+              --connect-timeout 10 --max-time 30 \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$OWNER/$REPO/actions/runs?per_page=1&status=success")
+
+            if echo "$RUN_INFO" | jq -e '.message' > /dev/null 2>&1; then
+              continue
+            fi
+
+            RUN_ID=$(echo "$RUN_INFO" | jq -r '.workflow_runs[0].id // ""')
+            RUN_URL=$(echo "$RUN_INFO" | jq -r '.workflow_runs[0].html_url // "#"')
+            RUN_DATE=$(echo "$RUN_INFO" | jq -r '.workflow_runs[0].run_started_at // "" | if . != "" then .[:10] else "" end')
+
+            ARTIFACT_NAME="N/A"
+            if [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ]; then
+              ARTIFACT_NAME=$(curl --silent --show-error \
+                --retry 3 --retry-delay 2 --retry-max-time 30 --retry-connrefused \
+                --connect-timeout 10 --max-time 30 \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/$OWNER/$REPO/actions/runs/$RUN_ID/artifacts" \
+                | jq -r '.artifacts[0].name // "N/A"')
+            fi
+
+            if [ "$FIRST" = false ]; then echo "," >> runs_data.json; fi
+
+            jq -n \
+              --arg owner "$OWNER" \
+              --arg repo "$REPO" \
+              --arg created "$CREATED" \
+              --arg artifact_name "$ARTIFACT_NAME" \
+              --arg run_url "$RUN_URL" \
+              --arg run_date "$RUN_DATE" \
+              '{owner: $owner, name: $repo, created_at: $created, artifact_name: $artifact_name, run_url: $run_url, run_date: $run_date}' \
+              >> runs_data.json
+
+            FIRST=false
+          done < <(jq -c '.[]' recent_forks.json)
+
+          echo "]" >> runs_data.json
+
+      - name: Generate Forks content
+        run: |
+          CURRENT_TIME=$(date -u +"%Y-%m-%d %H:%M UTC")
+
+          cat > release_notes.md << 'EOF'
+          ## How to Use This List
+
+          1. Sign in to GitHub https://github.com/login
+          2. Browse macOS ISO/DMG links in the list below
+          3. Scroll down to **Artifacts** section to download
+          > ISO for virtual machines, DMG for bootable USB drives
+
+          <details>
+          <summary>❌ DO NOT EXPAND — contains mass unmarketable truths</summary>
+          <details>
+          <summary>❌ FINAL WARNING — you will not recover from this</summary>
+          <br>
+          Too late. You're one of us now.<br>
+          You just ran mass forbidden fruit extraction protocol on Apple's own CDN.
+
+          **Damage report:**
+          - ✅ Legitimate macOS installer: acquired
+          - ✅ Sketchy torrent sites: avoided
+          - ✅ 3+ hours of troubleshooting: skipped
+          - ✅ Your sanity: intact (for now)
+
+          The one thing that could make this mass worse?
+
+          If you [⭐ starred this repo](https://github.com/LongQT-sea/macos-iso-builder) and mass spread it around.
+          ![star](https://raw.githubusercontent.com/LongQT-sea/mkmaciso/main/.github/star.jpg)
+
+          Please don't. Apple is already mass upset.
+
+          *(do it)*
+          </details>
+          </details>
+
+          ---
+
+          ## Recently Active Forks
+          
+          | Recent Fork | Latest Build | Build Date | Fork Created |
+          |-------------|--------------|------------|--------------|
+          EOF
+
+          jq -r '.[] | select(.artifact_name != "N/A") | "| [\(.owner)/\(.name)](https://github.com/\(.owner)/\(.name)/actions) | [\(.artifact_name)](\(.run_url)) | \(.run_date) | \(.created_at[:10]) |"' runs_data.json >> release_notes.md
+
+          cat >> release_notes.md << EOF
+
+          ---
+
+          EOF
+
+          for i in $(seq 1 12); do
+            PAST_DATE=$(date -u -d "${i} days ago" +"%Y%m%d")
+            DISPLAY_DATE=$(date -u -d "${i} days ago" +"%Y-%m-%d")
+            echo "- [Fork list ${DISPLAY_DATE}](https://github.com/${{ github.repository }}/releases/tag/forks-list-${PAST_DATE})" >> release_notes.md
+          done
+
+      - name: Create forks list
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DATE_TAG=$(date -u +"%Y%m%d")
+          RELEASE_NAME="forks-list-${DATE_TAG}"
+
+          # Delete releases + tags older than 13 days
+          CUTOFF_DATE=$(date -u -d '13 days ago' +"%Y%m%d")
+          gh release list --limit 14 --json tagName \
+            | jq -r '.[].tagName' \
+            | grep '^forks-list-' \
+            | while read -r tag; do
+                TAG_DATE="${tag#forks-list-}"
+                if [ "$TAG_DATE" -le "$CUTOFF_DATE" ] 2>/dev/null; then
+                  echo "Deleting old release: $tag"
+                  gh release delete "$tag" -y --cleanup-tag || true
+                fi
+              done
+
+          if gh release view "$RELEASE_NAME"; then
+            gh release delete "$RELEASE_NAME" -y --cleanup-tag
+            sleep 5
+          fi
+
+          gh release create "$RELEASE_NAME" \
+            --title "Recent Forks List (${DATE_TAG})" \
+            --notes-file release_notes.md

@@ -1,0 +1,7 @@
+#!/bin/zsh
+set -euo pipefail
+source_root=${0:A:h:h}
+test_dir=$(mktemp -d /tmp/vim-support-build.XXXXXX)
+xcrun clang -fobjc-arc -Wno-deprecated-declarations -I "$source_root/tools" \
+    "$source_root/probes/guest-support-media-tests.m" -framework Foundation -o "$test_dir/test"
+"$test_dir/test"

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>FormatVersion</key><integer>1</integer>
+<key>Revision</key><integer>2</integer>
+<key>Installers</key><array>
+<dict><key>Guest</key><string>mojave</string><key>Name</key><string>macOS Mojave</string><key>Version</key><string>10.14.6</string><key>Assembly</key><string>split-legacy</string><key>Files</key><array>
+<dict><key>Role</key><string>assistant</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/17/32/061-26589-A_8GJTCGY9PC/25fhcu905eta7wau7aoafu8rvdm7k1j4el/InstallAssistantAuto.pkg</string></dict>
+<dict><key>Role</key><string>recovery</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/17/32/061-26589-A_8GJTCGY9PC/25fhcu905eta7wau7aoafu8rvdm7k1j4el/RecoveryHDMetaDmg.pkg</string></dict>
+<dict><key>Role</key><string>esd</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/17/32/061-26589-A_8GJTCGY9PC/25fhcu905eta7wau7aoafu8rvdm7k1j4el/InstallESDDmg.pkg</string></dict>
+</array></dict>
+<dict><key>Guest</key><string>catalina</string><key>Name</key><string>macOS Catalina</string><key>Version</key><string>10.15.7</string><key>Assembly</key><string>split-legacy</string><key>Files</key><array>
+<dict><key>Role</key><string>assistant</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/26/37/001-68446/r1dbqtmf3mtpikjnd04cq31p4jk91dceh8/InstallAssistantAuto.pkg</string></dict>
+<dict><key>Role</key><string>recovery</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/26/37/001-68446/r1dbqtmf3mtpikjnd04cq31p4jk91dceh8/RecoveryHDMetaDmg.pkg</string></dict>
+<dict><key>Role</key><string>esd</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/26/37/001-68446/r1dbqtmf3mtpikjnd04cq31p4jk91dceh8/InstallESDDmg.pkg</string></dict>
+</array></dict>
+<dict><key>Guest</key><string>bigsur</string><key>Name</key><string>macOS Big Sur</string><key>Version</key><string>11.7.11</string><key>Assembly</key><string>assistant-pkg</string><key>Files</key><array>
+<dict><key>Role</key><string>assistant</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/10/18/047-32248-A_Y7S9K47C9M/rqg3zuwb6dkofsdilmz22awvxtq2sxwr15/InstallAssistant.pkg</string></dict>
+</array></dict>
+<dict><key>Guest</key><string>highsierra</string><key>Name</key><string>macOS High Sierra</string><key>Version</key><string>10.13.6</string><key>Assembly</key><string>split-legacy</string><key>Files</key><array>
+<dict><key>Role</key><string>assistant</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/06/50/041-91758-A_M8T44LH2AW/b5r4og05fhbgatve4agwy4kgkzv07mdid9/InstallAssistantAuto.pkg</string></dict>
+<dict><key>Role</key><string>recovery</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/06/50/041-91758-A_M8T44LH2AW/b5r4og05fhbgatve4agwy4kgkzv07mdid9/RecoveryHDMetaDmg.pkg</string></dict>
+<dict><key>Role</key><string>esd</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/06/50/041-91758-A_M8T44LH2AW/b5r4og05fhbgatve4agwy4kgkzv07mdid9/InstallESDDmg.pkg</string></dict>
+</array></dict>
+</array></dict></plist>

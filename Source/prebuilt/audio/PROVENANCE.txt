@@ -1,0 +1,21 @@
+VoodooHDA 3.0.1, upstream Release302 revision
+cfba1d2dcf815186200d78773456711ffd21bd0c.
+Source and license: Source/vendor/source/VoodooHDA.
+Built with modern Xcode and the Mojave 10.14 Kernel.framework headers using
+Source/scripts/qemu-build-voodoohda. Uses the guest IOAudioFamily, not an
+embedded replacement. Guest-only x86_64 kernel extension; never load on host.
+This is the driver previously validated in Catalina/Mojave QEMU development
+VMs. It is now included in fresh guest installation transactions as well.
+Ad-hoc signed for SIP-disabled guests. Rebuilds produce Build/VoodooHDA;
+publish that kext here when updating the prebuilt release input.
+
+Fresh-guest validation through the signed production app:
+Before installation, no HDA driver and no CoreAudio devices were present.
+Guest kextutil linkage check passed; live load created default 48 kHz stereo
+line-out and line-in devices. Both app payload archives include the kext;
+both compiled install policies include it for transactional publication,
+rollback, boot-cache rebuild and postboot file verification.
+Three-second AudioQueue probes delivered 147456 output callback frames and
+143872 input callback frames, both with successful queue startup. Input samples
+were all zero; this does NOT establish audible playback or working physical
+microphone capture. Host capture permission/routing still needs qualification.

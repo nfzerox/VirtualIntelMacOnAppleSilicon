@@ -1,0 +1,58 @@
+#!/bin/zsh
+set -euo pipefail
+
+repo_root=${0:A:h:h}
+lilu_root="$repo_root/vendor/source/Lilu"
+kernel_sdk="$repo_root/vendor/source/MacKernelSDK"
+project="$repo_root/compat/PVGIOSurfaceABI/PVGIOSurfaceABI.xcodeproj"
+target=${PVG_TARGET_OS:-10.15}
+case "$target" in
+    10.15) output="$repo_root/work/build/PVGIOSurfaceABI" ;;
+    10.14) output="$repo_root/work/build/PVGIOSurfaceABI-Mojave" ;;
+    10.13) output="$repo_root/work/build/PVGIOSurfaceABI-HighSierra" ;;
+    *) print -u2 "unsupported target: $target"; exit 64 ;;
+esac
+lilu_product="$lilu_root/build/Debug/Lilu.kext"
+plugin_product="$output/Build/Products/Debug/PVGIOSurfaceABI.kext"
+developer_dir=${PVG_DEVELOPER_DIR:-${DEVELOPER_DIR:-$(xcode-select -p)}}
+
+[[ -f "$lilu_root/Lilu.xcodeproj/project.pbxproj" && -d "$kernel_sdk/Headers" && -f "$kernel_sdk/Library/x86_64/libkmod.a" ]] || {
+    print -u2 "missing vendored Lilu or MacKernelSDK source under vendor/source/"
+    exit 66
+}
+[[ -d "$developer_dir" ]] || {
+    print -u2 "missing Xcode developer directory: $developer_dir"
+    exit 66
+}
+
+if [[ ! -e "$lilu_root/MacKernelSDK" ]]; then
+    ln -s ../MacKernelSDK "$lilu_root/MacKernelSDK"
+fi
+
+DEVELOPER_DIR="$developer_dir" xcodebuild \
+    -quiet \
+    -project "$lilu_root/Lilu.xcodeproj" \
+    -configuration Debug \
+    -arch x86_64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO GCC_OPTIMIZATION_LEVEL=2 \
+    CONFIGURATION_BUILD_DIR="$lilu_root/build/Debug" \
+    __DIAGNOSE_INVALID_DEPLOYMENT_TARGET_AS_ERROR=NO ENABLE_USER_SCRIPT_SANDBOXING=NO \
+    clean build
+
+DEVELOPER_DIR="$developer_dir" xcodebuild \
+    -quiet \
+    -project "$project" \
+    -scheme PVGIOSurfaceABI \
+    -configuration Debug \
+    -derivedDataPath "$output" \
+    MACOSX_DEPLOYMENT_TARGET="$target" \
+    -arch x86_64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO GCC_OPTIMIZATION_LEVEL=2 \
+    __DIAGNOSE_INVALID_DEPLOYMENT_TARGET_AS_ERROR=NO ENABLE_USER_SCRIPT_SANDBOXING=NO \
+    clean build
+
+/usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $target" "$plugin_product/Contents/Info.plist"
+codesign --force --deep --sign - "$lilu_product" "$plugin_product"
+codesign --verify --strict --verbose=2 "$lilu_product" "$plugin_product"
+file \
+    "$lilu_product/Contents/MacOS/Lilu" \
+    "$plugin_product/Contents/MacOS/PVGIOSurfaceABI"
+printf '%s\n%s\n' "$lilu_product" "$plugin_product"

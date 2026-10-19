@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+"""Decode the PBZX container used by macOS payloadv2 archives to stdout."""
+
+import argparse
+import lzma
+import signal
+import struct
+import sys
+
+
+def read_exact(stream, size):
+    data = stream.read(size)
+    if len(data) != size:
+        raise EOFError(f"expected {size} bytes, got {len(data)}")
+    return data
+
+
+def main():
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input", help="PBZX input file, or - for stdin")
+    args = parser.parse_args()
+
+    source = sys.stdin.buffer if args.input == "-" else open(args.input, "rb")
+    with source:
+        if read_exact(source, 4) != b"pbzx":
+            raise SystemExit("not a PBZX stream")
+
+        # payloadv2 uses this as the maximum uncompressed chunk size.
+        read_exact(source, 8)
+        output = sys.stdout.buffer
+
+        while True:
+            header = source.read(16)
+            if not header:
+                break
+            if len(header) != 16:
+                raise SystemExit("truncated PBZX chunk header")
+
+            uncompressed_size, stored_size = struct.unpack(">QQ", header)
+            stored = read_exact(source, stored_size)
+            if stored.startswith(b"\xfd7zXZ\x00"):
+                decoded = lzma.decompress(stored)
+            elif stored_size == uncompressed_size:
+                decoded = stored
+            else:
+                raise SystemExit("unknown PBZX chunk encoding")
+
+            if len(decoded) != uncompressed_size:
+                raise SystemExit(
+                    f"PBZX size mismatch: expected {uncompressed_size}, "
+                    f"decoded {len(decoded)}"
+                )
+            output.write(decoded)
+
+
+if __name__ == "__main__":
+    main()

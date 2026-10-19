@@ -1,0 +1,26 @@
+#!/bin/zsh
+set -euo pipefail
+
+if (( $# != 2 )); then
+    print -u2 "usage: $0 INPUT_COREDISPLAY OUTPUT_COREDISPLAY"
+    exit 64
+fi
+
+input=$1
+output=$2
+
+if [[ ! -f $input ]]; then
+    print -u2 "input does not exist: $input"
+    exit 66
+fi
+
+mkdir -p "${output:h}"
+# Kept as a compatibility entry point; native offsets are now resolved from
+# Mach-O symbols and unique instruction signatures by the shared patcher.
+repo=${0:A:h:h}
+/usr/bin/perl "$repo/scripts/patch-guest-image.pl" coredisplay "$input" "$output"
+
+codesign --force --sign - "$output"
+codesign --verify --strict "$output"
+
+print "patched Catalina CoreDisplay APV gate: $output"

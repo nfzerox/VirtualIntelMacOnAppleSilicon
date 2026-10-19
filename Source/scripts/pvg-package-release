@@ -1,0 +1,61 @@
+#!/bin/zsh
+set -euo pipefail
+export LC_ALL=C
+repo=${0:A:h:h}
+source "$repo/scripts/pvg-platform"
+pvg_platform "${PVG_TARGET_OS:-10.15}"
+(( $# == 2 )) || { print -u2 'usage: pvg-package-release payload-directory output-directory'; exit 64; }
+payload=${1:A}
+output=${2:A}
+[[ ! -e $output && -d $payload ]] || { print -u2 'Output must be new; payload must exist.'; exit 73; }
+while IFS= read -r target; do
+    [[ -e "$payload$target" ]] || { print -u2 "Missing release target: $target"; exit 66; }
+done < "$pvg_targets"
+if [[ $pvg_target == 10.14 ]]; then
+    # The universal GL entry must support both desktop and Mojave UIKit apps.
+    facade="$payload/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL"
+    platforms=$(xcrun vtool -arch x86_64 -show-build "$facade")
+    [[ $platforms == *'platform MACOS'* && $platforms == *'platform MACCATALYST'* ]] || {
+        print -u2 'Mojave OpenGL x86_64 must support macOS and iOSMac.'; exit 65
+    }
+fi
+mkdir -p "$output/probes"
+stage=$(mktemp -d /private/var/tmp/pvg-package.XXXXXX)
+# Package only installed targets, not intermediate build products or native seeds.
+while IFS= read -r target; do
+    mkdir -p "$stage/payload${target:h}"
+    ditto --noextattr --noacl "$payload$target" "$stage/payload$target"
+done < "$pvg_targets"
+# Manifest also makes the individual packaged files auditable without installation.
+(cd "$stage/payload"; find . -type f ! -name manifest.sha256 -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256) > "$output/FILES.sha256"
+COPYFILE_DISABLE=1 tar --exclude payload/manifest.sha256 -cJf "$output/guest-payload.tar.xz" -C "$stage" payload
+for spec in 'metal-function-reflection:metal-access-regression' 'metal-depth-smoke:metal-depth-smoke' 'metal-async-pipeline:metal-async-pipeline' 'guest-compatibility:guest-compatibility'; do
+    source_name=${spec%%:*}
+    binary_name=${spec#*:}
+    sdk="$repo/resources/xcode/$pvg_xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+    xcrun clang -O2 -fblocks -arch x86_64 -mmacosx-version-min=$pvg_target -isysroot "$sdk" \
+        -framework Foundation -framework Metal "$repo/probes/$source_name.m" -o "$output/probes/$binary_name"
+    codesign -s - "$output/probes/$binary_name"
+done
+{
+    print 'Virtual Intel Mac guest graphics release'
+    print "Guest: Intel $pvg_name $pvg_target.x; native patch layouts validated at install time; donor: Big Sur 11.7.11 20G1443"
+    print 'Packaging/signature checks are not fresh-guest or workload certification.'
+    if git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        print "Source revision: $(git -C "$repo" rev-parse HEAD) (see git status at packaging time)"
+    else
+        print 'Source: exported archive (no .git); see original prebuilt/RELEASE.txt and source files.'
+    fi
+    for dependency in dsce Lilu MacKernelSDK; do
+        if revision=$(git -C "$repo/research/$dependency" rev-parse HEAD 2>/dev/null); then
+            print "$dependency: $revision"
+        else
+            revision=$(awk -v name="$dependency" '$1 == name { print $2 }' "$repo/support/build-dependencies.txt")
+            [[ -n $revision ]] || { print -u2 "Missing dependency pin: $dependency"; exit 66; }
+            print "$dependency: $revision (vendored source pin; checkout unavailable)"
+        fi
+    done
+} > "$output/RELEASE.txt"
+(cd "$output"; shasum -a 256 guest-payload.tar.xz FILES.sha256 RELEASE.txt probes/* > SHA256SUMS)
+print "Release ready: $output"
+print "Packaging scratch retained for inspection: $stage"

@@ -1,0 +1,44 @@
+#!/bin/zsh
+# Experimental Metal-only staging. Does not change release OS support gates.
+set -euo pipefail
+repo=${0:A:h:h}
+native=$repo/work/highsierra/native
+reference=${PVG_MOJAVE_GL_REFERENCE:-$repo/artifacts/releases/mojave-gl/payload}
+out=${1:?usage: build-highsierra-candidate NEW_OUTPUT}
+[[ ! -e $out ]] || exit 73
+mkdir -p "$out"
+for item in \
+ System/Library/Extensions/AppleParavirtGPUMetal.bundle \
+ System/Library/PrivateFrameworks/MetalSerializer.framework \
+ System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001 \
+ System/Library/PrivateFrameworks/IOAccelerator.framework/Versions/A/IOAccelerator; do
+ mkdir -p "$out/${item:h}"
+ ditto "$reference/$item" "$out/$item"
+done
+facade=$out/System/Library/PrivateFrameworks/MetalSerializer.framework/Versions/A/PVGMojaveObjC.dylib
+python3 "$repo/scripts/highsierra-dylib-version.py" "$facade" "$facade"
+codesign --force --sign - "$facade"
+codesign --force --sign - "$out/System/Library/PrivateFrameworks/MetalSerializer.framework"
+mtl=System/Library/PrivateFrameworks/MTLCompiler.framework/Versions
+xpc=System/Library/Frameworks/Metal.framework/Versions/A/XPCServices/MTLCompilerService.xpc
+mkdir -p "$out/$mtl" "$out/${xpc:h}"
+ditto "$native/$mtl/3802" "$out/$mtl/P3"
+ditto "$native/$xpc" "$out/$xpc"
+python3 "$repo/scripts/pvg_macho.py" thin "$native/$mtl/3802/MTLCompiler" "$out/compiler.native"
+python3 "$repo/scripts/pvg_macho.py" thin "$native/$xpc/Contents/MacOS/MTLCompilerService" "$out/service.native"
+perl "$repo/scripts/patch-guest-image.pl" compiler "$out/compiler.native" "$out/$mtl/P3/MTLCompiler"
+perl "$repo/scripts/patch-guest-image.pl" service "$out/service.native" "$out/$xpc/Contents/MacOS/MTLCompilerService"
+sdk=$repo/resources/xcode/XcodeHighSierra.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
+plugin=$out/System/Library/Extensions/AppleParavirtGPUMetal.bundle
+xcrun clang -O2 -arch x86_64 -mmacosx-version-min=10.13 -isysroot "$sdk" \
+ -dynamiclib "$repo/compat/PVGCompilerPluginBridge/PVGCompilerPluginBridge.c" \
+ "$native/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/3802/Libraries/libLLVM.dylib" \
+ -install_name /System/Library/Extensions/AppleParavirtGPUMetal.bundle/Contents/Resources/libAppleParavirtCompilerPlugin.dylib \
+ -o "$plugin/Contents/Resources/libAppleParavirtCompilerPlugin.dylib"
+codesign --force --sign - "$plugin/Contents/Resources/libAppleParavirtCompilerPlugin.dylib"
+codesign --force --sign - "$plugin" "$out/$xpc"
+# Sign the loose image, not the partial framework's SDK .tbd resources.
+cp "$out/$mtl/P3/MTLCompiler" "$out/compiler.signed"
+codesign --force --sign - "$out/compiler.signed"
+mv "$out/compiler.signed" "$out/$mtl/P3/MTLCompiler"
+print "Experimental High Sierra userspace staged: $out"

@@ -1,0 +1,39 @@
+#!/bin/zsh
+set -euo pipefail
+
+if (( EUID != 0 )) || (( $# != 1 )); then
+    print -u2 'usage: sudo catalina-restore-command-trace backup-dir'
+    exit 64
+fi
+
+backup=${1:A}
+target=/System/Library/PrivateFrameworks/MetalSerializer.framework
+traced=$backup/traced
+original=$backup/displaced
+expected_trace=5e99bcf3252446e463a52fe415610852d06e12a8d2ee7d600a6e31c6a059a22d
+expected_original=9939c2773fb57f34b0cf8b3c9b1f144be567af9377682a58aee475c6378d6efb
+
+[[ -d $original && ! -e $traced ]] || {
+    print -u2 'original missing or traced destination already exists'
+    exit 73
+}
+[[ $(shasum -a 256 $target/Versions/A/MetalSerializer | awk '{print $1}') == $expected_trace ]] || {
+    print -u2 'refusing to replace an unexpected current framework'
+    exit 65
+}
+[[ $(shasum -a 256 $original/Versions/A/MetalSerializer | awk '{print $1}') == $expected_original ]] || {
+    print -u2 'backup original does not match expected wrapper'
+    exit 65
+}
+codesign --verify --deep --strict $original
+mount -uw /
+mv $target $traced
+mv $original $target
+if ! codesign --verify --deep --strict $target; then
+    mv $target $original
+    mv $traced $target
+    print -u2 'original failed verification; trace framework restored'
+    exit 74
+fi
+sync
+print 'Original MetalSerializer restored. Reboot is required.'

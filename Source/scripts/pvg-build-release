@@ -1,0 +1,108 @@
+#!/bin/zsh
+set -euo pipefail
+repo=${0:A:h:h}
+(( $# <= 1 )) || { print -u2 'usage: Install.command --build [new-output-directory]'; exit 64; }
+output=${1:-"$repo/artifacts/releases/$(date +%Y%m%d-%H%M%S)"}
+output=${output:A}
+[[ ! -e $output ]] || { print -u2 "Output exists: $output"; exit 73; }
+source "$repo/scripts/pvg-platform"
+version=${PVG_TARGET_OS:-$(sw_vers -productVersion)}
+# Modern development hosts keep the historical Catalina default.
+if [[ -z ${PVG_TARGET_OS:-} ]]; then
+    case $version in
+        10.14|10.14.*|10.15|10.15.*) ;;
+        *) version=10.15 ;;
+    esac
+fi
+pvg_platform "$version"
+export PVG_TARGET_OS=$pvg_target
+if [[ $pvg_target == 10.14 ]]; then
+    for input in vendor/mojave-inputs.tar.gz vendor/mojave-gl-inputs.tar.gz vendor/mojave-native-gl.tar.gz resources/xcode/XcodeMojave.app resources/xcode/XcodeBigSur.app; do
+        [[ -e "$repo/$input" ]] || { print -u2 "Missing Mojave build input: $input"; exit 66; }
+    done
+    "$repo/scripts/pvg-prepare-vendor"
+    mkdir -p "$output"
+    tar -xzf "$repo/vendor/donor-inputs.tar.gz" -C "$output"
+    (cd "$output/inputs"; shasum -a 256 -c ../INPUTS.sha256)
+    tar -xzf "$repo/vendor/mojave-inputs.tar.gz" -C "$output"
+    (cd "$output/mojave-inputs"; shasum -a 256 -c ../MOJAVE-INPUTS.sha256)
+    # Use the bundled, hash-verified Catalina payload only as a donor seed.
+    # All Mojave adapters and native reference images below are rebuilt.
+    (cd "$repo/prebuilt"; shasum -a 256 -c SHA256SUMS)
+    mkdir "$output/reference"
+    tar -xf "$(pvg_release_archive "$repo/prebuilt")" -C "$output/reference"
+    export PVG_INPUT_ROOT="$output/inputs"
+    export PVG_MOJAVE_REFERENCE="$output/reference/payload"
+    export PVG_MOJAVE_NATIVE="$output/mojave-inputs/native"
+    export PVG_MOJAVE_SKYLIGHT="$PVG_MOJAVE_NATIVE/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight"
+    export PVG_MOJAVE_IOACCELERATOR="$output/mojave-inputs/catalina/IOAccelerator"
+    "$repo/scripts/build-mojave-candidate" --check-inputs
+    "$repo/scripts/build-kernel-compat"
+    "$repo/scripts/build-iosurface-abi"
+    "$repo/scripts/build-framebuffer-bootstrap" "$output/framebuffer"
+    PVG_MOJAVE_FRAMEBUFFER="$output/framebuffer/PVGFramebufferBootstrap.kext" \
+        "$repo/scripts/build-mojave-candidate" "$output/payload"
+    tar -xzf "$repo/vendor/mojave-gl-inputs.tar.gz" -C "$output"
+    mkdir "$output/gl-native"
+    tar -xzf "$repo/vendor/mojave-native-gl.tar.gz" -C "$output/gl-native"
+    "$repo/resources/xcode/XcodeMojave.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/metallib" \
+        "$output/gl-inputs/air21/"*.air -o "$output/gl-builtins-mojave.metallib"
+    /bin/zsh "$repo/scripts/build-opengl-mojave-candidate" "$output/gl" \
+        "$output/gl-inputs/AppleMetalOpenGLRenderer.bundle" \
+        "$output/gl-inputs/libGLDPlugin3902.dylib" \
+        "$output/gl-inputs/OpenGL.framework" "$output/gl-native/OpenGL.framework" \
+        "$output/gl-builtins-mojave.metallib"
+    ditto --noextattr --noacl "$output/gl/payload" "$output/payload"
+    /bin/zsh "$repo/scripts/build-opengl-probe"
+    ditto --noextattr --noacl "$repo/artifacts/qemu/opengl-probe/PVGOpenGLProbe.kext" \
+        "$output/payload/Library/Extensions/PVGOpenGLProbe.kext"
+    "$repo/scripts/pvg-package-release" "$output/payload" "$output/prebuilt"
+    print "Mojave candidate: $output/prebuilt; nothing installed or promoted."
+    exit 0
+fi
+# Only the large Apple toolchains are external; sources and extracted donor inputs are vendored.
+required=(
+    resources/xcode/XcodeCatalina.app/Contents/Developer
+    resources/xcode/XcodeBigSur.app/Contents/Developer
+    vendor/SHA256SUMS vendor/donor-inputs.tar.gz vendor/mojave-gl-inputs.tar.gz
+    resources/xcode/XcodeMojave.app
+)
+missing=0
+for input in $required; do
+    if [[ ! -e "$repo/$input" ]]; then print -u2 "Missing build input: $input"; missing=1; fi
+done
+(( missing == 0 )) || { print -u2 'For installation, omit --build; all binaries are bundled.'; exit 66; }
+"$repo/scripts/pvg-prepare-vendor"
+mkdir -p "$output"
+tar -xzf "$repo/vendor/donor-inputs.tar.gz" -C "$output"
+(cd "$output/inputs"; shasum -a 256 -c ../INPUTS.sha256)
+export PVG_INPUT_ROOT="$output/inputs"
+"$repo/scripts/build-kernel-compat"
+"$repo/scripts/build-iosurface-abi"
+"$repo/scripts/build-kernel-stack" "$output/kernel"
+"$repo/scripts/build-iographics" "$output/iographics"
+"$repo/scripts/build-framebuffer-bootstrap" "$output/framebuffer"
+"$repo/scripts/build-metal-plugin" "$output/plugin"
+"$repo/scripts/build-compiler-stack" "$output/compiler"
+"$repo/scripts/build-metalserializer" "$output/serializer"
+PVG_KERNEL_BUILD="$output/kernel" PVG_IOGRAPHICS_BUILD="$output/iographics" \
+PVG_FRAMEBUFFER_BUILD="$output/framebuffer" PVG_PLUGIN_BUILD="$output/plugin" \
+PVG_COMPILER_BUILD="$output/compiler" PVG_SERIALIZER_BUILD="$output/serializer" \
+    "$repo/scripts/build-catalina-payload" "$output/payload"
+# The renderer's shared adapter contains fixes needed on Catalina too (notably
+# texture-view channel mapping). Rebuild it rather than inheriting old GL files
+# from an installed guest or shipping a Metal-only payload by accident.
+python3 "$repo/scripts/build-catalina-gl.py" "$output/gl"
+ditto --noextattr --noacl "$output/gl/payload" "$output/payload"
+# Reference CoreDisplay only; installation always patches the target guest's own image.
+stage=$(mktemp -d /private/var/tmp/pvg-build-seed.XXXXXX)
+(cd "$repo/prebuilt"; shasum -a 256 -c SHA256SUMS)
+tar -xf "$(pvg_release_archive "$repo/prebuilt")" -C "$stage"
+core=System/Library/Frameworks/CoreDisplay.framework/Versions/A/CoreDisplay
+seed="$stage/payload/$core"
+mkdir -p "${output}/payload/${core:h}"
+/usr/bin/perl "$repo/scripts/patch-guest-image.pl" coredisplay "$seed" "$output/payload/$core"
+codesign --force --sign - --preserve-metadata=entitlements "$output/payload/$core"
+"$repo/scripts/pvg-package-release" "$output/payload" "$output/prebuilt"
+print "Build complete. Candidate is $output/prebuilt; nothing was installed or promoted."
+print 'Test it in a disposable VM before replacing the repository prebuilt directory.'

@@ -1,0 +1,61 @@
+name: Build ISO
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Optional: Tag the build to upload it to Releases'
+        required: false
+        type: string
+
+jobs:
+  build-opencore-iso:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        
+      - name: Install xorriso
+        run: |
+          echo "Installing xorriso ..."
+          brew install xorriso
+
+      - name: Download ProperTree and GenSMBIOS
+        run: |
+          git clone --depth 1 https://github.com/corpnewt/GenSMBIOS
+          curl -OL https://github.com/LongQT-sea/OpenCore-ISO/releases/download/v0.2/ProperTree.zip
+          unzip -qq ProperTree.zip && rm ProperTree.zip && rm -rf GenSMBIOS/.git
+
+      - name: Make OpenCore-ISO
+        run: |
+          echo "Making ISO ..."
+          bash Make_ISO.command
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: OpenCore-ISO
+          path: ~/Desktop/LongQT-OpenCore*.iso
+
+      - name: Create Release
+        if: github.event.inputs.release_tag != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag=${{ github.event.inputs.release_tag }}
+          title="$tag"
+          
+          cat > release_notes.md << 'EOF'
+          > [!Tip]
+          > For macOS Installer ISO and Recovery ISO:
+          > https://github.com/LongQT-sea/macos-iso-builder
+          
+          > [!CAUTION]
+          > These iso are **true CD/DVD ISO image**. Do **NOT** modify VM config to change **`media=cdrom`** to **`media=disk`**.
+          EOF
+          
+          gh release create "$tag" \
+            --title "$title" \
+            --notes-file release_notes.md \
+            ~/Desktop/LongQT-OpenCore*.iso

@@ -1,0 +1,13 @@
+#!/bin/zsh
+# Local native-ARM QEMU experiment. Does not replace the normal launcher binary.
+set -euo pipefail
+repo=${0:A:h:h}
+build=${PVG_QEMU_BUILD:-$repo/Build/qemu/build-arm64-pvg}
+output=${1:?usage: zsh scripts/build-tcg-tso-candidate NEW_OUTPUT}
+[[ ! -e $output ]] || exit 73
+ninja -C "$build" qemu-system-x86_64
+# Do not copy the historical Rez/Finder attributes into the ad-hoc signed file.
+cp -X "$build/qemu-system-x86_64" "$output"
+codesign -f -s - --entitlements "$repo/probes/host-tcg-tso.entitlements.plist" "$output"
+codesign --verify --strict "$output"
+print "Candidate: $output (opt in with PVG_TCG_TSO=1 and PVG_QEMU_BINARY=$output)"

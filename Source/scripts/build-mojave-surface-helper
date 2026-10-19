@@ -1,0 +1,15 @@
+#!/bin/zsh
+# Guest x86_64 code, buildable on either host architecture with the active SDK.
+set -euo pipefail
+root=${0:A:h:h}
+out=${1:?usage: build-mojave-surface-helper NEW_OUTPUT}
+[[ ! -e $out ]] || exit 73
+xcrun clang -O2 -fblocks -arch x86_64 -mmacosx-version-min=10.14 \
+    -dynamiclib "$root/compat/PVGOpenGLProbe/PVGGLIOKit.c" \
+    -Wl,-reexport_framework,IOKit -install_name /usr/lib/PVGGLIOKit.dylib \
+    -o "$out"
+xcrun vtool -set-build-version macos 10.14 10.14 \
+    -set-build-version maccatalyst 12.0 12.0 -replace -output "$out.zippered" "$out"
+mv "$out.zippered" "$out"
+codesign --force --sign - "$out"
+codesign --verify --strict "$out"

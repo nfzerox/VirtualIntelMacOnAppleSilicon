@@ -1,0 +1,12 @@
+.DS_Store
+.scannerwork
+DerivedData
+Lilu.kext
+xcuserdata
+xcshareddata
+project.xcworkspace
+build
+Lilu/Scripts/custom*
+.svace-dir
+/MacKernelSDK
+/clang32
