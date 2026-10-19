@@ -145,7 +145,9 @@ static NSDictionary *InstallJSON(NSDictionary *command) {
     NSMutableArray *arguments=[@[@"--apply",guestJournal] mutableCopy];
     NSString *progressDirectory=prepared[@"GuestProgress"][@"Directory"];
     if(progressDirectory)[arguments addObjectsFromArray:@[@"--progress",progressDirectory]];
-    [agent runExecutable:binary arguments:arguments timeout:1200 completion:^(NSDictionary *command,NSError *failure) {
+    // Do not abandon a healthy install on slow TCG hosts. The guest records
+    // progress durably; real process/transport failures still reconcile it.
+    [agent runExecutable:binary arguments:arguments timeout:0 completion:^(NSDictionary *command,NSError *failure) {
         if(failure)state[@"CommandError"]=failure.localizedDescription;
         if([command[@"stderr"] length])state[@"CommandLog"]=[[NSString alloc] initWithData:command[@"stderr"] encoding:NSUTF8StringEncoding]?:@"Non-text guest output";
         // Even nonzero exit/transport timeout can have a completed rollback or

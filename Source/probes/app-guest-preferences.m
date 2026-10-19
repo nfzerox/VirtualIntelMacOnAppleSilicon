@@ -1,11 +1,45 @@
 #import <Foundation/Foundation.h>
 #import "VIMGuestAgent.h"
+#include <math.h>
 
 @interface PreferenceAgent : VIMGuestAgent
 @property NSString *console;
 @property NSMutableArray<NSDictionary *> *commands;
 @property BOOL launchFailure, transportFailure;
 @end
+@interface ProcessControl : NSObject
+@property NSUInteger launches, polls;
+@property BOOL keepRunning;
+@end
+@implementation ProcessControl
+- (void)execute:(NSString *)command arguments:(NSDictionary *)arguments completion:(void (^)(id,NSError *))completion {
+    if([command isEqual:@"guest-exec"]) {
+        self.launches++;completion(@{@"pid":@42},nil);return;
+    }
+    NSCAssert([command isEqual:@"guest-exec-status"],@"Only poll the already started process");
+    self.polls++;
+    completion(self.keepRunning||self.polls==1?@{@"exited":@NO}:@{@"exited":@YES,@"exitcode":@0},nil);
+}
+- (void)close {}
+@end
+static void CheckProcessWait(NSTimeInterval timeout,BOOL closeDuringWait,BOOL shouldFail) {
+    VIMGuestAgent *agent=[[VIMGuestAgent alloc] initWithSocketPath:@"/unused-fixture"];
+    ProcessControl *control=[ProcessControl new];control.keepRunning=timeout>0;
+    [agent setValue:control forKey:@"connection"];
+    __block BOOL done=NO;
+    [agent runExecutable:@"/fixture/setup" arguments:@[] timeout:timeout completion:^(NSDictionary *result,NSError *failure) {
+        NSCAssert((failure!=nil)==shouldFail,@"Unlimited setup waits must complete or report actual interruption");
+        if(!failure)NSCAssert([result[@"exitcode"] isEqual:@0],@"Require actual completion");
+        done=YES;
+    }];
+    if(closeDuringWait)[agent close];
+    NSDate *testDeadline=[NSDate dateWithTimeIntervalSinceNow:3];
+    while(!done&&testDeadline.timeIntervalSinceNow>0)
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+    NSCAssert(done,@"Regression probe must finish");
+    NSCAssert(control.launches==1,@"Never retry a potentially mutating command");
+    if(!shouldFail)NSCAssert(control.polls==2,@"Zero timeout must still poll until process exit");
+}
 @implementation PreferenceAgent
 - (instancetype)init {
     if((self=[super initWithSocketPath:@"/unused-fixture"])) {
@@ -43,6 +77,16 @@ static void Open(PreferenceAgent *agent,id pane,BOOL failure) {
     }];NSCAssert(done,@"Synchronous fixture");
 }
 int main(void) {@autoreleasepool {
+    CheckProcessWait(0,NO,NO);
+    CheckProcessWait(.01,NO,YES);
+    CheckProcessWait(0,YES,YES);
+    for(NSNumber *timeout in @[@-1,@(NAN),@(INFINITY)]) {
+        VIMGuestAgent *agent=[[VIMGuestAgent alloc] initWithSocketPath:@"/unused-fixture"];
+        ProcessControl *control=[ProcessControl new];[agent setValue:control forKey:@"connection"];
+        __block BOOL rejected=NO;
+        [agent runExecutable:@"/fixture/setup" arguments:@[] timeout:timeout.doubleValue completion:^(NSDictionary *result,NSError *failure){rejected=failure!=nil;}];
+        NSCAssert(rejected&&control.launches==0,@"Invalid timeouts must not dispatch a command");
+    }
     for(NSUInteger scenario=0;scenario<3;scenario++) {
         VIMGuestAgent *agent=[[VIMGuestAgent alloc] initWithSocketPath:@"/unused-fixture"];
         ShutdownControl *control=[ShutdownControl new];control.reply=scenario==0?@{@"pid":@42}:@{};
@@ -74,5 +118,5 @@ int main(void) {@autoreleasepool {
     NSCAssert(transport.commands.count==1,@"Transport failure must not launch or retry");
     PreferenceAgent *closed=[PreferenceAgent new];[closed close];Open(closed,@"sharing",YES);
     NSCAssert(closed.commands.count==0,@"Closed agent cannot open guest UI");
-    puts("Guest preferences: whitelist, Aqua user, no password prompt and failure paths PASS");return 0;
+    puts("Guest commands: unlimited setup wait, bounded diagnostics, close/invalid timeout and preferences PASS");return 0;
 }}

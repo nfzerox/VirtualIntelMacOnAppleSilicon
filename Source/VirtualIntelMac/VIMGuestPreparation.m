@@ -151,7 +151,7 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
         self.progress(@"Copying and verifying guest setup files…");
         [progressUI updateMode:@"working" fraction:.05 message:@"Copying and verifying guest support files…" completion:nil];
         [self.agent runExecutable:[directory stringByAppendingPathComponent:@"guest-macho"]
-            arguments:@[@"stage-media",[directory stringByAppendingPathComponent:@"support-manifest.plist"],directory] timeout:180
+            arguments:@[@"stage-media",[directory stringByAppendingPathComponent:@"support-manifest.plist"],directory] timeout:0
             completion:^(NSDictionary *copied,NSError *failure) {
         NSDictionary *transfer=CommandJSON(copied);
         if(failure){if(failure.userInfo[@"GuestStagingDirectory"])self.state[@"GuestStagingDirectory"]=failure.userInfo[@"GuestStagingDirectory"];[self finish:nil error:failure];return;}
@@ -220,7 +220,7 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
         self.state[@"Admission"]=admission;
         if(![self phase:@"extracting" message:@"Unpacking guest setup files…"])return;
         NSString *extracted=[directory stringByAppendingPathComponent:@"Extracted"];
-        [self.agent runExecutable:prepare arguments:@[@"--extract",[directory stringByAppendingPathComponent:self.archiveFilename],extracted] timeout:300 completion:^(NSDictionary *result,NSError *extractError) {
+        [self.agent runExecutable:prepare arguments:@[@"--extract",[directory stringByAppendingPathComponent:self.archiveFilename],extracted] timeout:0 completion:^(NSDictionary *result,NSError *extractError) {
             if([result[@"stderr"] length])self.state[@"ExtractionLog"]=[[NSString alloc] initWithData:result[@"stderr"] encoding:NSUTF8StringEncoding]?:@"Non-text extraction output";
             NSDictionary *receipt=CommandJSON(result);NSString *payload=[extracted stringByAppendingPathComponent:@"payload"];
             if(receipt)self.state[@"Extraction"]=receipt;
@@ -233,7 +233,7 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
                 [self finish:nil error:extractError?:PreparationError(@"Guest payload extraction failed. Diagnostic staging was retained.")];return;
             }
             if(![self phase:@"preparing" message:@"Preparing this macOS build’s graphics files…"])return;
-            [self.agent runExecutable:prepare arguments:@[@"/",payload,directory] timeout:600 completion:^(NSDictionary *prepared,NSError *prepareError) {
+            [self.agent runExecutable:prepare arguments:@[@"/",payload,directory] timeout:0 completion:^(NSDictionary *prepared,NSError *prepareError) {
                 if([prepared[@"stderr"] length])self.state[@"PreparationLog"]=[[NSString alloc] initWithData:prepared[@"stderr"] encoding:NSUTF8StringEncoding]?:@"Non-text preparation output";
                 NSDictionary *result=CommandJSON(prepared);
                 if(prepareError||![result[@"Prepared"] isEqual:@YES]||![result[@"Installed"] isEqual:@NO]||
@@ -250,7 +250,7 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
                     }
                     if(![self phase:@"planning-installation" message:@"Checking installation targets and recording recovery information…"])return;
                     NSString *journal=[directory stringByAppendingPathComponent:@"InstallTransaction.plist"];
-                    [self.agent runExecutable:[directory stringByAppendingPathComponent:@"guest-install"] arguments:@[@"--plan",@"/",payload,journal] timeout:300 completion:^(NSDictionary *planned,NSError *planError) {
+                    [self.agent runExecutable:[directory stringByAppendingPathComponent:@"guest-install"] arguments:@[@"--plan",@"/",payload,journal] timeout:0 completion:^(NSDictionary *planned,NSError *planError) {
                         if([planned[@"stderr"] length])self.state[@"PlanningLog"]=[[NSString alloc] initWithData:planned[@"stderr"] encoding:NSUTF8StringEncoding]?:@"Non-text planning output";
                         NSDictionary *plan=CommandJSON(planned);
                         if(planError||![plan[@"Planned"] isEqual:@YES]||![plan[@"Installed"] isEqual:@NO]||![plan[@"Ready"] isEqual:@NO]||![plan[@"Guest"] isEqual:self.initialReport[@"Guest"]]) {

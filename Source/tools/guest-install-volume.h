@@ -38,9 +38,6 @@ static BOOL MakeGuestSystemWritable(NSURL *root,BOOL mojave) {
     task.arguments=@[@"-uw",@"/"];task.standardOutput=NSFileHandle.fileHandleWithStandardError;
     task.standardError=NSFileHandle.fileHandleWithStandardError;NSError *error=nil;
     Check([task launchAndReturnError:&error],error.localizedDescription);
-    double deadline=NSProcessInfo.processInfo.systemUptime+30;
-    while(task.running&&NSProcessInfo.processInfo.systemUptime<deadline)usleep(10000);
-    if(task.running){kill(task.processIdentifier,SIGKILL);[task waitUntilExit];Check(NO,@"Guest system remount timed out");}
     [task waitUntilExit];
     Check(task.terminationReason==NSTaskTerminationReasonExit&&task.terminationStatus==0,@"Could not make Catalina's system volume writable");
     Check(statfs("/",&after)==0&&!(after.f_flags&MNT_RDONLY)&&

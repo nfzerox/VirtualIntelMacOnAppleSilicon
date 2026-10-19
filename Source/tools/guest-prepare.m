@@ -32,9 +32,7 @@ static void Run(NSString *path,NSArray<NSString *> *args,NSString *capture) {
     } else task.standardOutput=NSFileHandle.fileHandleWithStandardError;
     task.standardError=NSFileHandle.fileHandleWithStandardError;
     NSError *error=nil;Check([task launchAndReturnError:&error],error.localizedDescription);
-    double deadline=NSProcessInfo.processInfo.systemUptime+120;
-    while(task.running&&NSProcessInfo.processInfo.systemUptime<deadline)usleep(10000);
-    if(task.running){kill(task.processIdentifier,SIGKILL);[task waitUntilExit];[file closeFile];Check(NO,@"Preparation command timed out; staging retained");}
+    // Preparation speed depends on emulation and disk load, not correctness.
     [task waitUntilExit];[file closeFile];
     Check(task.terminationReason==NSTaskTerminationReasonExit&&task.terminationStatus==0,
           [NSString stringWithFormat:@"%@ rejected preparation (status %d)",path.lastPathComponent,task.terminationStatus]);

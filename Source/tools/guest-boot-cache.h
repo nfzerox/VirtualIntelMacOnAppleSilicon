@@ -141,12 +141,9 @@ static NSDictionary *RebuildBootCaches(NSURL *root,BOOL mojave,NSURL *log) {
     NSTask *task=[NSTask new];task.executableURL=[NSURL fileURLWithPath:executable];task.arguments=arguments;
     task.standardOutput=output;task.standardError=output;NSError *error=nil;
     Check([task launchAndReturnError:&error],error.localizedDescription);
-    // Under TCG the driver-information caches refreshed after prelinking can
-    // take several more minutes. Keep the full -i operation, bounded, rather
-    // than accepting a cache file while its builder is still running.
-    double deadline=NSProcessInfo.processInfo.systemUptime+600;
-    while(task.running&&NSProcessInfo.processInfo.systemUptime<deadline)usleep(10000);
-    if(task.running){kill(task.processIdentifier,SIGKILL);[task waitUntilExit];Check(NO,@"Boot-cache rebuild exceeded ten minutes; rollback is required");}
+    // TCG can make a healthy rebuild take much longer than native execution.
+    // Wait for the full operation, not a wall-clock budget or just the first
+    // generated cache. Actual builder/validation failures still roll back.
     [task waitUntilExit];[output synchronizeFile];[output closeFile];
     Check(task.terminationReason==NSTaskTerminationReasonExit&&task.terminationStatus==0,@"Boot-cache builder failed; rollback is required");
     NSArray *paths=CachePaths(mojave);NSURL *generated=[root URLByAppendingPathComponent:paths.lastObject];

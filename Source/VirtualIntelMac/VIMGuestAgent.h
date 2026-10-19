@@ -7,6 +7,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)connectWithCompletion:(void (^)(NSError *_Nullable error))completion;
 /// Result contains the QGA exit status plus decoded stdout/stderr NSData.
 /// A timeout has an uncertain outcome: callers must not blindly repeat a write.
+/// Pass zero for setup work that must wait for actual process completion.
+/// Closing the agent or a transport error still interrupts the host's wait.
 - (void)runExecutable:(NSString *)path arguments:(NSArray<NSString *> *)arguments
               timeout:(NSTimeInterval)timeout
            completion:(void (^)(NSDictionary *_Nullable result, NSError *_Nullable error))completion;

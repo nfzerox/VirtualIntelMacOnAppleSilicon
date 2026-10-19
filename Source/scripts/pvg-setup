@@ -253,14 +253,6 @@ while kill -0 $cache_pid 2>/dev/null; do
     if (( elapsed % 30 == 0 )); then
         print "  Cache builder still running ($elapsed seconds)."
     fi
-    if (( elapsed >= 300 )); then
-        kill -TERM $cache_pid 2>/dev/null || true
-        sleep 2
-        kill -KILL $cache_pid 2>/dev/null || true
-        wait $cache_pid || true
-        print -u2 'Cache build exceeded five minutes; rolling back.'
-        false
-    fi
 done
 wait $cache_pid
 unset cache_pid

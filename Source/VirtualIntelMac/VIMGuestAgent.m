@@ -2,6 +2,7 @@
 #import "VIMQMPConnection.h"
 #include <CommonCrypto/CommonDigest.h>
 #include <limits.h>
+#include <math.h>
 #include <arpa/inet.h>
 static NSError *GuestError(NSString *message) {
     return [NSError errorWithDomain:@"VirtualIntelMac.GuestAgent" code:1
@@ -35,10 +36,10 @@ static NSString *Output(NSDictionary *result) {
 - (void)runExecutable:(NSString *)path arguments:(NSArray<NSString *> *)arguments
               timeout:(NSTimeInterval)timeout completion:(void (^)(NSDictionary *,NSError *))completion {
     NSAssert(NSThread.isMainThread,@"Guest controller is main-thread owned");
-    if(self.closed || !path.isAbsolutePath || timeout<=0 || timeout>1200) {
+    if(self.closed || !path.isAbsolutePath || !isfinite(timeout) || timeout<0 || timeout>1200) {
         completion(nil,GuestError(@"The guest command cannot be started."));return;
     }
-    double deadline=NSProcessInfo.processInfo.systemUptime+timeout;
+    double deadline=timeout>0?NSProcessInfo.processInfo.systemUptime+timeout:0;
     [self.connection execute:@"guest-exec" arguments:@{@"path":path,@"arg":[arguments copy],@"capture-output":@YES}
         completion:^(id result,NSError *error) {
         NSNumber *pid=[result isKindOfClass:NSDictionary.class]?result[@"pid"]:nil;
@@ -49,7 +50,7 @@ static NSString *Output(NSDictionary *result) {
     }];
 }
 - (void)pollProcess:(NSNumber *)pid deadline:(double)deadline completion:(void (^)(NSDictionary *,NSError *))completion {
-    if(self.closed || NSProcessInfo.processInfo.systemUptime>=deadline) {
+    if(self.closed || (deadline>0 && NSProcessInfo.processInfo.systemUptime>=deadline)) {
         completion(nil,GuestError(@"The guest command was interrupted or timed out. It may still be running."));return;
     }
     [self.connection execute:@"guest-exec-status" arguments:@{@"pid":pid} completion:^(id reply,NSError *error) {
@@ -111,7 +112,7 @@ static NSString *Output(NSDictionary *result) {
 }
 - (void)writeChunks:(NSData *)data handle:(NSNumber *)handle offset:(NSUInteger)offset deadline:(double)deadline
            progress:(void (^)(NSUInteger))progress completion:(void (^)(NSError *))completion {
-    if(self.closed||NSProcessInfo.processInfo.systemUptime>=deadline){completion(GuestError(@"Guest transfer was interrupted or timed out. Partial staging was retained."));return;}
+    if(self.closed||(deadline>0&&NSProcessInfo.processInfo.systemUptime>=deadline)){completion(GuestError(@"Guest transfer was interrupted or timed out. Partial staging was retained."));return;}
     if(offset==data.length){completion(nil);return;}
     // 384 KiB produces a 512 KiB base64 request, comfortably below QGA's
     // 64 MiB JSON limit. The former 48 KiB blocks required eight times as many
@@ -306,7 +307,7 @@ static NSString *Output(NSDictionary *result) {
                     }
                     if(progress)progress(0,total);
                     [self stageEntries:entries index:0 directory:directory completed:0 total:total
-                        deadline:NSProcessInfo.processInfo.systemUptime+600 progress:progress completion:^(NSError *uploadError) {
+                        deadline:0 progress:progress completion:^(NSError *uploadError) {
                         if(uploadError) {
                             finish(nil,[NSError errorWithDomain:uploadError.domain code:uploadError.code userInfo:@{
                                 NSLocalizedDescriptionKey:uploadError.localizedDescription,@"GuestStagingDirectory":directory}]);return;
@@ -332,7 +333,7 @@ static NSString *Output(NSDictionary *result) {
         [self runExecutable:@"/bin/chmod" arguments:@[[entry[@"Name"] isEqual:@"guest-macho"]?@"0700":@"0600",path] timeout:15 completion:^(NSDictionary *mode,NSError *modeError) {
             if(modeError||!Successful(mode)){completion(modeError?:GuestError(@"Could not secure a guest staging file."));return;}
             NSString *tool=[directory stringByAppendingPathComponent:@"guest-macho"];
-            [self runExecutable:tool arguments:@[@"sha256",path] timeout:120 completion:^(NSDictionary *result,NSError *hashError) {
+            [self runExecutable:tool arguments:@[@"sha256",path] timeout:0 completion:^(NSDictionary *result,NSError *hashError) {
                 NSString *expected=[entry[@"SHA256"] stringByAppendingString:@"\n"];
                 if(hashError||!Successful(result)||![Output(result) isEqual:expected]) {
                     completion(hashError?:GuestError(@"Guest setup checksum verification failed. Nothing was installed."));return;

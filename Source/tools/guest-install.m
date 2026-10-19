@@ -114,9 +114,6 @@ static void VerifySignature(NSString *path,BOOL deep) {
     task.arguments=deep?@[@"--verify",@"--deep",@"--strict",path]:@[@"--verify",@"--strict",path];
     task.standardOutput=NSFileHandle.fileHandleWithStandardError;
     NSError *error=nil;Check([task launchAndReturnError:&error],error.localizedDescription);
-    double deadline=NSProcessInfo.processInfo.systemUptime+60;
-    while(task.running&&NSProcessInfo.processInfo.systemUptime<deadline)usleep(10000);
-    if(task.running){kill(task.processIdentifier,SIGKILL);[task waitUntilExit];Check(NO,@"Payload signature verification timed out");}
     [task waitUntilExit];Check(task.terminationReason==NSTaskTerminationReasonExit&&task.terminationStatus==0,[@"Invalid payload signature: " stringByAppendingString:path]);
 }
 static void VerifyTargets(NSURL *payload,NSArray<NSString *> *targets) {
