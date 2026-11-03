@@ -1463,23 +1463,32 @@ int DGUploadSurface(uint32_t lease,const void *pixels,int width,int height,unsig
     for(;s && s->lease!=lease;s=s->next){}
     unsigned element=s?VIMGLPixelBytes(s->format):0;
     if(!DGSupportsSurfaceEpochs() || !lease || !epoch || !pixels || width<1 || height<1 ||
-        !element || width>8192 || height>8192 || (uint64_t)width*element>stride || (uint64_t)width*height*element>DG_MAX_BYTES) return 0;
-    struct DGPacket p=DGPacketNew(dg_current,DG_SURFACE_UPLOAD);
-    p.message.flags=DG_INPUT_ONLY;
-    p.message.args[0]=lease;p.message.args[1]=epoch;p.message.args[2]=width;p.message.args[3]=height;
-    if(stride==(uint64_t)width*element) {
-        // The caller holds this source mapping through the synchronous reply.
-        // Reuse the ordinary input-span lifetime contract instead of allocating
-        // and copying a second whole CPU image on every retained-surface update.
-        // Upload's wire body is raw pixels, not a pointer argument.
-        DGPacketPointer(&p,4,pixels,(size_t)width*height*element,0);p.message.args[4]=0;
-    } else {
-        p.message.bytes=(uint32_t)width*height*element;p.data=malloc(p.message.bytes);p.capacity=p.message.bytes;
-        if(!p.data) { dg_current->error=GL_OUT_OF_MEMORY;return 0; }
-        for(int y=0;y<height;++y)memcpy(p.data+(size_t)y*width*element,(const char *)pixels+(size_t)y*stride,(size_t)width*element);
+        !element || width>8192 || height>8192 || (uint64_t)width*element>stride) return 0;
+    size_t row=(size_t)width*element;
+    if((size_t)(height-1)>(SIZE_MAX-row)/stride)return 0;
+    int split=row*(size_t)height>DG_MAX_BYTES;
+    if(split && (s->format!=VIM_GL_PIXEL_BGRA8 ||
+        !(dg_current->connection->features&DG_FEATURE_SURFACE_UPLOAD_ROWS)))return 0;
+    int limit=split?(int)((16u*1024u*1024u)/row):height;
+    for(int first=0;first<height;first+=limit) {
+        int rows=height-first<limit?height-first:limit;
+        const unsigned char *source=(const unsigned char *)pixels+(size_t)first*stride;
+        struct DGPacket p=DGPacketNew(dg_current,DG_SURFACE_UPLOAD);
+        p.message.flags=DG_INPUT_ONLY;
+        p.message.args[0]=lease;p.message.args[1]=epoch;p.message.args[2]=width;p.message.args[3]=height;
+        if(split){p.message.args[5]=first;p.message.args[6]=rows;}
+        if(stride==row) {
+            // Borrow the caller's mapping only through the synchronous reply.
+            DGPacketPointer(&p,4,source,row*rows,0);p.message.args[4]=0;
+        } else {
+            p.message.bytes=(uint32_t)(row*rows);p.data=malloc(p.message.bytes);p.capacity=p.message.bytes;
+            if(!p.data) { dg_current->error=GL_OUT_OF_MEMORY;return 0; }
+            for(int y=0;y<rows;++y)memcpy(p.data+(size_t)y*row,source+(size_t)y*stride,row);
+        }
+        struct DGReply r=DGSubmit(dg_current,&p,1);int good=p.valid_reply && !r.error;
+        DGPacketFree(&p);if(!good)return 0;
     }
-    struct DGReply r=DGSubmit(dg_current,&p,1);int good=p.valid_reply && !r.error;
-    DGPacketFree(&p);return good;
+    return 1;
 }
 int DGSupportsDrawableReadRects(void)
 { return dg_current && (dg_current->connection->capabilities&DG_CAP_DRAWABLE_READ_RECTS)!=0; }
@@ -1487,8 +1496,16 @@ int DGReadDrawableRect(void *pixels,int x,int y,int width,int height)
 {
     struct DGContext *c=dg_current;
     if(!DGSupportsDrawableReadRects() || !pixels || x<0 || y<0 || width<1 || height<1 ||
-       (int64_t)x+width>c->width || (int64_t)y+height>c->height ||
-       (uint64_t)width*height*4>DG_MAX_BYTES) return 0;
+       (int64_t)x+width>c->width || (int64_t)y+height>c->height) return 0;
+    size_t row=(size_t)width*4;
+    if((uint64_t)row*height>DG_MAX_BYTES) {
+        int limit=(int)((16u*1024u*1024u)/row);
+        for(int first=0;first<height;first+=limit) {
+            int rows=height-first<limit?height-first:limit;
+            if(!DGReadDrawableRect((unsigned char *)pixels+(size_t)first*row,x,y+first,width,rows))return 0;
+        }
+        return 1;
+    }
     struct DGPacket packet=DGPacketNew(c,DG_READ_DRAWABLE_RECT);
     packet.message.flags=DG_OUTPUT_ONLY;
     packet.message.args[0]=width;packet.message.args[1]=height;
@@ -1508,7 +1525,7 @@ int DGReadDrawable(void *pixels,int width,int height)
     struct DGContext *c=dg_current;
     if(!c || !pixels || width!=c->width || height!=c->height) return 0;
     size_t bytes=(size_t)width*height*4;
-    if(bytes>DG_MAX_BYTES) return 0;
+    if(bytes>DG_MAX_BYTES) return DGReadDrawableRect(pixels,0,0,width,height);
     if(bytes>=DG_PREPARED_FULL_READ_MIN_BYTES && dg_prepared_full_read &&
        !c->connection->dead && DGSupportsRAMScatterReads()) {
         // Match the old private packet's conservative state invalidation.

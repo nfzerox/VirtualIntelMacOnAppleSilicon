@@ -276,6 +276,13 @@ bool CLASS::Start(IOPCIDevice* provider)
 	m_fb_offset = ReadReg(SVGA_REG_FB_OFFSET);
 	m_fb_size = ReadReg(SVGA_REG_FB_SIZE);
 	m_vram_size = ReadReg(SVGA_REG_VRAM_SIZE);
+	m_primary_scanout_bytes = SVGA_FB_MAX_TRACEABLE_SIZE;
+	if (m_vram_size > VIM_PANEL_LARGE_SCANOUT_BYTES &&
+	    ReadReg(VIM_PANEL_LARGE_SCANOUT_REGISTER) == VIM_PANEL_LARGE_SCANOUT_MAGIC) {
+		// Reserve the larger primary before letting the host advertise it.
+		m_primary_scanout_bytes = VIM_PANEL_LARGE_SCANOUT_BYTES;
+		WriteReg(VIM_PANEL_LARGE_SCANOUT_REGISTER,VIM_PANEL_LARGE_SCANOUT_MAGIC);
+	}
 	m_max_width = ReadReg(SVGA_REG_MAX_WIDTH);
 	m_max_height = ReadReg(SVGA_REG_MAX_HEIGHT);
 	host_bpp = ReadReg(SVGA_REG_HOST_BITS_PER_PIXEL);

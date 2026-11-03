@@ -5,10 +5,10 @@ void CLASS::configureNativePanel(uint32_t max_width,uint32_t max_height)
     if (svga.ReadReg(VIM_PANEL_CAPABILITIES_REGISTER)!=VIM_PANEL_MAGIC)return;
     uint32_t width=svga.ReadReg(VIM_PANEL_WIDTH_REGISTER),height=svga.ReadReg(VIM_PANEL_HEIGHT_REGISTER);
     uint32_t scale=svga.ReadReg(VIM_PANEL_SCALE_REGISTER);
-    // The allocator currently reserves 16 MiB for primary scanout. Never
+    // The accelerator reserves the negotiated primary aperture. Never
     // advertise geometry that could overlap an allocated backing/transport.
     if ((scale!=1 && scale!=2) || width<640 || height<400 || width>max_width || height>max_height ||
-        static_cast<uint64_t>(width)*height*4>16U*1024U*1024U ||
+        static_cast<uint64_t>(width)*height*4>svga.getPrimaryScanoutBytes() ||
         (scale==2 && (width<2048 || height<1536)))return;
     for (uint32_t i=1;i<m_num_active_modes;++i) {
         const DisplayModeEntry* mode=GetDisplayMode(m_modes[i]);
@@ -141,6 +141,7 @@ void CLASS::panelInterrupt(OSObject* owner,IOInterruptEventSource*,int)
     }
     uint32_t width=self->svga.ReadReg(VIM_PANEL_REQUEST_WIDTH_REGISTER);
     uint32_t height=self->svga.ReadReg(VIM_PANEL_REQUEST_HEIGHT_REGISTER);
+    uint32_t scale=self->svga.ReadReg(VIM_PANEL_REQUEST_SCALE_REGISTER);
     bool stable=generation==self->svga.ReadReg(VIM_PANEL_GENERATION_REGISTER);
     if (!self->m_intr.proc || !self->m_intr_enabled) {
         // Preserve an early request without a level-IRQ storm. Registration
@@ -152,12 +153,13 @@ void CLASS::panelInterrupt(OSObject* owner,IOInterruptEventSource*,int)
         self->svga.WriteReg(VIM_PANEL_ACK_REGISTER,generation);
         self->m_panel_generation=generation;
         self->m_panel_pending_width=width;self->m_panel_pending_height=height;
+        self->m_panel_pending_scale=scale==1 || scale==2 ? scale : self->m_panel_scale;
     }
     IOLockUnlock(self->m_iolock);
     // A concurrent request leaves the level interrupt asserted for retry.
     if (!stable ||
         width<800 || height<600 || width>self->svga.getMaxWidth() || height>self->svga.getMaxHeight() ||
-        static_cast<uint64_t>(width)*height*4>16U*1024U*1024U)return;
+        static_cast<uint64_t>(width)*height*4>self->svga.getPrimaryScanoutBytes())return;
     self->m_panel_resize_event->interruptOccurred(0,0,0);
 }
 
@@ -166,11 +168,16 @@ void CLASS::panelResize(OSObject* owner,IOInterruptEventSource*,int)
     CLASS* self=static_cast<CLASS*>(owner);
     IOLockLock(self->m_iolock);
     uint32_t width=self->m_panel_pending_width,height=self->m_panel_pending_height,generation=self->m_panel_generation;
+    uint32_t scale=self->m_panel_pending_scale;
     IOLockUnlock(self->m_iolock);
     if (width<800 || height<600)return;
     CustomModeData input={1,width,height},output={0,0,0};size_t size=sizeof(output);
     self->setProperty("VIMNativePanelRequestWidth",static_cast<uint64_t>(width),32U);
     self->setProperty("VIMNativePanelRequestHeight",static_cast<uint64_t>(height),32U);
+    // The EDID keeps its boot density. This IORegistry property is the
+    // effective density for the existing guest agent, including agents
+    // already installed before the hotpatch.
+    self->setProperty("VIMNativePanelScale",static_cast<uint64_t>(scale),32U);
     self->setProperty("VIMNativePanelRequestGeneration",static_cast<uint64_t>(generation),32U);
     IOReturn result=self->CustomMode(&input,&output,sizeof(input),&size);
     if (result==kIOReturnSuccess && output.width==width && output.height==height) {

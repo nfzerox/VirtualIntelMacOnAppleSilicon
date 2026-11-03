@@ -494,12 +494,15 @@ CLASS* CLASS::factory()
 #pragma mark Public Methods
 #pragma mark -
 
-IOReturn CLASS::Init(void* startAddress, size_t bytes)
+IOReturn CLASS::Init(void* startAddress, size_t bytes, size_t maxBlockBytes)
 {
 	int i;
 	size_t setBits;
 	int const minBits = 12;
-	int const numSizes = 13;
+	int numSizes = 13;
+	while (numSizes < static_cast<int>(sizeof(freeList)/sizeof(freeList[0])) &&
+	       (POOL_ONE << (minBits + numSizes)) <= maxBlockBytes)
+		++numSizes;
 
 #if 0
 	if ((1UL << minBits) < sizeof(pool_size_t) * FREEBLOCK)

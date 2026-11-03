@@ -69,8 +69,8 @@ private:
 	pool_size_t poolBlocks;
 
 	int minBits;			// Minimum block size is 1 << minBits (expect 12 = log_2(PAGE_SIZE))
-	int numSizes;			// sizes go up by powers of two (expect 13, max block == 2^24 bytes == SVGA_FB_MAX_TRACEABLE_SIZE)
-	pool_size_t freeList[13];	// free lists
+	int numSizes;			// block sizes are powers of two, from 4 KiB
+	pool_size_t freeList[17];	// up to 256 MiB on a large aperture
 	uint8_t* map;			// bit map
 	pool_size_t freeBytes;
 
@@ -97,7 +97,7 @@ public:
 	/*
 	 * Allocator's Methods
 	 */
-	IOReturn Init(void* startAddress, size_t bytes);
+	IOReturn Init(void* startAddress, size_t bytes, size_t maxBlockBytes);
 	IOReturn Rebase(void* newStartAddress);
 	IOReturn Release(size_t startOffsetBytes, size_t endOffsetBytes);
 	IOReturn Malloc(size_t bytes, void** newStore);

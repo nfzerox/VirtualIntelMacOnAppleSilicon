@@ -469,13 +469,13 @@ IOReturn CLASS::setupAllocator()
 		rc = kIOReturnNoMemory;
 		goto exit;
 	}
-	rc = m_allocator->Init(p, s);
+	bytes_reserve = m_svga->getPrimaryScanoutBytes();
+	rc = m_allocator->Init(p, s, bytes_reserve);
 	if (rc != kIOReturnSuccess) {
 		ACLog(1, "%s: Allocator Init(%p, %#lx) failed with %#x\n",
 			  __FUNCTION__, p, FMT_LU(s), rc);
 		goto exit;
 	}
-	bytes_reserve = SVGA_FB_MAX_TRACEABLE_SIZE;
 	if (bytes_reserve < s) {
 		rc = m_allocator->Release(bytes_reserve, s);
 		if (rc != kIOReturnSuccess) {

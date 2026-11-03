@@ -115,6 +115,7 @@ typedef struct QemuUIInfo {
     uint32_t  width;
     uint32_t  height;
     uint32_t  refresh_rate;
+    uint32_t  logical_scale; /* 0 if the frontend does not request a density */
 } QemuUIInfo;
 
 /* cursor data format is 32bit RGBA */

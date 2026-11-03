@@ -745,7 +745,7 @@ static gboolean gd_window_close(GtkWidget *widget, GdkEvent *event,
 
 static void gd_set_ui_refresh_rate(VirtualConsole *vc, int refresh_rate)
 {
-    QemuUIInfo info;
+    QemuUIInfo info = { 0 };
 
     if (!qemu_console_ui_info_supported(vc->gfx.dcl.con)) {
         return;
@@ -758,7 +758,7 @@ static void gd_set_ui_refresh_rate(VirtualConsole *vc, int refresh_rate)
 
 static void gd_set_ui_size(VirtualConsole *vc, gint width, gint height)
 {
-    QemuUIInfo info;
+    QemuUIInfo info = { 0 };
 
     if (!qemu_console_ui_info_supported(vc->gfx.dcl.con)) {
         return;

@@ -535,7 +535,7 @@ static gboolean
 dbus_ui_info_get(DBusDisplayConsole *ddc,
                  GDBusMethodInvocation *invocation)
 {
-    QemuUIInfo ui_info;
+    QemuUIInfo ui_info = { 0 };
     GVariantDict dict;
 
     if (!qemu_console_ui_info_supported(ddc->dcl.con)) {
@@ -587,7 +587,7 @@ dbus_ui_info_apply(DBusDisplayConsole *ddc,
                    GDBusMethodInvocation *invocation,
                    GVariant *arg_ui_info)
 {
-    QemuUIInfo ui_info;
+    QemuUIInfo ui_info = { 0 };
     g_auto(GVariantDict) dict = G_VARIANT_DICT_INIT(arg_ui_info);
 
     if (!qemu_console_ui_info_supported(ddc->dcl.con)) {

@@ -316,7 +316,7 @@ static struct DGSurfaceSnapshot *DGSurfaceSnapshotCreateLocked(struct DGHostCont
     if(!v->completion_queue || !v->pool){DGSurfaceSnapshotDestroy(v);return NULL;}
     int reused=DGSnapshotPoolTake(v);
     pthread_mutex_lock(&dg_snapshot_lock);
-    int allowed=reused || bytes<=DG_SURFACE_BYTE_LIMIT-dg_snapshot_bytes;
+    int allowed=reused || bytes<=DG_DISPLAY_BUFFER_BUDGET-dg_snapshot_bytes;
     if(allowed && !reused){dg_snapshot_bytes+=bytes;v->bytes=bytes;}
     pthread_mutex_unlock(&dg_snapshot_lock);
     if(!allowed){DGSurfaceSnapshotDestroy(v);return NULL;}
@@ -336,7 +336,7 @@ static struct DGSurfaceSnapshot *DGSurfaceSnapshotCreateLocked(struct DGHostCont
     if(good && !reused) {
         size_t actual=IOSurfaceGetAllocSize(v->storage);
         pthread_mutex_lock(&dg_snapshot_lock);
-        good=actual<=DG_SURFACE_BYTE_LIMIT-(dg_snapshot_bytes-v->bytes);
+        good=actual<=DG_DISPLAY_BUFFER_BUDGET-(dg_snapshot_bytes-v->bytes);
         if(good) { dg_snapshot_bytes=dg_snapshot_bytes-v->bytes+actual;v->bytes=actual; }
         pthread_mutex_unlock(&dg_snapshot_lock);
     }

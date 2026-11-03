@@ -102,6 +102,7 @@ private:
 	IOWorkLoop* m_panel_resize_loop;
 	IOInterruptEventSource* m_panel_resize_event;
 	uint32_t m_panel_pending_width,m_panel_pending_height;
+	uint32_t m_panel_pending_scale;
 	bool m_backing_interrupt_supported;
 	OSObject* m_backing_interrupt_owner;
 	void (*m_backing_interrupt_action)(OSObject*);
@@ -142,6 +143,7 @@ private:
 	static void ConvertAlphaCursor(uint32_t* cursor, uint32_t width, uint32_t height);
 	void CustomSwitchStepWait(uint32_t value);
 	void CustomSwitchStepSet(uint32_t value);
+	bool keepCustomPanelMode() const;
 	void EmitConnectChangedEvent();
 	void RestoreAllModes();
 	static void _RestoreAllModes(thread_call_param_t param0, thread_call_param_t param1);

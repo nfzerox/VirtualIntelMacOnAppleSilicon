@@ -667,7 +667,7 @@ static int interface_client_monitors_config(QXLInstance *sin,
                                             VDAgentMonitorsConfig *mc)
 {
     SimpleSpiceDisplay *ssd = container_of(sin, SimpleSpiceDisplay, qxl);
-    QemuUIInfo info;
+    QemuUIInfo info = { 0 };
     int head;
 
     if (!qemu_console_ui_info_supported(ssd->dcl.con)) {

@@ -145,11 +145,12 @@ static void vim_read(void *opaque)
         } else if (m->operation == APPLE_GFX_APP_SET_MODE) {
             /* Stock Bochs has no UI-info consumer and retains its boot mode.
              * The opt-in Mavericks device can notify its framebuffer driver. */
-            if (m->sequence || m->stride || m->width > 8192 || m->height > 8192) {
+            if (m->sequence || m->stride > 2 || m->width > 8192 || m->height > 8192) {
                 vim_fail("invalid mode request");
             }
             if (qemu_console_ui_info_supported(s->dcl.con)) {
-                QemuUIInfo info = {.width = m->width, .height = m->height};
+                QemuUIInfo info = {.width = m->width, .height = m->height,
+                                   .logical_scale = m->stride};
                 qemu_console_set_ui_info(s->dcl.con, &info, false);
             }
         } else {

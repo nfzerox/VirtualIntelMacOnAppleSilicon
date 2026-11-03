@@ -5,13 +5,22 @@
 // The owned pre-Metal QEMU driver uses tight scanout rows. Only a 2x mode
 // needs even dimensions; 1x modes can represent every whole view point.
 static inline NSSize VIMRequestedGuestPixelSize(NSSize view, CGFloat factor,
-    BOOL preMetal, BOOL retina) {
+    BOOL preMetal, BOOL retina, BOOL largeOpenGL) {
     CGFloat quantum=retina||!preMetal?2:1;
+    // Match the display transport's 8192-pixel limit. Preserve the view's
+    // shape if it would need more pixels than the primary can hold.
+    if(preMetal&&view.width>0&&view.height>0) {
+        factor=MIN(factor,8192./MAX(view.width,view.height));
+        // A completed guest update is needed for the large-surface upload
+        // protocol. Until then, fit the old 64 MiB limit without letterboxing.
+        if(!largeOpenGL)
+            factor=MIN(factor,sqrt((16.*1024*1024-8192*15)/(view.width*view.height)));
+    }
     CGFloat width=floor(view.width*factor/quantum)*quantum;
     CGFloat height=floor(view.height*factor/quantum)*quantum;
     if(preMetal) {
-        width=MAX(retina?1440:800,MIN(2560,width));
-        height=MAX(retina?900:600,MIN(1600,height));
+        width=MAX(retina?1440:800,MIN(8192,width));
+        height=MAX(retina?900:600,MIN(8192,height));
     } else {
         width=MAX(640,MIN(8192,width));height=MAX(400,MIN(8192,height));
     }

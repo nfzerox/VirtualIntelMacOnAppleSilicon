@@ -214,6 +214,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
 @property VIMOpenGLSetup *openGLSetup;
 @property BOOL developmentSetupDeferred;
 @property BOOL openGLDesktopMonitoring;
+@property BOOL openGLLargeResizeReady;
 @property BOOL openGLSetupMediaAttached;
 @property BOOL openGLRestartAttempted;
 @property BOOL legacyTabletGuest;
@@ -825,11 +826,12 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     self.displayMode=installerDisplay?@"scaled":VIMDisplayMode(self.machine.configuration);self.retinaEnabled=![self.displayMode isEqual:@"scaled"];
     [content layoutSubtreeIfNeeded];
     CGFloat initialScale=[self.displayMode isEqual:@"retina"]?2:(self.retinaEnabled?self.window.backingScaleFactor:1);
-    NSUInteger initialWidth=MAX(640,MIN(8192,floor(self.displayView.bounds.size.width*initialScale/2)*2));
-    NSUInteger initialHeight=MAX(400,MIN(8192,floor(self.displayView.bounds.size.height*initialScale/2)*2));
+    NSSize initialPixels=VIMRequestedGuestPixelSize(self.displayView.bounds.size,initialScale,
+        self.machine.preMetalGuest,[self.displayMode isEqual:@"retina"],NO);
     // Queue before connection: both in-process PVG and the Rosetta helper
     // receive the window size as soon as their private display channel opens.
-    if(!installerDisplay)[self.displayConnection requestWidth:initialWidth height:initialHeight];
+    if(!installerDisplay)[self.displayConnection requestWidth:initialPixels.width height:initialPixels.height
+        density:self.machine.preMetalGuest?([self.displayMode isEqual:@"retina"]?2:1):0];
     NSString *qmp=[self.runtimeDirectory stringByAppendingPathComponent:@"control"];
     self.control=[[VIMQMPConnection alloc] initWithSocketPath:qmp];
     __weak VIMSession *eventSession=self;
@@ -877,6 +879,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     if([@[@"mojave",@"catalina"] containsObject:self.machine.guest])
         self.guestAgent.recoverySocketPath=[self.runtimeDirectory stringByAppendingPathComponent:@"recovery-agent"];
     self.openGLDesktopMonitoring=NO;self.openGLSetupMediaAttached=NO;
+    self.openGLLargeResizeReady=NO;
     self.mavericksSMBCheckedBoot=nil;
     self.guestAgent.preMetalGuest=self.machine.preMetalGuest;
     self.guestAgent.tigerGuest=[self.machine.guest isEqual:@"tiger"];
@@ -1092,7 +1095,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         // The existing QEMU property supplies the initial native display mode;
         // no fixed 1920-wide default or wait for the desktop/guest tool.
         NSDictionary *graphics=@{@"driver":@"apple-gfx-pci",@"display-modes":@[
-            [NSString stringWithFormat:@"%lux%lu@60",(unsigned long)initialWidth,(unsigned long)initialHeight]]};
+            [NSString stringWithFormat:@"%lux%lu@60",(unsigned long)initialPixels.width,(unsigned long)initialPixels.height]]};
         NSData *json=[NSJSONSerialization dataWithJSONObject:graphics options:0 error:NULL];
         baseArguments[[baseArguments indexOfObject:@"apple-gfx-pci"]]=[[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding];
     }
@@ -1260,7 +1263,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             arguments[vga+1]=openGLSVGA?@"vmware":@"std";
             if(openGLSVGA&&self.machine.passthroughOpenGLEnabled) {
                 [arguments addObjectsFromArray:@[@"-global",@"vmware-svga.passthrough-opengl-bridge=on",
-                    @"-global",@"vmware-svga.vgamem_mb=128",
+                    @"-global",@"vmware-svga.vgamem_mb=512",
                     // This research layout's SVGA/EHCI use native GSI21.
                     // Remove only their duplicate PIC fanout after _PIC(1),
                     // preserving SATA's real legacy route and boot PIC mode.
@@ -2345,6 +2348,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
                 VIMPresentError(failure?:VIMSessionError(@"Setup could not yet be verified. Its installer and recovery records were retained."),session.window);return;
             }
             session.completionGuestReport=outcome[@"Report"];
+            session.openGLLargeResizeReady=YES;
+            session.lastRequestedSize=NSZeroSize;
+            [session scheduleResize];
             session.guestStatus.stringValue=@"Graphics support is ready";
             [session retireOpenGLSetupDiscWithReport:outcome[@"Report"]];
             [NSNotificationCenter.defaultCenter postNotificationName:@"VIMLibraryChanged" object:nil];
@@ -3235,7 +3241,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         completion(nil,VIMSessionError(@"Wait until macOS has reached the desktop and setup has finished, then change the resolution again."));return;
     }
     CGFloat factor=[mode isEqual:@"scaled"]?1:([mode isEqual:@"retina"]?2:self.window.backingScaleFactor);
-    NSSize requested=VIMRequestedGuestPixelSize(self.displayView.bounds.size,factor,self.machine.preMetalGuest,[mode isEqual:@"retina"]);
+    NSSize requested=VIMRequestedGuestPixelSize(self.displayView.bounds.size,factor,self.machine.preMetalGuest,
+        [mode isEqual:@"retina"],self.openGLLargeResizeReady);
     NSUInteger width=requested.width,height=requested.height;
     [self.resizeTimer invalidate];self.displayModePending=YES;self.guestPending=YES;
     void (^finished)(NSDictionary *,NSError *)=^(NSDictionary *observed,NSError *failure){
@@ -3255,7 +3262,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     void (^selectMode)(void)=^{
         // Keep the existing panel/frame transport; choose the 1×/2× mode
         // actually advertised by macOS, rather than recreating the GPU.
-        [self.displayConnection requestWidth:width height:height];
+        [self.displayConnection requestWidth:width height:height
+            density:self.machine.preMetalGuest?([mode isEqual:@"retina"]?2:1):0];
         [self.guestAgent runExecutable:@"/usr/bin/stat" arguments:@[@"-f",@"%u",@"/dev/console"] timeout:10 completion:^(NSDictionary *result,NSError *failure){
             NSString *uid=[[NSString alloc] initWithData:result[@"stdout"]?:NSData.data encoding:NSUTF8StringEncoding];
             uid=[uid stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
@@ -3824,10 +3832,12 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         if(!session.task.running)return;
         BOOL retina=[session.displayMode isEqual:@"retina"];
         CGFloat factor=retina?2:(session.retinaEnabled?session.window.backingScaleFactor:1);
-        NSSize pixels=VIMRequestedGuestPixelSize(session.displayView.bounds.size,factor,session.machine.preMetalGuest,retina);
+        NSSize pixels=VIMRequestedGuestPixelSize(session.displayView.bounds.size,factor,
+            session.machine.preMetalGuest,retina,session.openGLLargeResizeReady);
         if(NSEqualSizes(pixels,session.lastRequestedSize))return;
         session.lastRequestedSize=pixels;
-        [session.displayConnection requestWidth:pixels.width height:pixels.height];
+        [session.displayConnection requestWidth:pixels.width height:pixels.height
+            density:session.machine.preMetalGuest?(retina?2:1):0];
     }];
 }
 @end

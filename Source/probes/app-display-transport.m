@@ -55,7 +55,7 @@ int main(void) { @autoreleasepool {
         failure:^(NSError *failure) { fprintf(stderr,"FAIL: %s\n",failure.description.UTF8String); exit(1); }
         error:&error];
     check(connection != nil,"create listener");
-    [connection requestWidth:800 height:600];
+    [connection requestWidth:800 height:600 density:2];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT,0), ^{
         int channel = socket(AF_UNIX,SOCK_STREAM,0);
         struct sockaddr_un address = {.sun_family=AF_UNIX};
@@ -82,8 +82,8 @@ int main(void) { @autoreleasepool {
             ssize_t n=read(channel,(char *)&resize+resizeBytes,sizeof(resize)-resizeBytes);
             check(n>0,"idle resize received");resizeBytes+=n;
         }
-        check(resize.magic==hello.magic && resize.operation==6 && resize.width==800 && resize.height==600,
-            "resize before first frame");
+        check(resize.magic==hello.magic && resize.operation==6 && resize.width==800 && resize.height==600 &&
+            resize.stride==2 && !resize.reserved,"resize and density before first frame");
         Message visibility={.magic=0x56494d31,.operation=4,.width=1};
         check(write(channel,&visibility,sizeof(visibility))==sizeof(visibility),"cursor visibility");
         for (uint64_t sequence=1;sequence<=7;sequence++) {

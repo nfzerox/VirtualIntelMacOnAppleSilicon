@@ -21,8 +21,9 @@ static void DGDisplayBuffersDestroy(struct DGDisplayBuffers *d)
 static int DGDisplayBuffersCreate(struct DGHostContext *c,struct DGDisplayBuffers *d,
     int width,int height,uint64_t generation)
 {
-    if(width<1 || height<1 || width>16384 || height>16384 ||
-       (uint64_t)width*height*4*VIM_DISPLAY_BUFFERS>DG_SURFACE_BYTE_LIMIT)return 0;
+    if(width<1 || height<1 || (unsigned)width>DG_DISPLAY_MAX_DIMENSION ||
+       (unsigned)height>DG_DISPLAY_MAX_DIMENSION ||
+       (uint64_t)width*height*4*VIM_DISPLAY_BUFFERS>DG_DISPLAY_BUFFER_BUDGET)return 0;
     GLint read=0,draw=0,texture=0;
     glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING_EXT,&read);
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING_EXT,&draw);
@@ -33,7 +34,7 @@ static int DGDisplayBuffersCreate(struct DGHostContext *c,struct DGDisplayBuffer
         d->surfaces[i]=DGDrawableStorage(c,width,height,&d->textures[i]);
         if(!d->surfaces[i]){good=0;break;}
         size_t bytes=IOSurfaceGetAllocSize(d->surfaces[i]);
-        if(bytes>DG_SURFACE_BYTE_LIMIT-total){good=0;break;}
+        if(bytes>DG_DISPLAY_BUFFER_BUDGET-total){good=0;break;}
         total+=bytes;
         glGenFramebuffersEXT(1,&d->fbos[i]);
         glBindFramebufferEXT(GL_FRAMEBUFFER_EXT,d->fbos[i]);

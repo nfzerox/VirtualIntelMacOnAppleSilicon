@@ -590,7 +590,7 @@ IOReturn CLASS::setAttribute(IOSelect attribute, uintptr_t value)
 		!value &&
 		m_custom_switch == 1U &&
 		m_display_mode == CUSTOM_MODE_ID) {
-		CustomSwitchStepSet(version_major >= 13 ? 0U : 2U);
+		CustomSwitchStepSet(keepCustomPanelMode() ? 0U : 2U);
 	}
 	if (attribute==kIOCapturedAttribute && m_panel_interrupt) {
 		m_panel_uncaptured=value==0;
@@ -870,6 +870,15 @@ bool CLASS::hasDDCConnect(IOIndex connectIndex)
 #pragma mark Custom Mode Methods
 #pragma mark -
 
+bool CLASS::keepCustomPanelMode() const
+{
+	// The synthetic panel keeps the chosen custom mode in its mode list.
+	// The old second hotplug can restore the original desktop geometry
+	// while deliberately leaving the hardware in the new scanout mode.
+	return version_major >= 13 || (version_major >= 11 && m_panel_mode &&
+		svga.getPrimaryScanoutBytes() > SVGA_FB_MAX_TRACEABLE_SIZE);
+}
+
 __attribute__((visibility("hidden")))
 void CLASS::CustomSwitchStepWait(uint32_t value)
 {
@@ -1022,7 +1031,7 @@ IOReturn CLASS::CustomMode(CustomModeData const* inData, CustomModeData* outData
 #endif
 		CustomSwitchStepSet(1U);
 		EmitConnectChangedEvent();
-		if (version_major >= 13) {
+		if (keepCustomPanelMode()) {
 			CustomSwitchStepWait(0);
 			goto finish_up;
 		}
@@ -1183,6 +1192,7 @@ bool CLASS::start(IOService* provider)
 	m_panel_loop=0;m_panel_interrupt=0;
 	m_panel_dispatch_gate=0;m_panel_resize_loop=0;m_panel_resize_event=0;
 	m_panel_pending_width=m_panel_pending_height=0;
+	m_panel_pending_scale=0;
 	m_backing_interrupt_supported=false;m_backing_interrupt_owner=0;m_backing_interrupt_action=0;
 	m_panel_generation=0;
 	m_panel_uncaptured=false;

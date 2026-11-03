@@ -142,35 +142,44 @@ IOReturn CLASS::gpuPresentationReady(bool* ready)
 IOReturn CLASS::readGPUSurface(uint32_t hold,uint64_t epoch,uint32_t x,uint32_t y,uint32_t width,uint32_t height,
     IOMemoryDescriptor* destination,uint64_t offset,uint64_t stride)
 {
-    uint64_t row=uint64_t(width)*4,total=row*height;
+    uint64_t row=uint64_t(width)*4;
     if(!m_surface_service_lock || !hold || !epoch || !destination || !width || !height || width>8192 || height>8192 ||
-       x>8192-width || y>8192-height || total>64U*1024U*1024U || stride<row ||
+       x>8192-width || y>8192-height || stride<row ||
        offset>destination->getLength() || row>destination->getLength()-offset ||
        uint64_t(height-1)>(destination->getLength()-offset-row)/stride)return kIOReturnBadArgument;
     /* A small, bounded CPU staging buffer is used only on genuine CPU reads.
      * Never allocate a full image or put 64 KiB on the kernel stack. */
     void* scratch=IOMalloc(VIMSurfaceServiceChunk);if(!scratch)return kIOReturnNoMemory;
     IOLockLock(m_surface_service_lock);
-    VIMGLServiceMessage message;VIMGLServiceReply reply;bzero(&message,sizeof(message));bzero(&reply,sizeof(reply));
-    message.op=VIM_GL_SERVICE_READ;message.flags=VIM_GL_SERVICE_REPLY|VIM_GL_SERVICE_OUTPUT_ONLY;
-    message.bytes=static_cast<uint32_t>(total);message.args[0]=hold;message.args[1]=epoch;
-    message.args[2]=x;message.args[3]=y;message.args[4]=width;message.args[5]=height;
-    IOReturn error=transferSurfaceService(&message,sizeof(message),true);
-    if(!error)error=transferSurfaceService(&reply,sizeof(reply),false);
-    if(!error && reply.bytes!=total) { m_surface_service_failed=true;closeSurfaceService();error=kIOReturnIOError; }
-    bool writable=!reply.error;IOReturn write_error=reply.error?kIOReturnNotReady:kIOReturnSuccess;
-    for(uint64_t position=0;!error && position<total;) {
-        size_t part=static_cast<size_t>(total-position>VIMSurfaceServiceChunk?VIMSurfaceServiceChunk:total-position);
-        error=transferSurfaceService(scratch,part,false);
-        if(error)break;
-        for(size_t consumed=0;writable && consumed<part;) {
-            uint64_t cursor=position+consumed,column=cursor%row;
-            size_t bytes=static_cast<size_t>(row-column<part-consumed?row-column:part-consumed);
-            if(destination->writeBytes(offset+(cursor/row)*stride+column,static_cast<char*>(scratch)+consumed,bytes)!=bytes)
-                { writable=false;write_error=kIOReturnVMError;break; }
-            consumed+=bytes;
+    IOReturn error=kIOReturnSuccess,write_error=kIOReturnSuccess;
+    uint32_t limit=(64U*1024U*1024U)/(width*4);
+    // Keep each reply within the service's existing wire limit; every strip
+    // reads the same retained epoch and the caller owns CPU materialization.
+    for(uint32_t first=0;!error && !write_error && first<height;) {
+        uint32_t rows=height-first<limit?height-first:limit;
+        uint64_t total=row*rows;
+        VIMGLServiceMessage message;VIMGLServiceReply reply;bzero(&message,sizeof(message));bzero(&reply,sizeof(reply));
+        message.op=VIM_GL_SERVICE_READ;message.flags=VIM_GL_SERVICE_REPLY|VIM_GL_SERVICE_OUTPUT_ONLY;
+        message.bytes=static_cast<uint32_t>(total);message.args[0]=hold;message.args[1]=epoch;
+        message.args[2]=x;message.args[3]=y+first;message.args[4]=width;message.args[5]=rows;
+        error=transferSurfaceService(&message,sizeof(message),true);
+        if(!error)error=transferSurfaceService(&reply,sizeof(reply),false);
+        if(!error && reply.bytes!=total) { m_surface_service_failed=true;closeSurfaceService();error=kIOReturnIOError; }
+        if(reply.error)write_error=kIOReturnNotReady;
+        for(uint64_t position=0;!error && position<total;) {
+            size_t part=static_cast<size_t>(total-position>VIMSurfaceServiceChunk?VIMSurfaceServiceChunk:total-position);
+            error=transferSurfaceService(scratch,part,false);
+            if(error)break;
+            for(size_t consumed=0;!write_error && consumed<part;) {
+                uint64_t cursor=position+consumed,column=cursor%row;
+                size_t bytes=static_cast<size_t>(row-column<part-consumed?row-column:part-consumed);
+                if(destination->writeBytes(offset+(first+cursor/row)*stride+column,static_cast<char*>(scratch)+consumed,bytes)!=bytes)
+                    { write_error=kIOReturnVMError;break; }
+                consumed+=bytes;
+            }
+            position+=part; // Drain failed output to preserve framing.
         }
-        position+=part; // Drain failed output to preserve framing.
+        first+=rows;
     }
     IOLockUnlock(m_surface_service_lock);IOFree(scratch,VIMSurfaceServiceChunk);
     return error?error:write_error;

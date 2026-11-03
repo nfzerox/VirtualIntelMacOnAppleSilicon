@@ -26,6 +26,8 @@
 #define DG_FEATURE_LARGE_IOSURFACE_WRITES 16u
 #define DG_FEATURE_IOSURFACE_PACKED_422 32u
 #define DG_FEATURE_TEXTURE_IMAGE_READBACK 64u
+/* SURFACE_UPLOAD args[5:6] carry the first row and strip height. */
+#define DG_FEATURE_SURFACE_UPLOAD_ROWS 128u
 struct DGHelloFeatures { uint32_t magic,features; };
 /* Additive HELLO reply capability. Old v8 clients ignore reply.result; old
  * servers return zero. Never send new resource commands without negotiation. */
@@ -130,6 +132,7 @@ struct DGHelloFeatures { uint32_t magic,features; };
  * send zero and must not acquire extensions whose entry points they lack. */
 #define DG_COMPAT_DISPATCH_REVISION 1u
 #define DG_MAX_BYTES (64u*1024u*1024u)
+#define DG_MAX_DISPLAY_PIXELS (8192u*8192u)
 /* A wire packet is not a texture-memory budget. Native CI's ordinary 5K
  * image pyramid already exceeds 256MiB with RGBA16F intermediates. Row
  * transfers retain the packet bound while admitting our advertised 8192²

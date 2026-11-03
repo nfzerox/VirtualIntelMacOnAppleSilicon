@@ -448,8 +448,14 @@ static int DGClearDrawableTexture(struct DGHostContext *c,GLuint texture)
 /* An actual GPU-renderable allocation can also be imported by a private
  * drawable texture. A copy into a new texture would lose native live-alias
  * semantics. These references belong to the drawable, not guest GL names. */
+// GPU surfaces are not wire payloads. Keep the per-message limit unchanged.
+#define DG_DISPLAY_MAX_DIMENSION 8192u
+#define DG_DISPLAY_MAX_BYTES ((size_t)DG_MAX_DISPLAY_PIXELS*4)
+#define DG_DISPLAY_BUFFER_BUDGET (4*DG_DISPLAY_MAX_BYTES)
 static IOSurfaceRef DGDrawableStorage(struct DGHostContext *c,int width,int height,GLuint *texture)
 {
+    if(width<1 || height<1 || (unsigned)width>DG_DISPLAY_MAX_DIMENSION ||
+       (unsigned)height>DG_DISPLAY_MAX_DIMENSION)return NULL;
     IOSurfaceRef surface=NULL;unsigned best=4;size_t best_bytes=SIZE_MAX;int best_exact=0,reused_texture=0;
     for(unsigned i=0;dg_storage_reuse && i<4;++i) {
         IOSurfaceRef spare=c->spare_storage[i];if(!spare)continue;
@@ -472,10 +478,10 @@ static IOSurfaceRef DGDrawableStorage(struct DGHostContext *c,int width,int heig
     size_t capacity_width=(size_t)width,capacity_height=(size_t)height;
     if(dg_storage_reuse) {
         size_t w=(capacity_width+127)&~(size_t)127,h=(capacity_height+127)&~(size_t)127;
-        if(w*h*4<=DG_MAX_BYTES) { capacity_width=w;capacity_height=h; }
+        if(w*h*4<=DG_DISPLAY_MAX_BYTES) { capacity_width=w;capacity_height=h; }
     }
     size_t row=(capacity_width*4+63)&~(size_t)63,bytes=row*capacity_height;
-    if(bytes>DG_MAX_BYTES) return NULL;
+    if(bytes>DG_DISPLAY_MAX_BYTES) return NULL;
     if(!surface) {
     CFMutableDictionaryRef properties=CFDictionaryCreateMutable(NULL,0,&kCFTypeDictionaryKeyCallBacks,&kCFTypeDictionaryValueCallBacks);
     if(!properties) return NULL;
@@ -492,7 +498,7 @@ static IOSurfaceRef DGDrawableStorage(struct DGHostContext *c,int width,int heig
     if(surface)++c->storage_allocations;
     }
     if(!surface) return NULL;
-    if(IOSurfaceGetAllocSize(surface)>DG_MAX_BYTES) {
+    if(IOSurfaceGetAllocSize(surface)>DG_DISPLAY_MAX_BYTES) {
         CFRelease(surface);return NULL;
     }
     if(!reused_texture)glGenTextures(1,texture);glBindTexture(GL_TEXTURE_RECTANGLE_ARB,*texture);
@@ -749,7 +755,7 @@ static int DGSendDrawableSurface(struct DGHostContext *c,const struct DGMessage 
        IOSurfaceGetWidth(surface)<(size_t)c->drawable->width ||
        IOSurfaceGetHeight(surface)<(size_t)c->drawable->height)return 0;
     size_t stride=IOSurfaceGetBytesPerRow(surface),allocation=IOSurfaceGetAllocSize(surface),row_bytes=width*element;
-    if(stride<(size_t)c->drawable->width*element || allocation>DG_MAX_BYTES || stride>DG_MAX_BYTES ||
+    if(stride<(size_t)c->drawable->width*element || allocation>DG_DISPLAY_MAX_BYTES || stride>DG_MAX_BYTES ||
        (y+height-1)*stride+(x+width)*element>allocation)return 0;
     glFlush();
     if(IOSurfaceLock(surface,kIOSurfaceLockReadOnly,NULL)!=kIOReturnSuccess)return 0;
@@ -1536,7 +1542,7 @@ static int DGInterpretCommand(struct DGInterpreter *s,int fd,struct DGMessage *m
                 struct DGHelloFeatures features={DG_HELLO_FEATURES_MAGIC,
                     DG_FEATURE_IOSURFACE_OUTPUT_READ|DG_FEATURE_CORE_COMMON_STATE|DG_FEATURE_IOSURFACE_RED8|
                     DG_FEATURE_COMPRESSED_TEXTURE_UPLOAD|DG_FEATURE_LARGE_IOSURFACE_WRITES|DG_FEATURE_IOSURFACE_PACKED_422|
-                    DG_FEATURE_TEXTURE_IMAGE_READBACK};
+                    DG_FEATURE_TEXTURE_IMAGE_READBACK|DG_FEATURE_SURFACE_UPLOAD_ROWS};
                 memcpy((void *)layout,&features,sizeof(features));
             }
         }

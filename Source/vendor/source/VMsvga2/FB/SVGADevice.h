@@ -65,6 +65,7 @@ private:
 	uint32_t m_height;
 	uint32_t m_pitch;
 	uint32_t m_max_width;
+	uint32_t m_primary_scanout_bytes;
 	uint32_t m_max_height;
 	uint32_t m_max_gmr_ids;
 	uint32_t m_max_gmr_descriptor_length;
@@ -143,6 +144,7 @@ public:
 	uint32_t getCurrentHeight() const { return m_height; }
 	uint32_t getCurrentPitch() const { return m_pitch; }
 	uint32_t getMaxWidth() const { return m_max_width; }
+	uint32_t getPrimaryScanoutBytes() const { return m_primary_scanout_bytes; }
 	uint32_t getMaxHeight() const { return m_max_height; }
 	uint32_t getMaxGMRIDs() const { return m_max_gmr_ids; }
 	uint32_t getMaxGMRDescriptorLength() const { return m_max_gmr_descriptor_length; }

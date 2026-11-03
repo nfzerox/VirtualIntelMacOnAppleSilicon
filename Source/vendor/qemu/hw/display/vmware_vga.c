@@ -62,7 +62,9 @@ struct vmsvga_state_s {
     uint32_t legacy_panel_width, legacy_panel_height, legacy_panel_scale;
     uint32_t legacy_panel_generation, legacy_panel_ack;
     uint32_t legacy_panel_request_width, legacy_panel_request_height;
+    uint32_t legacy_panel_request_scale;
     bool legacy_panel_irq_enabled;
+    bool legacy_panel_large_scanout;
     PCIDevice *legacy_panel_pci;
     uint32_t passthrough_opengl_next;
     uint64_t passthrough_opengl_epoch;
@@ -277,11 +279,24 @@ enum {
 #define SVGA_SCRATCH_SIZE               0x8000
 #define SVGA_MAX_WIDTH                  2368
 #define SVGA_MAX_HEIGHT                 1770
-/* Local PassthroughOpenGL experiment: expose a native 2560x1600 Retina backing.
- * VMsvga2 reserves 16 MiB before its surface/transport allocator; do not
- * advertise a larger framebuffer until that allocation contract changes. */
-#define SVGA_PASSTHROUGH_OPENGL_MAX_WIDTH        2560
-#define SVGA_PASSTHROUGH_OPENGL_MAX_HEIGHT       1600
+/* Older guest drivers reserve 16 MiB; only the paired driver opts into the
+ * 256 MiB primary aperture. Keep stock VMware limits unchanged. */
+#define SVGA_VIM_LARGE_DIMENSION 8192
+#define SVGA_VIM_LARGE_SCANOUT_BYTES (256 * MiB)
+
+static unsigned vmsvga_max_width(const struct vmsvga_state_s *s)
+{
+    return !s->passthrough_opengl_bridge ? SVGA_MAX_WIDTH :
+           s->legacy_panel_large_scanout ? SVGA_VIM_LARGE_DIMENSION : 2560;
+}
+
+static unsigned vmsvga_max_height(const struct vmsvga_state_s *s)
+{
+    return !s->passthrough_opengl_bridge ? SVGA_MAX_HEIGHT :
+           s->legacy_panel_large_scanout ? SVGA_VIM_LARGE_DIMENSION : 1600;
+}
+
+static void vmsvga_ui_info(void *opaque, uint32_t head, QemuUIInfo *info);
 
 #ifdef VERBOSE
 # define GUEST_OS_BASE          0x5001
@@ -953,11 +968,11 @@ static uint32_t vmsvga_value_read(void *opaque, uint32_t address)
         break;
 
     case SVGA_REG_MAX_WIDTH:
-        ret = s->passthrough_opengl_bridge ? SVGA_PASSTHROUGH_OPENGL_MAX_WIDTH : SVGA_MAX_WIDTH;
+        ret = vmsvga_max_width(s);
         break;
 
     case SVGA_REG_MAX_HEIGHT:
-        ret = s->passthrough_opengl_bridge ? SVGA_PASSTHROUGH_OPENGL_MAX_HEIGHT : SVGA_MAX_HEIGHT;
+        ret = vmsvga_max_height(s);
         break;
 
     case SVGA_REG_DEPTH:
@@ -1084,6 +1099,13 @@ static uint32_t vmsvga_value_read(void *opaque, uint32_t address)
     case VIM_PANEL_REQUEST_HEIGHT_REGISTER:
         ret = s->passthrough_opengl_bridge ? s->legacy_panel_request_height : 0;
         break;
+    case VIM_PANEL_REQUEST_SCALE_REGISTER:
+        ret = s->passthrough_opengl_bridge ? s->legacy_panel_request_scale : 0;
+        break;
+    case VIM_PANEL_LARGE_SCANOUT_REGISTER:
+        ret = s->passthrough_opengl_bridge && s->vga.vram_size > SVGA_VIM_LARGE_SCANOUT_BYTES ?
+            VIM_PANEL_LARGE_SCANOUT_MAGIC : 0;
+        break;
     case SVGA_REG_CAPABILITIES:
         caps = SVGA_CAP_NONE;
         if (s->passthrough_opengl_bridge) {
@@ -1196,6 +1218,15 @@ static void vmsvga_value_write(void *opaque, uint32_t address, uint32_t value)
             vmsvga_legacy_irq_update(s);
         }
         break;
+    case VIM_PANEL_LARGE_SCANOUT_REGISTER:
+        if (s->passthrough_opengl_bridge && s->vga.vram_size > SVGA_VIM_LARGE_SCANOUT_BYTES &&
+            value == VIM_PANEL_LARGE_SCANOUT_MAGIC && !s->legacy_panel_large_scanout) {
+            s->legacy_panel_large_scanout = true;
+            /* The app may have sent its size before the driver attached. */
+            QemuUIInfo info = *qemu_console_get_ui_info(s->vga.con);
+            vmsvga_ui_info(s, 0, &info);
+        }
+        break;
     case VIM_PANEL_ACK_REGISTER:
         if (s->passthrough_opengl_bridge && value == s->legacy_panel_generation) {
             s->legacy_panel_ack = value;
@@ -1223,8 +1254,7 @@ static void vmsvga_value_write(void *opaque, uint32_t address, uint32_t value)
         break;
 
     case SVGA_REG_WIDTH:
-        if (value <= (s->passthrough_opengl_bridge ? SVGA_PASSTHROUGH_OPENGL_MAX_WIDTH :
-                                          SVGA_MAX_WIDTH)) {
+        if (value <= vmsvga_max_width(s)) {
             s->new_width = value;
             s->invalidated = 1;
         } else {
@@ -1234,8 +1264,7 @@ static void vmsvga_value_write(void *opaque, uint32_t address, uint32_t value)
         break;
 
     case SVGA_REG_HEIGHT:
-        if (value <= (s->passthrough_opengl_bridge ? SVGA_PASSTHROUGH_OPENGL_MAX_HEIGHT :
-                                          SVGA_MAX_HEIGHT)) {
+        if (value <= vmsvga_max_height(s)) {
             s->new_height = value;
             s->invalidated = 1;
         } else {
@@ -1314,7 +1343,7 @@ static void vmsvga_value_write(void *opaque, uint32_t address, uint32_t value)
     case SVGA_REG_PITCHLOCK:
         if (s->passthrough_opengl_bridge &&
             (!value || (!(value & 3) && value >= s->new_width * 4 &&
-                        value <= SVGA_PASSTHROUGH_OPENGL_MAX_WIDTH * 4))) {
+                        value <= vmsvga_max_width(s) * 4))) {
             s->pitchlock = value;
             s->invalidated = 1;
         }
@@ -1357,7 +1386,9 @@ static inline bool vmsvga_check_size(struct vmsvga_state_s *s)
      * not merely by independently valid width and height registers. */
     if (s->new_width <= 0 || s->new_height <= 0 || s->new_depth != 32 ||
         stride < (uint32_t)s->new_width * 4 ||
-        (uint64_t)stride * s->new_height > s->vga.vram_size) {
+        (uint64_t)stride * s->new_height > s->vga.vram_size ||
+        (s->legacy_panel_large_scanout &&
+         (uint64_t)stride * s->new_height > SVGA_VIM_LARGE_SCANOUT_BYTES)) {
         return false;
     }
 
@@ -1426,7 +1457,9 @@ static void vmsvga_reset(DeviceState *dev)
 
     s->legacy_panel_generation = s->legacy_panel_ack = 0;
     s->legacy_panel_request_width = s->legacy_panel_request_height = 0;
+    s->legacy_panel_request_scale = 0;
     s->legacy_panel_irq_enabled = false;
+    s->legacy_panel_large_scanout = false;
     if (s->passthrough_opengl_bridge) {
         pci_set_irq(PCI_DEVICE(dev), 0);
     }
@@ -1517,18 +1550,20 @@ static void vmsvga_ui_info(void *opaque, uint32_t head, QemuUIInfo *info)
 {
     struct vmsvga_state_s *s = opaque;
     uint32_t width = info->width, height = info->height;
+    uint32_t scale = info->logical_scale;
 
     /* Local research only. Immutable native-panel metadata remains separate
      * from the coalesced requested mode. No frame-time guest polling. */
     if (!s->passthrough_opengl_bridge || head || width < 800 || height < 600 ||
-        width > SVGA_PASSTHROUGH_OPENGL_MAX_WIDTH ||
-        height > SVGA_PASSTHROUGH_OPENGL_MAX_HEIGHT ||
+        width > vmsvga_max_width(s) || height > vmsvga_max_height(s) ||
         (width == s->legacy_panel_request_width &&
-         height == s->legacy_panel_request_height)) {
+         height == s->legacy_panel_request_height &&
+         scale == s->legacy_panel_request_scale)) {
         return;
     }
     s->legacy_panel_request_width = width;
     s->legacy_panel_request_height = height;
+    s->legacy_panel_request_scale = scale;
     ++s->legacy_panel_generation;
     if (s->legacy_panel_generation == s->legacy_panel_ack) {
         ++s->legacy_panel_generation;

@@ -43,6 +43,7 @@ static NSError *VIMDisplayError(NSString *message) {
 @property(nonatomic) dispatch_queue_t writer;
 @property(nonatomic) NSUInteger requestedWidth;
 @property(nonatomic) NSUInteger requestedHeight;
+@property(nonatomic) NSUInteger requestedDensity;
 @property(nonatomic) uint32_t powerEpoch;
 @property(nonatomic) dispatch_source_t surfaceListener;
 @property(nonatomic) dispatch_source_t surfaceProcessMonitor;
@@ -221,7 +222,7 @@ static NSError *VIMDisplayError(NSString *message) {
     });
     if (!installed) return installationError ?: VIMDisplayError(@"The guest display was closed.");
     dispatch_async(dispatch_get_main_queue(), ^{
-        if(self.requestedWidth)[self requestWidth:self.requestedWidth height:self.requestedHeight];
+        if(self.requestedWidth)[self requestWidth:self.requestedWidth height:self.requestedHeight density:self.requestedDensity];
     });
     uint64_t sequence = 0;
     VIMDisplayMessage frame;
@@ -279,14 +280,16 @@ static NSError *VIMDisplayError(NSString *message) {
     if(!sent && self.peer>=0)shutdown(self.peer,SHUT_RDWR);
     [self.lock unlock];return sent;
 }
-- (void)requestWidth:(NSUInteger)width height:(NSUInteger)height {
+- (void)requestWidth:(NSUInteger)width height:(NSUInteger)height density:(NSUInteger)density {
     NSAssert(NSThread.isMainThread,@"Main-thread lifecycle");
     if(width<320||height<200||width>8192||height>8192||self.stopped)return;
-    self.requestedWidth=width;self.requestedHeight=height;
+    self.requestedWidth=width;self.requestedHeight=height;self.requestedDensity=density;
     dispatch_async(self.writer, ^{
         [self.lock lock];BOOL connected=self.peer>=0;[self.lock unlock];
         if(!connected)return;
-        VIMDisplayMessage message={.magic=VIMDisplayMagic,.operation=6,.width=(uint32_t)width,.height=(uint32_t)height};
+        // The SVGA reader uses the otherwise unused mode-request stride for
+        // logical density. PVG still receives zero and owns only pixel size.
+        VIMDisplayMessage message={.magic=VIMDisplayMagic,.operation=6,.width=(uint32_t)width,.height=(uint32_t)height,.stride=(uint32_t)density};
         [self sendMessage:message];
     });
 }

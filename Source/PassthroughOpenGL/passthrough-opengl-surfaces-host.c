@@ -10,7 +10,7 @@
  */
 #define DG_SURFACE_LIMIT 256u
 #define DG_SURFACE_LEASE_LIMIT 4096u
-#define DG_SURFACE_BYTE_LIMIT (256u*1024u*1024u)
+#define DG_SURFACE_BYTE_LIMIT DG_DISPLAY_BUFFER_BUDGET
 struct DGSurfaceSnapshot;
 static void DGSurfaceSnapshotDestroy(struct DGSurfaceSnapshot *);
 static void DGSnapshotPoolClose(struct DGHostContext *);
@@ -40,12 +40,26 @@ struct DGSurfaceLease {
     struct DGPrivateTextureWatch texture_watch;
     struct DGSurfaceRegistration *registration;
     struct DGSharedSurface *resource;
+    unsigned char *upload;
+    uint64_t upload_epoch;
+    size_t upload_bytes;
+    unsigned upload_rows;
     struct DGSurfaceLease *next;
 };
 static pthread_mutex_t dg_surface_lock=PTHREAD_MUTEX_INITIALIZER;
 static struct DGSharedSurface *dg_surfaces;
 static size_t dg_surface_bytes;
 static unsigned dg_surface_count,dg_surface_leases;
+static size_t dg_surface_upload_bytes;
+static void DGSurfaceDropUpload(struct DGSurfaceLease *p)
+{
+    if(!p->upload)return;
+    free(p->upload);p->upload=NULL;
+    pthread_mutex_lock(&dg_surface_lock);
+    dg_surface_upload_bytes-=p->upload_bytes;
+    pthread_mutex_unlock(&dg_surface_lock);
+    p->upload_bytes=0;p->upload_epoch=0;p->upload_rows=0;
+}
 static int DGDrawableWritable(struct DGHostContext *c)
 {
     // No GL query on the normal draw path. A retired source must not be
@@ -70,7 +84,8 @@ static struct DGSharedSurface *DGSurfaceRetainTyped(const uint64_t namespace[2],
     }
     /* Bounded, overflow-checked BGRA8 allocation, including actual padding. */
     size_t row=((size_t)width*element+63)&~(size_t)63,bytes=row*(size_t)height;
-    if(dg_surface_count>=DG_SURFACE_LIMIT || bytes>DG_MAX_BYTES ||
+    size_t surface_limit=format==VIM_GL_PIXEL_BGRA8?DG_DISPLAY_MAX_BYTES:DG_MAX_BYTES;
+    if(dg_surface_count>=DG_SURFACE_LIMIT || bytes>surface_limit ||
        bytes>DG_SURFACE_BYTE_LIMIT-dg_surface_bytes) goto out;
     CFMutableDictionaryRef properties=CFDictionaryCreateMutable(kCFAllocatorDefault,0,
         &kCFTypeDictionaryKeyCallBacks,&kCFTypeDictionaryValueCallBacks);
@@ -87,7 +102,7 @@ static struct DGSharedSurface *DGSurfaceRetainTyped(const uint64_t namespace[2],
     IOSurfaceRef surface=good ? IOSurfaceCreate(properties) : NULL;CFRelease(properties);
     if(!surface) goto out;
     bytes=IOSurfaceGetAllocSize(surface);
-    if(bytes>DG_MAX_BYTES || bytes>DG_SURFACE_BYTE_LIMIT-dg_surface_bytes ||
+    if(bytes>surface_limit || bytes>DG_SURFACE_BYTE_LIMIT-dg_surface_bytes ||
        IOSurfaceLock(surface,0,NULL)!=kIOReturnSuccess) { CFRelease(surface);goto out; }
     /* Initialize once, never reupload on texture bind. No stale allocation
      * data is exposed if a consumer arrives before the first producer draw. */
@@ -150,6 +165,7 @@ static int DGSurfaceRelease(struct DGHostContext *c,uint64_t name)
     while(*link && (*link)->name!=name) link=&(*link)->next;
     if(!*link) return 0;
     struct DGSurfaceLease *p=*link;*link=p->next;
+    DGSurfaceDropUpload(p);
     if(p->framebuffer) glDeleteFramebuffersEXT(1,&p->framebuffer);
     DGSurfaceRegistrationPut(p->registration);
     DGPrivateTextureWatchForget(&p->texture_watch);
@@ -572,14 +588,48 @@ static int DGSurfaceCommandImpl(struct DGHostContext *c,struct DGMessage *m,stru
         pthread_mutex_lock(&p->resource->access);r->result=p->resource->epoch;pthread_mutex_unlock(&p->resource->access);
     } else if(m->op==DG_SURFACE_UPLOAD) {
         struct DGSharedSurface *s=p->resource;
+        uint64_t first=m->args[5],rows=m->args[6];
+        size_t row=(size_t)s->width*VIMGLPixelBytes(s->format);
         if(!m->args[1] || m->args[2]!=(uint64_t)s->width || m->args[3]!=(uint64_t)s->height ||
-            (uint64_t)s->width*s->height*VIMGLPixelBytes(s->format)!=m->bytes) r->error=GL_INVALID_VALUE;
+            (rows ? s->format!=VIM_GL_PIXEL_BGRA8 || first>=(uint64_t)s->height ||
+                rows>(uint64_t)s->height-first || rows*row!=m->bytes :
+                first || row*(size_t)s->height!=m->bytes)) r->error=GL_INVALID_VALUE;
         else {
             pthread_mutex_lock(&s->access);
             if(s->retired) r->error=GL_INVALID_OPERATION;
-            else if(m->args[1]>s->epoch) { r->error=DGSurfaceUpload(c,p,m+1);if(!r->error) s->epoch=m->args[1]; }
+            else if(m->args[1]>s->epoch) {
+                if(!rows) {
+                    DGSurfaceDropUpload(p);
+                    r->error=DGSurfaceUpload(c,p,m+1);
+                    if(!r->error)s->epoch=m->args[1];
+                } else {
+                    if(!first) {
+                        DGSurfaceDropUpload(p);
+                        size_t bytes=row*(size_t)s->height;
+                        pthread_mutex_lock(&dg_surface_lock);
+                        if(bytes<=DG_DISPLAY_MAX_BYTES-dg_surface_upload_bytes)
+                            p->upload=malloc(bytes);
+                        if(p->upload)dg_surface_upload_bytes+=bytes;
+                        pthread_mutex_unlock(&dg_surface_lock);
+                        if(p->upload){p->upload_bytes=bytes;p->upload_epoch=m->args[1];}
+                        else r->error=GL_OUT_OF_MEMORY;
+                    }
+                    if(!r->error && (!p->upload || p->upload_epoch!=m->args[1] || p->upload_rows!=first))
+                        r->error=GL_INVALID_OPERATION;
+                    if(!r->error) {
+                        memcpy(p->upload+(size_t)first*row,m+1,m->bytes);
+                        p->upload_rows+=(unsigned)rows;
+                        if(p->upload_rows==(unsigned)s->height) {
+                            r->error=DGSurfaceUpload(c,p,p->upload);
+                            if(!r->error)s->epoch=m->args[1];
+                            DGSurfaceDropUpload(p);
+                        }
+                    }
+                }
+            } else DGSurfaceDropUpload(p);
             pthread_mutex_unlock(&s->access);
         }
+        if(r->error)DGSurfaceDropUpload(p);
     } else if(m->op==DG_SURFACE_RETIRE) {
         pthread_mutex_lock(&p->resource->access);
         if(!p->resource->retired) { r->error=DGSurfaceRetire(p);if(!r->error)__atomic_store_n(&p->resource->retired,1,__ATOMIC_RELEASE); }
