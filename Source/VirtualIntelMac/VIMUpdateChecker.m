@@ -82,7 +82,6 @@ static NSString * const VIMReleasePage = @"https://github.com/nfzerox/VirtualInt
             }
             if ([VIMUpdateChecker compareVersion:version toVersion:current] == NSOrderedDescending) {
                 [self publishResult:[NSString stringWithFormat:@"Version %@ is available. Choose Check Now to view the release.",version]];
-                if(!interactive)return;
                 if (!interactive && [[defaults stringForKey:@"VIMAnnouncedRelease"] isEqual:version]) return;
                 [defaults setObject:version forKey:@"VIMAnnouncedRelease"];
                 [self showTitle:@"A New Version Is Available" detail:[NSString stringWithFormat:

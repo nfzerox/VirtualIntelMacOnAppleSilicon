@@ -101,9 +101,11 @@ UInt32 pinConfigToSelection(UInt32 pinConfig)
 		case HDA_CONFIG_DEFAULTCONF_DEVICE_SPDIF_OUT:
 		case HDA_CONFIG_DEFAULTCONF_DEVICE_SPDIF_IN:
 			return kIOAudioSelectorControlSelectionValueSPDIF;
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
 		case HDA_CONFIG_DEFAULTCONF_DEVICE_DIGITAL_OTHER_OUT:
 		case HDA_CONFIG_DEFAULTCONF_DEVICE_DIGITAL_OTHER_IN:
 			return kIOAudioDeviceTransportTypeHdmi;
+#endif
 		case HDA_CONFIG_DEFAULTCONF_DEVICE_MIC_IN:
 			return kIOAudioSelectorControlSelectionValueExternalMicrophone;
 		default:
@@ -127,8 +129,10 @@ UInt32 selectionAndDirectionToTerminalType(UInt32 selection, IOAudioStreamDirect
 			return EXTERNAL_SPDIF_INTERFACE;
 		case kIOAudioSelectorControlSelectionValueExternalMicrophone:
 			return INPUT_DESKTOP_MICROPHONE;
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
 		case kIOAudioDeviceTransportTypeHdmi:
 			return EXTERNAL_DIGITAL_AUDIO_INTERFACE;
+#endif
 	}
 	return direction == kIOAudioStreamDirectionInput ? INPUT_NULL : OUTPUT_NULL;
 }
@@ -580,6 +584,13 @@ done:
 __attribute__((visibility("hidden")))
 bool VoodooHDAEngine::publishChannelLayout(IOAudioStreamDirection direction, UInt32 channels)
 {
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1060
+	// Darwin9 IOAudioFamily predates the input/output channel-layout keys.
+	// Stream channel count/format still describe QEMU's stereo HDA codec;
+	// do not invent a newer IOAudioFamily property/API in this kernel.
+	(void)direction;(void)channels;
+	return false;
+#else
 	OSArray* layout;
 	OSNumber* n = NULL;
 
@@ -659,6 +670,7 @@ error:
 		n->release();
 	layout->release();
 	return false;
+#endif
 }
 
 __attribute__((visibility("hidden")))

@@ -1,6 +1,7 @@
 // Prepare a private payload from this guest's loose native images. Never mounts
 // or modifies the live system; the installation transaction is a separate step.
 #import <Foundation/Foundation.h>
+#import "guest-system-version.h"
 #include <unistd.h>
 #include <signal.h>
 #include <fcntl.h>
@@ -77,11 +78,9 @@ int main(int argc,const char **argv) {@autoreleasepool {
         NSDictionary *version=[NSDictionary dictionaryWithContentsOfFile:source(@"System/Library/CoreServices/SystemVersion.plist")];
         NSString *release=version[@"ProductVersion"],*build=version[@"ProductBuildVersion"];
         Check([release isKindOfClass:NSString.class]&&[build isKindOfClass:NSString.class]&&build.length,@"Missing guest version");
-        NSArray *parts=[release componentsSeparatedByString:@"."];
-        for(NSString *part in parts)Check(part.length&&[part rangeOfCharacterFromSet:NSCharacterSet.decimalDigitCharacterSet.invertedSet].location==NSNotFound,@"Invalid guest version");
-        BOOL bigsur=parts.count>=2&&[parts[0] isEqual:@"11"];
-        Check(bigsur||(parts.count>=2&&[parts[0] isEqual:@"10"]&&([parts[1] isEqual:@"14"]||[parts[1] isEqual:@"15"])),@"This preparation tool supports Mojave, Catalina and Big Sur guests only");
-        BOOL mojave=!bigsur&&[parts[1] isEqual:@"14"];
+        NSString *family=VIMGuestForSystemVersion(release);
+        Check([@[@"mojave",@"catalina",@"bigsur"] containsObject:family?:@""],@"This preparation tool supports Mojave, Catalina and Big Sur guests only");
+        BOOL bigsur=[family isEqual:@"bigsur"],mojave=[family isEqual:@"mojave"];
         NSString *patch=[tools stringByAppendingPathComponent:@"guest-image-patch"],*macho=[tools stringByAppendingPathComponent:@"guest-macho"];
         Check([fm isExecutableFileAtPath:patch]&&[fm isExecutableFileAtPath:macho],@"Bundled patch tools are unavailable");
         GuestCodesignAllocator=[tools stringByAppendingPathComponent:@"codesign_allocate"];

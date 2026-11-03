@@ -136,11 +136,12 @@ static void InstallUSBHelper(BOOL terminal,void (^completion)(NSError *)) {
                 if(captureError||self.stopped){finish(captureError?:VIMUSBError(@"This virtual Mac has stopped."));return;}
                 // v1 storage compatibility keeps a device's existing BOT
                 // alternate instead of entering the unreliable UAS path.
-                // Preserve SuperSpeed: emulating EHCI speed alone mounted the
-                // disk but produced I/O errors. USB 2 devices still use EHCI.
                 unsigned int speed=[device[@"ConnectionSpeed"] unsignedIntValue];
                 BOOL compatibility=[device[@"StorageInterface"] boolValue]&&speed>=kIOUSBHostConnectionSpeedSuper;
-                NSString *bus=speed==kIOUSBHostConnectionSpeedHigh?@"usb.0":@"xhci.0";
+                // Preserve SuperSpeed where the guest has xHCI. On earlier
+                // guests, usb-redir adapts the physical BOT packet boundary.
+                BOOL highSpeed=speed==kIOUSBHostConnectionSpeedHigh||(compatibility&&self.useUSB2Storage);
+                NSString *bus=highSpeed?@"usb.0":@"xhci.0";
                 [control execute:@"device_add" arguments:@{@"driver":@"usb-redir",@"id":identifier,@"bus":bus,@"chardev":character,@"bulk-only":compatibility?@YES:@NO}
                     completion:^(id value,NSError *addError){finish(addError);}];
             });}];

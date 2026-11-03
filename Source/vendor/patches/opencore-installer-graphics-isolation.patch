@@ -1,0 +1,119 @@
+--- a/Library/OcMainLib/OpenCoreKernel.c
++++ b/Library/OcMainLib/OpenCoreKernel.c
+@@ -29,6 +29,8 @@
+ #include <Library/UefiBootServicesTableLib.h>
+ #include <Library/UefiRuntimeServicesTableLib.h>
+ 
++#include "VIMOpenGLBootPolicy.h"
++
+ STATIC OC_STORAGE_CONTEXT  *mOcStorage;
+ STATIC OC_GLOBAL_CONFIG    *mOcConfiguration;
+ STATIC OC_CPU_INFO         *mOcCpuInfo;
+@@ -36,6 +38,8 @@
+ 
+ STATIC UINT32   mOcDarwinVersion;
+ STATIC BOOLEAN  mUse32BitKernel;
++STATIC BOOLEAN  mVimRecoveryBoot;
++STATIC BOOLEAN  mVimInstallerKernel;
+ 
+ STATIC CACHELESS_CONTEXT  mOcCachelessContext;
+ STATIC BOOLEAN            mOcCachelessInProgress;
+@@ -67,6 +71,9 @@
+   // Capabilities will always have K64 stripped when compiled for IA32.
+   //
+   mUse32BitKernel = (Capabilities & OC_KERN_CAPABILITY_K64_U64) == 0;
++  mVimRecoveryBoot = LoadedImage->FilePath != NULL
++    && (OcGetBootDevicePathType (LoadedImage->FilePath, NULL, NULL) & OC_BOOT_APPLE_RECOVERY) != 0;
++  mVimInstallerKernel = FALSE;
+ 
+   //
+   // Skip if not Apple image.
+@@ -255,7 +262,7 @@
+   CHAR8        *ExecutablePath;
+   CHAR16       FullPath[OC_STORAGE_SAFE_PATH_MAX];
+ 
+-  if (!Kext->Enabled) {
++  if (!Kext->Enabled || VimSkipInstallerKext (mVimInstallerKernel, OC_BLOB_GET (&Kext->BundlePath))) {
+     return;
+   }
+ 
+@@ -481,7 +488,46 @@
+ {
+   UINT32               Index;
+   OC_KERNEL_ADD_ENTRY  *Kext;
++  EFI_FILE_PROTOCOL    *InstallerDirectory;
++  EFI_STATUS           InstallerStatus;
++  BOOLEAN              HasFramebuffer;
++  BOOLEAN              HasAccelerator;
+ 
++  // Identify the actual selected Apple installer, not host install-state,
++  // elapsed time, a renamed volume, or a persistent guest boot argument.
++  // A normal installed system has no CDIS directory (checked on native Lion).
++  // Recovery HD is also recognized through OpenCore's existing boot type.
++  // Only apply this policy when our complete graphics pair is configured.
++  HasFramebuffer = FALSE;
++  HasAccelerator = FALSE;
++  for (Index = 0; Index < Config->Kernel.Add.Count; Index++) {
++    Kext = Config->Kernel.Add.Values[Index];
++    if (Kext->Enabled) {
++      HasFramebuffer |= AsciiStrCmp (OC_BLOB_GET (&Kext->BundlePath), "VMsvga2.kext") == 0;
++      HasAccelerator |= AsciiStrCmp (OC_BLOB_GET (&Kext->BundlePath), "VMsvga2Accel.kext") == 0;
++    }
++  }
++
++  mVimInstallerKernel = FALSE;
++  if (HasFramebuffer && HasAccelerator) {
++    InstallerStatus = OcSafeFileOpen (
++                        RootFile,
++                        &InstallerDirectory,
++                        L"\\System\\Installation\\CDIS",
++                        EFI_FILE_MODE_READ,
++                        0
++                        );
++    mVimInstallerKernel = VimUseNativeInstallerDrivers (
++                            HasFramebuffer,
++                            HasAccelerator,
++                            mVimRecoveryBoot,
++                            !EFI_ERROR (InstallerStatus)
++                            );
++    if (!EFI_ERROR (InstallerStatus)) {
++      InstallerDirectory->Close (InstallerDirectory);
++    }
++  }
++
+   *ReservedInfoSize = PRELINK_INFO_RESERVE_SIZE;
+   *ReservedExeSize  = 0;
+   *NumReservedKexts = 0;
+@@ -567,7 +613,7 @@
+   UINT32       MinKernel;
+   CHAR8        BundleVersion[MAX_INFO_BUNDLE_VERSION_KEY_SIZE];
+ 
+-  if (!Kext->Enabled || (Kext->PlistData == NULL)) {
++  if (!Kext->Enabled || (Kext->PlistData == NULL) || VimSkipInstallerKext (mVimInstallerKernel, OC_BLOB_GET (&Kext->BundlePath))) {
+     return;
+   }
+ 
+@@ -781,6 +827,23 @@
+   Status = PrelinkedContextInit (&Context, Kernel, *KernelSize, AllocatedSize, Is32Bit);
+ 
+   if (!EFI_ERROR (Status)) {
++    // Native Sierra recovery gives its dummy SMC claimant priority over
++    // AppleSMC, leaving protected fontd pages waiting for DSMOS forever.
++    // Use the upstream Disable operation, not Exclude: its prelink metadata
++    // shares XML IDs with other drivers. Installed boots are untouched.
++    if (VimDisableInstallerDrizzle (mVimInstallerKernel, DarwinVersion / 10000)) {
++      Status = PrelinkedContextBlock (
++                 &Context,
++                 "com.apple.driver.DrizzlePlatformSupport",
++                 FALSE
++                 );
++      DEBUG ((
++        DEBUG_INFO,
++        "VIM: Sierra recovery native SMC matching - %r\n",
++        Status
++        ));
++    }
++
+     OcKernelBlockKexts (Config, DarwinVersion, Is32Bit, CacheTypePrelinked, &Context);
+ 
+     OcKernelInjectKexts (Config, CacheTypePrelinked, &Context, DarwinVersion, Is32Bit, LinkedExpansion, ReservedExeSize);

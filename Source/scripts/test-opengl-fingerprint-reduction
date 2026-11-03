@@ -1,0 +1,10 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+mkdir -p "$root/Build/Probes"
+xcrun clang -fobjc-arc -fmodules -O2 -g -Wall -Wextra -Werror \
+    -mmacosx-version-min=15.0 -arch x86_64 -arch arm64 \
+    -framework Foundation -framework Metal -framework QuartzCore \
+    "$root/probes/opengl-fingerprint-reduction.m" \
+    -o "$root/Build/Probes/opengl-fingerprint-reduction"
+exec "$root/Build/Probes/opengl-fingerprint-reduction"

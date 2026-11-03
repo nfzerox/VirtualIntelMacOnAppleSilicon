@@ -1,0 +1,17 @@
+--- a/Library/OcMemoryLib/MemoryMap.c
++++ b/Library/OcMemoryLib/MemoryMap.c
+@@ -424,12 +424,8 @@
+     SizeFromDescToEnd -= DescriptorSize;
+   }
+ 
+-  //
+-  // Handle last entries if they were merged.
+-  //
+-  if (HasEntriesToRemove) {
+-    *MemoryMapSize += DescriptorSize;
+-  }
++  // The current output descriptor is already included in MemoryMapSize.
++  // Counting it again exposes a stale merged descriptor to the OS allocator.
+ 
+   return EFI_SUCCESS;
+ }

@@ -1,0 +1,21 @@
+#!/bin/zsh
+# The same native first-account implementation as older guests, with separate
+# authorization state and a control-device guard rather than an OpenGL device.
+set -euo pipefail
+root=${0:A:h:h}
+out=${1:?usage: build-modern-account NEW_OUTPUT}
+[[ ! -e $out ]] || { print -u2 'Choose a new output file.'; exit 73; }
+# An old SDK selects Big Sur's 10.16 compatibility view even for a direct
+# SystemVersion.plist read. A current SDK with a 10.14 deployment target keeps
+# genuine OS identity while requiring no old Xcode for this modern control.
+sdk=${VIM_MODERN_SETUP_SDK:-$(xcrun --sdk macosx --show-sdk-path)}
+cc=${VIM_MODERN_SETUP_CC:-$(xcrun --sdk macosx --find clang)}
+[[ -d $sdk && -x $cc ]] || { print -u2 'Select an installed Xcode or set VIM_MODERN_SETUP_SDK and VIM_MODERN_SETUP_CC.'; exit 69; }
+"$cc" -arch x86_64 -isysroot "$sdk" -mmacosx-version-min=10.14 -O2 \
+    -fno-objc-arc -Wall -Wextra -Werror -Werror=unguarded-availability-new -Wno-deprecated-declarations \
+    -DVIM_MODERN_ACCOUNT_SETUP=1 "$root/tools/opengl-create-account.m" \
+    -framework Foundation -framework OpenDirectory -framework DiskArbitration \
+    -framework SystemConfiguration -framework IOKit -framework Security \
+    -framework CoreServices -framework ServiceManagement -o "$out"
+codesign --force --sign - "$out"
+codesign --verify --strict "$out"

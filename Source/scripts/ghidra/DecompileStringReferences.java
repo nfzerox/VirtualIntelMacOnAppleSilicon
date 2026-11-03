@@ -16,7 +16,15 @@ public class DecompileStringReferences extends GhidraScript {
         for (Reference reference : currentProgram.getReferenceManager().getReferencesTo(address)) {
             Function function = getFunctionContaining(reference.getFromAddress());
             if (function != null) functions.add(function);
-            else references(reference.getFromAddress(), depth + 1);
+            else {
+                Address from = reference.getFromAddress();
+                // A CFString's string pointer is an interior struct member;
+                // code references the CFString start, not that member address.
+                // Following only the pointer field silently loses its callers.
+                Data containing = currentProgram.getListing().getDataContaining(from);
+                references(containing == null ? from : containing.getAddress(), depth + 1);
+                if (containing != null && !containing.getAddress().equals(from)) references(from, depth + 1);
+            }
         }
     }
     public void run() throws Exception {

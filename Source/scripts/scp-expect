@@ -10,7 +10,7 @@ if {![info exists env(PVG_SSH_PASSWORD)]} {
 }
 
 set timeout 300
-spawn scp -O -r -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -- {*}$argv
+spawn scp -O -r -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 {*}$argv
 expect {
     -nocase -re {password:} {
         send -- "$env(PVG_SSH_PASSWORD)\r"

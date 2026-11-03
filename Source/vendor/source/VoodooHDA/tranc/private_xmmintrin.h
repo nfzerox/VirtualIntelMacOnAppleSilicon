@@ -35,10 +35,10 @@ typedef long long __m128i __attribute__((__vector_size__(16)));
 #define _mm_setzero_si128() (__m128i){ 0LL, 0LL }
 #define _mm_setr_epi32(i0, i1, i2, i3) (__m128i)(__v4si){ (i0), (i1), (i2), (i3) }
 #define _mm_load_si128(p) (*(__m128i const*) (p))
-#define _mm_loadu_si128(p) ({ __m128 tmp; __asm__ volatile ("movups %1, %0" : "=x"(tmp) : "m"(*(char const*) (p))); tmp; })
+#define _mm_loadu_si128(p) ({ __m128i tmp; __asm__ volatile ("movups %1, %0" : "=x"(tmp) : "m"(*(char const*) (p))); tmp; })
 #define _mm_store_si128(p, b) (*((__m128i*) (p)) = (b))
 #define _mm_storeu_si128(p, a) { __asm__ volatile ("movups %1, %0" : "=m"(*(char*) (p)) : "x"((a))); }
-#define _mm_cvtps_epi32(a) ({ __m128 tmp; __asm__ volatile ("cvtps2dq %1, %0" : "=x"(tmp) : "xm"(a)); tmp; })
+#define _mm_cvtps_epi32(a) ({ __m128i tmp; __asm__ volatile ("cvtps2dq %1, %0" : "=x"(tmp) : "xm"(a)); tmp; })
 #define _mm_packs_epi32(a, b) __builtin_ia32_packssdw128((a), (b))
 #define _mm_slli_epi16(a, count) (__m128i)__builtin_ia32_psllwi128((a), (count))
 #define _mm_srli_epi16(a, count) (__m128i)__builtin_ia32_psrlwi128((a), (count))

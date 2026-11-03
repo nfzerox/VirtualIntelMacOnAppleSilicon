@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""Click two exposed real window points; compare presented content/shadow timing.
+
+Prepare two stationary real Finder windows yourself. First/Second are QEMU
+normalized points on their exposed title bars. Region is a backing-pixel ROI
+covering only the first window's shadow on stationary wallpaper. No guest AX
+queries or screenshots run during clicks. This measures queued input to actual
+presented pixels, not physical input-to-photon; inspect the ROI and raw trace.
+"""
+import argparse
+import json
+import math
+import os
+import re
+import subprocess
+from pathlib import Path
+import time
+
+p = argparse.ArgumentParser(description=__doc__)
+p.add_argument('directory', type=Path)
+p.add_argument('--first', nargs=2, type=float, required=True)
+p.add_argument('--second', nargs=2, type=float, required=True)
+p.add_argument('--region', nargs=4, type=float, required=True)
+p.add_argument('--seconds', type=float, default=8)
+p.add_argument('--output', type=Path, required=True)
+p.add_argument('--guest', help='SSH destination for read-only before/after real-window geometry guards')
+p.add_argument('--control-path', help='Existing authenticated SSH master; no password is stored')
+p.add_argument('--port', type=int, default=2222)
+p.add_argument('--windows', nargs=2, type=int, help='First and second real Finder window IDs')
+a = p.parse_args()
+if (not a.directory.is_dir() or a.output.exists() or
+        not all(math.isfinite(v) for v in a.first+a.second+a.region+[a.seconds]) or
+        not 3 <= a.seconds <= 15 or
+        any(v < 0 or v > 32767 for v in a.first+a.second) or
+        any(b < f for f, b in zip(a.first, a.second))):
+    p.error('Choose a new output, existing diagnostics, ordered finite points and Seconds 3–15.')
+if bool(a.guest) != bool(a.windows) or (a.guest and
+        (not a.control_path or a.guest.startswith('-') or not 1 <= a.port <= 65535 or min(a.windows) <= 0)):
+    p.error('A guest geometry guard requires --windows, --control-path and a valid SSH destination/port.')
+
+
+def geometry():
+    text = subprocess.check_output(['ssh', '-S', a.control_path, '-o', 'BatchMode=yes',
+                                   '-p', str(a.port), a.guest, '/var/tmp/opengl-window-list'], text=True)
+    windows = {}
+    for row in text.splitlines():
+        m = re.fullmatch(r'id=(\d+) pid=\d+ layer=0 owner=Finder name=(.*?) bounds=([\d.-]+),([\d.-]+) ([\d.-]+)x([\d.-]+)', row)
+        if m and int(m[1]) in a.windows:
+            windows[int(m[1])] = dict(Name=m[2], Bounds=[float(v) for v in m.groups()[2:]])
+    m = re.search(r'display_bounds=([\d.-]+),([\d.-]+) ([\d.-]+)x([\d.-]+)', text)
+    if not m or len(windows) != 2:
+        raise SystemExit('No authoritative real Finder/display geometry. Build/stage opengl-window-list first.')
+    return dict(Windows=windows, Display=[float(v) for v in m.groups()])
+
+
+guard = geometry() if a.guest else None
+if guard:
+    dx, dy, dw, dh = guard['Display']
+    first_box, second_box = (guard['Windows'][wid]['Bounds'] for wid in a.windows)
+    for i, point in enumerate((a.first, a.second)):
+        px, py = dx+point[0]*dw/32767, dy+point[1]*dh/32767
+        x, y, w, h = (first_box, second_box)[i]
+        ox, oy, ow, oh = (second_box, first_box)[i]
+        if (not (x+80 < px < x+w-40 and y+3 < py < y+19) or
+                (ox <= px < ox+ow and oy <= py < oy+oh)):
+            p.error('A click is not on an exposed title bar. Use actual CGWindow bounds, not Finder AppleScript bounds.')
+request, running, result = (a.directory/n for n in ('Request.json', 'Running.json', 'Result.json'))
+if request.exists() or running.exists():
+    raise SystemExit('An app request is pending; never start a second QMP owner.')
+old = result.stat().st_mtime_ns if result.exists() else None
+command = dict(Action='pointer-workload', Pattern='activate', Seconds=a.seconds, Hz=120,
+               Origin=[(f+b)/2 for f, b in zip(a.first, a.second)],
+               Amplitude=[(b-f)/2 for f, b in zip(a.first, a.second)], MarkerRect=a.region)
+with os.fdopen(os.open(request, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as stream:
+    json.dump(command, stream)
+deadline = time.monotonic()+a.seconds+15
+while time.monotonic() < deadline:
+    if result.exists() and result.stat().st_mtime_ns != old and not request.exists() and not running.exists():
+        data = json.loads(result.read_text())
+        break
+    time.sleep(.1)
+else:
+    raise SystemExit('Observation expired; inspect the same request, do not replay input.')
+a.output.write_text(json.dumps(data, indent=2)+'\n')
+if data.get('Error'):
+    raise SystemExit(data['Error'])
+data['RequestedCommand'] = command
+guard_after = geometry() if guard else None
+data['WindowGeometryBefore'], data['WindowGeometryAfter'] = guard, guard_after
+a.output.write_text(json.dumps(data, indent=2)+'\n')
+before, after = data['Before']['DistinctPresentationTiming'], data['After']['DistinctPresentationTiming']
+trace = after['Trace']
+if not trace or after.get('TraceColumns', [])[-1:] != ['RegionRGBFingerprint']:
+    raise SystemExit('No region/presentation trace; no activation timing is claimed.')
+replies = data.get('InputReplies', [])
+valid = (before['Generation'] == after['Generation'] and not after['TraceDropped'] and
+         before['Failures'] == after['Failures'] and before['Reordered'] == after['Reordered'] and
+         len(replies) == len(data['Inputs']) and not any(row[2] for row in replies) and
+         not after['Error'] and not data['MissedHostTimerTicks'])
+geometry_valid = guard is not None and guard_after == guard
+clicks = [row for row in data['Inputs'] if row[4] == 'activation-down']
+rows = []
+for i, click in enumerate(clicks):
+    at = click[0]
+    end = clicks[i+1][0] if i+1 < len(clicks) else data['MotionEnd']+.5
+    prior = [row for row in trace if row[0] < at]
+    interval = [row for row in trace if at <= row[0] < end]
+    record = dict(Step=click[5], Window='second' if click[5] % 2 else 'first')
+    if not prior or not interval:
+        record['Unqualified'] = 'No presented baseline or response.'
+    else:
+        baseline = prior[-1]
+        content = next((row for row in interval if row[1] != baseline[1]), None)
+        shadow = next((row for row in interval if row[5] != baseline[5]), None)
+        record.update(WholeImageResponseMs=(content[0]-at)*1000 if content else None,
+                      RegionResponseMs=(shadow[0]-at)*1000 if shadow else None,
+                      RegionAfterWholeImageMs=(shadow[0]-content[0])*1000 if shadow and content else None,
+                      FinalRegionFingerprint=interval[-1][5])
+        if not content or not shadow:
+            record['Unqualified'] = 'No distinct content or region response; inspect ROI/visual behavior.'
+    rows.append(record)
+report = dict(TransportAndPresentationValid=valid, WindowGeometryValid=geometry_valid, Transitions=rows,
+              Caution='Region must contain only the shadow, verified visually. Hashes detect RGB changes, not semantic shadow correctness. First transition may lack a baseline. No 60-fps or physical-photon claim.')
+print(json.dumps(report, indent=2))
+if not valid or (guard and not geometry_valid):
+    raise SystemExit(1)

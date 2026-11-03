@@ -1,4 +1,5 @@
 #import "VIMMetalView.h"
+#import "VIMDisplayFingerprint.h"
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <QuartzCore/CATransaction.h>
@@ -6,7 +7,22 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <math.h>
 @import ApplicationServices;
+
+// Both presentation and GPU completion resolve on the main queue. Neither
+// callback alone establishes that these particular pixels were displayed.
+@interface VIMPresentedFingerprint : NSObject
+@property BOOL gpuReady, presentationReady, valid, consumed;
+@property uint64_t fingerprint;
+@property uint64_t regionFingerprint;
+@property CFTimeInterval presentedAt;
+@property CFTimeInterval submittedAt;
+@property NSUInteger epoch, generation, width, height;
+@property uint32_t marker;
+@end
+@implementation VIMPresentedFingerprint
+@end
 
 @interface VIMMetalView ()
 @property id<MTLDevice> device;
@@ -14,9 +30,42 @@
 @property id<MTLBuffer> frameBuffer;
 @property CAMetalLayer *presentationLayer;
 @property BOOL frameInFlight;
+@property(nonatomic,strong) dispatch_queue_t drawableAcquisitionQueue;
+@property NSUInteger coalescedBeforeEncoding;
+// One latest immutable GPU source, held through the caller's completion
+// capability. Busy consumers may coalesce intermediate versions, never lose
+// the final version merely because the preceding blit has not completed.
+@property(nonatomic) id<MTLTexture> pendingSurfaceTexture;
+@property(nonatomic) NSUInteger pendingSurfaceWidth,pendingSurfaceHeight,pendingSurfaceEpoch;
+@property(nonatomic,copy) void (^pendingSurfaceCompletion)(BOOL);
 @property NSUInteger displayEpoch;
 @property NSUInteger displayPowerUpdates;
 @property NSUInteger presentationLayoutUpdates;
+@property NSUInteger completedFrames;
+@property CFTimeInterval lastFrameCompletedAt;
+// Opt-in pacing diagnosis, independent of GPU-completion/ownership ACKs.
+@property BOOL measurePresentation;
+@property NSUInteger presentedFrames;
+@property NSUInteger skippedPresentations;
+@property NSUInteger reorderedPresentations;
+@property CFTimeInterval firstPresentedAt;
+@property CFTimeInterval lastPresentedAt;
+@property double nextDrawableSeconds;
+@property double nextDrawableMaxSeconds;
+@property BOOL measureFingerprint;
+@property id<MTLComputePipelineState> fingerprintPipeline;
+@property BOOL fingerprintSingleSIMD;
+@property id<MTLBuffer> fingerprintBuffer;
+@property NSString *fingerprintError;
+@property NSUInteger fingerprintFrames, distinctFrames, duplicateFrames, fingerprintFailures, fingerprintReordered;
+@property NSUInteger fingerprintGeneration, fingerprintUnpresented;
+@property NSMutableArray *fingerprintTrace;
+@property NSMutableArray *fingerprintUnpresentedTrace;
+@property NSUInteger fingerprintTraceDropped;
+@property(nonatomic) NSRect fingerprintMarkerRect;
+@property NSUInteger fingerprintEpoch, fingerprintWidth, fingerprintHeight;
+@property uint64_t lastFingerprint;
+@property CFTimeInterval lastFingerprintAt, lastDistinctAt;
 @property id<MTLTexture> lastPresentedTexture;
 @property(nonatomic, copy) NSString *diagnosticsDirectory;
 @property NSMutableSet<NSString *> *pressedKeys;
@@ -31,6 +80,7 @@
 @property CGFloat cursorPixelsPerPoint;
 @property(nonatomic) BOOL guestCursorVisible;
 @property(nonatomic) BOOL inputCaptured;
+@property(nonatomic) BOOL ownsResponderFocus;
 @property id keyMonitor;
 @property id focusObserver;
 @property CFMachPortRef eventTap;
@@ -38,7 +88,21 @@
 @property CGFloat wheelRemainderX;
 @property CGFloat wheelRemainderY;
 - (void)routeCapturedKey:(NSEvent *)event;
+- (void)cancelPendingSurface;
+- (void)drainPendingSurface;
 @end
+
+// Main-thread-owned, fixed-size counters: no image hashing/capture or per-frame
+// logging. Bucket N covers [N,N+1) ms; 255 also contains all longer intervals.
+typedef struct {
+    uint64_t gaps[256];
+    uint64_t submissionDelays[256];
+    uint64_t gpuQueueDelays[256],gpuDurations[256],gpuCompletionDelays[256];
+    uint64_t gpuTimed,gpuUnavailable;
+    double gpuQueueSeconds,gpuWorkSeconds;
+    uint64_t cpuCompletionDelays[256],cpuCompleted;
+    double cpuCompletionSeconds;
+} VIMPresentationTiming;
 
 static CGEventRef VIMCapturedKey(CGEventTapProxy proxy,CGEventType type,CGEventRef event,void *context) {
     VIMMetalView *view=(__bridge VIMMetalView *)context;
@@ -57,22 +121,184 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
     return groups;
 }
 
-@implementation VIMMetalView
+@implementation VIMMetalView {
+    VIMPresentationTiming _presentationTiming;
+    uint64_t _distinctGaps[256];
+}
 @synthesize displaySleeping=_displaySleeping;
 @synthesize guestDisplaySleeping=_guestDisplaySleeping;
 - (NSDictionary *)frameDiagnostics {
     NSAssert(NSThread.isMainThread,@"Frame geometry is main-thread owned");
-    return @{@"PixelWidth":@(self.lastPresentedTexture.width),@"PixelHeight":@(self.lastPresentedTexture.height),
+    NSMutableDictionary *result=[@{@"PixelWidth":@(self.lastPresentedTexture.width),@"PixelHeight":@(self.lastPresentedTexture.height),
         @"ViewWidth":@(self.bounds.size.width),@"ViewHeight":@(self.bounds.size.height),
         @"BackingScale":@(self.window.backingScaleFactor),@"Sleeping":@(self.displaySleeping),
         @"GuestDisplaySleeping":@(self.guestDisplaySleeping),@"DisplayPowerUpdates":@(self.displayPowerUpdates),
+        @"ApplicationActive":@(NSApp.active),@"WindowKey":@(self.window.keyWindow),
+        @"WindowOcclusionVisible":@((self.window.occlusionState&NSWindowOcclusionStateVisible)!=0),
         @"PresentationHidden":@(self.presentationLayer.hidden),@"LayoutUpdates":@(self.presentationLayoutUpdates),
-        @"FrameStorageBytes":@(self.frameBuffer.length)};
+        @"CompletedFrames":@(self.completedFrames),@"LastCompletionTime":@(self.lastFrameCompletedAt),
+        @"FrameStorageBytes":@(self.frameBuffer.length),
+        @"MaximumDrawableCount":@(self.presentationLayer.maximumDrawableCount),
+        @"ScalingFilter":self.presentationLayer.magnificationFilter?:@"",
+        @"AsynchronousDrawableAcquisition":@(self.asynchronousDrawableAcquisition),
+        @"CoalescedBeforeEncoding":@(self.coalescedBeforeEncoding)} mutableCopy];
+    if(self.measurePresentation) {
+        NSMutableArray *gaps=[NSMutableArray arrayWithCapacity:256];
+        NSMutableArray *delays=[NSMutableArray arrayWithCapacity:256];
+        NSMutableArray *gpuQueue=[NSMutableArray arrayWithCapacity:256];
+        NSMutableArray *gpuWork=[NSMutableArray arrayWithCapacity:256];
+        NSMutableArray *gpuCompletion=[NSMutableArray arrayWithCapacity:256];
+        NSMutableArray *cpuCompletion=[NSMutableArray arrayWithCapacity:256];
+        for(NSUInteger i=0;i<256;i++) {
+            [gaps addObject:@(_presentationTiming.gaps[i])];
+            [delays addObject:@(_presentationTiming.submissionDelays[i])];
+            [gpuQueue addObject:@(_presentationTiming.gpuQueueDelays[i])];
+            [gpuWork addObject:@(_presentationTiming.gpuDurations[i])];
+            [gpuCompletion addObject:@(_presentationTiming.gpuCompletionDelays[i])];
+            [cpuCompletion addObject:@(_presentationTiming.cpuCompletionDelays[i])];
+        }
+        result[@"PresentationTiming"]=@{@"PresentedFrames":@(self.presentedFrames),
+            @"Skipped":@(self.skippedPresentations),@"ReorderedCallbacks":@(self.reorderedPresentations),
+            @"FirstPresentedAt":@(self.firstPresentedAt),@"LastPresentedAt":@(self.lastPresentedAt),
+            @"GapMillisecondsHistogram":gaps,@"SubmissionMillisecondsHistogram":delays,
+            @"GPUCommandBuffersTimed":@(_presentationTiming.gpuTimed),
+            @"GPUCommandBuffersUnavailable":@(_presentationTiming.gpuUnavailable),
+            @"SubmissionToGPUStartMillisecondsHistogram":gpuQueue,
+            @"GPUExecutionMillisecondsHistogram":gpuWork,
+            @"SubmissionToGPUEndMillisecondsHistogram":gpuCompletion,
+            @"SubmissionToGPUStartSeconds":@(_presentationTiming.gpuQueueSeconds),
+            @"GPUExecutionSeconds":@(_presentationTiming.gpuWorkSeconds),
+            @"CPUCommandBuffersCompleted":@(_presentationTiming.cpuCompleted),
+            @"SubmissionToCPUCompletionMillisecondsHistogram":cpuCompletion,
+            @"SubmissionToCPUCompletionSeconds":@(_presentationTiming.cpuCompletionSeconds),
+            @"NextDrawableSeconds":@(self.nextDrawableSeconds),@"NextDrawableMaxSeconds":@(self.nextDrawableMaxSeconds)};
+    }
+    if(self.measureFingerprint || self.fingerprintFrames || self.fingerprintError.length) {
+        NSMutableArray *gaps=[NSMutableArray arrayWithCapacity:256];
+        for(NSUInteger i=0;i<256;i++)[gaps addObject:@(_distinctGaps[i])];
+        result[@"DistinctPresentationTiming"]=@{@"Enabled":@(self.measureFingerprint),
+            @"Generation":@(self.fingerprintGeneration),@"Unpresented":@(self.fingerprintUnpresented),
+            @"PresentedFingerprintFrames":@(self.fingerprintFrames),@"DistinctFrames":@(self.distinctFrames),
+            @"DuplicateFrames":@(self.duplicateFrames),@"Failures":@(self.fingerprintFailures),
+            @"Reordered":@(self.fingerprintReordered),@"LastDistinctAt":@(self.lastDistinctAt),
+            @"GapMillisecondsHistogram":gaps,@"Error":self.fingerprintError?:@"",
+            @"Reduction":self.fingerprintSingleSIMD?@"one hardware-sized SIMD group per 16x16 tile":@"256-thread tree",
+            @"Method":@"64-bit GPU fingerprint of every RGB pixel in the opaque presented layer; excludes alpha and the independent hardware cursor"};
+        if(self.fingerprintTrace){
+            NSMutableDictionary *d=[result[@"DistinctPresentationTiming"] mutableCopy];
+            d[@"Trace"]=self.fingerprintTrace.copy;d[@"TraceDropped"]=@(self.fingerprintTraceDropped);
+            d[@"TraceColumns"]=@[@"PresentedAt",@"RGBFingerprint",@"Changed",@"MarkerX",@"MarkerY",@"RegionRGBFingerprint"];
+            d[@"UnpresentedTrace"]=self.fingerprintUnpresentedTrace.copy;
+            d[@"UnpresentedTraceColumns"]=@[@"SubmittedAt",@"ResolvedAt",@"RGBFingerprint",@"MarkerX",@"MarkerY",@"RegionRGBFingerprint",@"GPUValid"];
+            result[@"DistinctPresentationTiming"]=d;
+        }
+    }
+    return result;
+}
+- (void)setFingerprintMeasurementEnabled:(BOOL)enabled {
+    NSAssert(NSThread.isMainThread,@"Fingerprint measurement is main-thread owned");
+    self.fingerprintGeneration++;self.lastFingerprintAt=self.lastDistinctAt=0;
+    self.measureFingerprint=NO;
+    if(!enabled)return;
+    if(!self.fingerprintPipeline) {
+        // Diagnostic only, compiled once on first enable. No shader or buffer
+        // is allocated in normal launches. Each 16x16 tile emits sixteen bytes
+        // (eight hash bytes plus a bounded optional marker reduction);
+        // the CPU never reads/copies the full guest image for this measurement.
+        // One hardware-sized SIMD group visits every pixel of a tile, with
+        // exact unsigned sums/minima and no threadgroup barriers. Query the
+        // execution width, never assume Intel/AMD/Apple have the same width.
+        // Keep the original tree for older families or compilation failure.
+        BOOL preferSIMD=[self.device supportsFamily:MTLGPUFamilyMac2] ||
+                        [self.device supportsFamily:MTLGPUFamilyApple7];
+        NSError *error=nil;
+        for(NSUInteger attempt=0;attempt<(preferSIMD?2:1);attempt++){
+            BOOL single=preferSIMD && !attempt;
+            id<MTLLibrary> library=[self.device newLibraryWithSource:VIMDisplayFingerprintSource(single?2:0) options:nil error:&error];
+            id<MTLFunction> function=[library newFunctionWithName:@"fingerprint"];
+            id<MTLComputePipelineState> pipeline=function?[self.device newComputePipelineStateWithFunction:function error:&error]:nil;
+            if(pipeline.maxTotalThreadsPerThreadgroup>=256 && (!single ||
+                (pipeline.threadExecutionWidth>0 && pipeline.threadExecutionWidth<=256))){
+                self.fingerprintPipeline=pipeline;self.fingerprintSingleSIMD=single;break;
+            }
+        }
+        if(!self.fingerprintPipeline || self.fingerprintPipeline.maxTotalThreadsPerThreadgroup<256) {
+            self.fingerprintError=error.localizedDescription?:@"GPU fingerprint pipeline is unavailable.";return;
+        }
+    }
+    if(self.fingerprintPipeline.maxTotalThreadsPerThreadgroup<256){
+        self.fingerprintError=@"GPU fingerprint threadgroup size is unsupported.";return;
+    }
+    self.fingerprintError=nil;self.measureFingerprint=YES;
+}
+- (void)setFingerprintTraceEnabled:(BOOL)enabled {
+    NSAssert(NSThread.isMainThread,@"Trace is main-thread owned");
+    self.fingerprintTrace=enabled?[NSMutableArray array]:nil;self.fingerprintTraceDropped=0;
+    self.fingerprintUnpresentedTrace=enabled?[NSMutableArray array]:nil;
+}
+- (void)setFingerprintMarkerRect:(NSRect)rect {
+    NSAssert(NSThread.isMainThread,@"Marker is main-thread owned");
+    if(!isfinite(rect.origin.x)||!isfinite(rect.origin.y)||!isfinite(rect.size.width)||!isfinite(rect.size.height)||
+       rect.origin.x<0||rect.origin.y<0||rect.size.width<0||rect.size.height<0||NSMaxX(rect)>8192||NSMaxY(rect)>8192)rect=NSZeroRect;
+    _fingerprintMarkerRect=rect;
+}
+- (void)resolveFingerprint:(VIMPresentedFingerprint *)frame {
+    NSAssert(NSThread.isMainThread,@"Fingerprint counters are main-thread owned");
+    if(frame.consumed || !frame.gpuReady || !frame.presentationReady)return;
+    frame.consumed=YES;
+    if(frame.epoch!=self.displayEpoch || frame.generation!=self.fingerprintGeneration)return;
+    if(frame.presentedAt<=0){
+        self.fingerprintUnpresented++;
+        // Diagnostic only: a completed GPU image is not necessarily displayed.
+        // Keep its already-computed metadata separately so a skipped final
+        // update can be distinguished from an intentionally coalesced frame.
+        // Never feed these rows into visible-frame/latency counters. No new
+        // image readback, shader work or normal-launch trace is introduced.
+        if(self.fingerprintUnpresentedTrace){
+            if(self.fingerprintUnpresentedTrace.count<4096)
+                [self.fingerprintUnpresentedTrace addObject:@[@(frame.submittedAt),@(CACurrentMediaTime()),@(frame.fingerprint),
+                    frame.marker==UINT32_MAX?@(-1):@(frame.marker&65535),frame.marker==UINT32_MAX?@(-1):@(frame.marker>>16),
+                    @(frame.regionFingerprint),@(frame.valid)]];
+            else self.fingerprintTraceDropped++;
+        }
+        return;
+    }
+    if(!frame.valid){self.fingerprintFailures++;return;}
+    if(self.fingerprintEpoch!=frame.epoch) {
+        self.fingerprintEpoch=frame.epoch;self.lastFingerprintAt=self.lastDistinctAt=0;
+    }
+    if(frame.presentedAt<self.lastFingerprintAt){self.fingerprintReordered++;return;}
+    self.fingerprintFrames++;
+    BOOL changed=!self.lastFingerprintAt || self.lastFingerprint!=frame.fingerprint ||
+        self.fingerprintWidth!=frame.width || self.fingerprintHeight!=frame.height;
+    if(changed){
+        self.distinctFrames++;
+        if(self.lastDistinctAt>0)self->_distinctGaps[(NSUInteger)MIN(255.,(frame.presentedAt-self.lastDistinctAt)*1000.)]++;
+        self.lastDistinctAt=frame.presentedAt;
+    } else self.duplicateFrames++;
+    self.lastFingerprint=frame.fingerprint;self.lastFingerprintAt=frame.presentedAt;
+    self.fingerprintWidth=frame.width;self.fingerprintHeight=frame.height;
+    if(self.fingerprintTrace){
+        if(self.fingerprintTrace.count<4096)[self.fingerprintTrace addObject:@[@(frame.presentedAt),@(frame.fingerprint),@(changed),
+            frame.marker==UINT32_MAX?@(-1):@(frame.marker&65535),frame.marker==UINT32_MAX?@(-1):@(frame.marker>>16),@(frame.regionFingerprint)]];
+        else self.fingerprintTraceDropped++;
+    }
+}
+- (BOOL)setPresentationDrawableCount:(NSUInteger)count {
+    NSAssert(NSThread.isMainThread,@"Presentation queue is main-thread owned");
+    if(count!=2 && count!=3)return NO;
+    self.presentationLayer.maximumDrawableCount=count;
+    return self.presentationLayer.maximumDrawableCount==count;
 }
 - (instancetype)initWithFrame:(NSRect)frame {
     if ((self = [super initWithFrame:frame])) {
         self.diagnosticsDirectory=NSProcessInfo.processInfo.environment[@"VIM_FRAME_DIAGNOSTICS"];
+        self.measurePresentation=[NSProcessInfo.processInfo.environment[@"VIM_DISPLAY_TIMING"] isEqualToString:@"1"];
         self.device = MTLCreateSystemDefaultDevice(); self.queue = [self.device newCommandQueue];
+        self.drawableAcquisitionQueue=dispatch_queue_create("com.mac.virtualintelmac.drawable-acquisition",
+            dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,QOS_CLASS_USER_INTERACTIVE,0));
+        if([NSProcessInfo.processInfo.environment[@"VIM_DISPLAY_DISTINCT"] isEqualToString:@"1"])
+            [self setFingerprintMeasurementEnabled:YES];
         self.pressedKeys = [NSMutableSet set];
         self.guestCursorVisible = YES;
         self.wantsLayer = YES; self.layer.backgroundColor = NSColor.blackColor.CGColor;
@@ -93,6 +319,7 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
     return self;
 }
 - (void)dealloc {
+    [self cancelPendingSurface];
     if(self.keyMonitor)[NSEvent removeMonitor:self.keyMonitor];
     if(self.focusObserver)[NSNotificationCenter.defaultCenter removeObserver:self.focusObserver];
     if(_eventTapSource){CFRunLoopRemoveSource(CFRunLoopGetMain(),_eventTapSource,kCFRunLoopCommonModes);CFRelease(_eventTapSource);}
@@ -138,9 +365,21 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
     else if(event.type==NSEventTypeFlagsChanged)[self flagsChanged:event];
 }
 - (BOOL)acceptsFirstResponder { return YES; }
+- (BOOL)becomeFirstResponder {
+    BOOL accepted=[super becomeFirstResponder];
+    if(accepted){
+        self.ownsResponderFocus=YES;
+        if(self.softwareCursor)[self refreshNativeCursor];
+    }
+    return accepted;
+}
 - (BOOL)resignFirstResponder {
     BOOL resigned=[super resignFirstResponder];
-    if(resigned&&(self.inputCaptured||self.pressedKeys.count))[self releaseInputCapture];
+    if(resigned){
+        self.ownsResponderFocus=NO;
+        if(self.inputCaptured||self.pressedKeys.count)[self releaseInputCapture];
+        else if(self.softwareCursor)[self refreshNativeCursor];
+    }
     return resigned;
 }
 - (void)capturePNG:(void (^)(NSData *))completion {
@@ -166,6 +405,7 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
         self.displayEpoch++;
         self.lastPresentedTexture=nil;
         self.presentationLayer.hidden=YES;
+        [self cancelPendingSurface];
     }
     // A running CPU is not proof that the guest display has resumed. Keep the
     // layer black until a new frame completes; never expose the pre-sleep image.
@@ -183,17 +423,30 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
     self.displaySleeping=YES;
     self.displayEpoch++;self.lastPresentedTexture=nil;
     self.presentationLayer.hidden=YES;self.frameBuffer=nil;
+    [self cancelPendingSurface];
+}
+- (void)invalidatePresentation {
+    NSAssert(NSThread.isMainThread,@"Presentation is main-thread owned");
+    self.displayEpoch++;self.lastPresentedTexture=nil;self.presentationLayer.hidden=YES;
+    [self cancelPendingSurface];
 }
 - (void)setSoftwareCursor:(BOOL)value {
+    if(_softwareCursor==value)return;
     _softwareCursor=value;
     [self refreshNativeCursor];
 }
 - (BOOL)acceptsFirstMouse:(NSEvent *)event { return YES; }
 - (void)setGuestCursorVisible:(BOOL)visible {
+    // QEMU also reports visibility while the mouse moves. Reinstalling the
+    // identical cursor invalidates AppKit's cursor rectangles and registers
+    // its image with WindowServer on every report, even during window drags.
+    if(_guestCursorVisible==visible)return;
     self.cursorVisibilityUpdates++;_guestCursorVisible=visible;[self refreshNativeCursor];
 }
 - (void)setGuestCursorPixels:(NSData *)pixels width:(NSUInteger)width height:(NSUInteger)height hotspot:(NSPoint)hotspot {
     if(!width||!height||width>256||height>256||pixels.length!=width*height*4||!isfinite(hotspot.x)||!isfinite(hotspot.y)||hotspot.x<0||hotspot.y<0||hotspot.x>=width||hotspot.y>=height)return;
+    if(NSEqualSizes(self.cursorSize,NSMakeSize(width,height)) && NSEqualPoints(self.cursorHotspot,hotspot) &&
+       [self.cursorPixels isEqualToData:pixels]){[self updateGuestCursorScale];return;}
     self.cursorGlyphUpdates++;
     self.cursorPixels=pixels;self.cursorSize=NSMakeSize(width,height);self.cursorHotspot=hotspot;
     self.cursorPixelsPerPoint=0;[self updateGuestCursorScale];
@@ -219,7 +472,12 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
 }
 - (NSCursor *)effectiveCursor {
     NSCursor *cursor=self.guestCursor?:NSCursor.arrowCursor;
-    if(self.inputCaptured&&(self.softwareCursor||!self.guestCursorVisible)) {
+    // VGA already draws the guest cursor. Mouse events reach the focused
+    // guest before the first click captures keyboard shortcuts, so don't
+    // overlay a second host cursor while the installer view owns focus.
+    BOOL hideSoftware=self.softwareCursor&&self.window.isKeyWindow&&
+        (self.inputCaptured||self.ownsResponderFocus);
+    if(hideSoftware||(self.inputCaptured&&!self.guestCursorVisible)) {
         if(!self.hiddenCursor)self.hiddenCursor=[[NSCursor alloc] initWithImage:[[NSImage alloc] initWithSize:NSMakeSize(1,1)] hotSpot:NSZeroPoint];
         cursor=self.hiddenCursor;
     }return cursor;
@@ -349,6 +607,7 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
     [self emit:events];
 }
 - (void)mouseMoved:(NSEvent *)event {
+    if(!self.window.isKeyWindow)return;
     NSPoint p=[self convertPoint:event.locationInWindow fromView:nil];CGRect frame=self.presentationLayer.frame;
     if(frame.size.width<=0||frame.size.height<=0)return;
     int x=(int)(MAX(0,MIN(1,(p.x-frame.origin.x)/frame.size.width))*32767);
@@ -443,42 +702,242 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
     }
     [self updateGuestCursorScale];
 }
+- (void)setNearestNeighborScaling:(BOOL)nearestNeighborScaling {
+    _nearestNeighborScaling=nearestNeighborScaling;
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    NSString *filter=nearestNeighborScaling?kCAFilterNearest:kCAFilterLinear;
+    self.presentationLayer.magnificationFilter=filter;
+    self.presentationLayer.minificationFilter=filter;
+    [CATransaction commit];
+}
 - (void)presentWidth:(NSUInteger)width height:(NSUInteger)height stride:(NSUInteger)stride
     completion:(void (^)(BOOL))completion {
+    [self presentWidth:width height:height stride:stride sourceTexture:nil completion:completion];
+}
+- (void)presentSurface:(IOSurfaceRef)surface width:(NSUInteger)width height:(NSUInteger)height
+    completion:(void (^)(BOOL))completion {
     NSAssert(NSThread.isMainThread, @"Presentation is main-thread owned");
-    if (self.displaySleeping || !self.frameBuffer || self.frameInFlight || width < 320 || height < 200 ||
-        width > 8192 || height > 8192 || stride < width * 4 || stride % 256 ||
-        stride > self.frameBuffer.length / height) { completion(NO); return; }
+    if(!surface || width<320 || height<200 || width>8192 || height>8192 ||
+       IOSurfaceGetPixelFormat(surface)!=0x42475241 || IOSurfaceGetPlaneCount(surface)!=0 ||
+       IOSurfaceGetBytesPerElement(surface)!=4 || IOSurfaceGetWidth(surface)<width ||
+       IOSurfaceGetHeight(surface)<height || IOSurfaceGetBytesPerRow(surface)<width*4) {
+        completion(NO);return;
+    }
+    MTLTextureDescriptor *descriptor=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+        width:IOSurfaceGetWidth(surface) height:IOSurfaceGetHeight(surface) mipmapped:NO];
+    descriptor.usage=MTLTextureUsageShaderRead;
+    id<MTLTexture> texture=[self.device newTextureWithDescriptor:descriptor iosurface:surface plane:0];
+    if(!texture){completion(NO);return;}
+    [self presentWidth:width height:height stride:0 sourceTexture:texture completion:completion];
+}
+- (void)cancelPendingSurface {
+    void (^completion)(BOOL)=self.pendingSurfaceCompletion;
+    self.pendingSurfaceCompletion=nil;self.pendingSurfaceTexture=nil;
+    self.pendingSurfaceWidth=self.pendingSurfaceHeight=self.pendingSurfaceEpoch=0;
+    if(completion)completion(NO);
+}
+- (void)drainPendingSurface {
+    NSAssert(NSThread.isMainThread,@"Presentation queue is main-thread owned");
+    if(self.frameInFlight || !self.pendingSurfaceCompletion)return;
+    id<MTLTexture> texture=self.pendingSurfaceTexture;
+    NSUInteger width=self.pendingSurfaceWidth,height=self.pendingSurfaceHeight,epoch=self.pendingSurfaceEpoch;
+    void (^completion)(BOOL)=self.pendingSurfaceCompletion;
+    self.pendingSurfaceCompletion=nil;self.pendingSurfaceTexture=nil;
+    self.pendingSurfaceWidth=self.pendingSurfaceHeight=self.pendingSurfaceEpoch=0;
+    if(epoch!=self.displayEpoch){completion(NO);return;}
+    [self presentWidth:width height:height stride:0 sourceTexture:texture completion:completion];
+}
+- (void)presentWidth:(NSUInteger)width height:(NSUInteger)height stride:(NSUInteger)stride
+    sourceTexture:(id<MTLTexture>)sourceTexture completion:(void (^)(BOOL))completion {
+    NSAssert(NSThread.isMainThread, @"Presentation is main-thread owned");
+    if (self.displaySleeping || width < 320 || height < 200 ||
+        width > 8192 || height > 8192 || (!sourceTexture && (!self.frameBuffer || stride < width * 4 || stride % 256 ||
+        stride > self.frameBuffer.length / height))) { completion(NO); return; }
     if (!self.window || !self.window.visible || self.window.miniaturized) { completion(NO); return; }
+    if(self.frameInFlight) {
+        // CPU shared storage has one writer and its own ACK backpressure;
+        // never retain it as a mutable queued image. GPU versions are
+        // immutable until their completion callback releases the producer.
+        if(!sourceTexture){completion(NO);return;}
+        void (^superseded)(BOOL)=self.pendingSurfaceCompletion;
+        self.pendingSurfaceTexture=sourceTexture;self.pendingSurfaceWidth=width;self.pendingSurfaceHeight=height;
+        self.pendingSurfaceEpoch=self.displayEpoch;self.pendingSurfaceCompletion=completion;
+        if(superseded)superseded(NO);
+        return;
+    }
     CGSize drawableSize=CGSizeMake(width,height);
     if(!CGSizeEqualToSize(self.presentationLayer.drawableSize,drawableSize))self.presentationLayer.drawableSize=drawableSize;
     [self layout];
-    id<CAMetalDrawable> drawable = [self.presentationLayer nextDrawable];
+    CFTimeInterval submitted=self.measurePresentation?CACurrentMediaTime():0;
+    NSUInteger epoch=self.displayEpoch;
+    self.frameInFlight=YES; // Includes drawable acquisition; one job per view.
+    if(self.asynchronousDrawableAcquisition){
+        CAMetalLayer *layer=self.presentationLayer;
+        BOOL measure=self.measurePresentation;
+        dispatch_async(self.drawableAcquisitionQueue,^{
+            @autoreleasepool {
+            CFTimeInterval began=measure?CACurrentMediaTime():0;
+            id<CAMetalDrawable> drawable=[layer nextDrawable];
+            CFTimeInterval elapsed=measure?CACurrentMediaTime()-began:0;
+            dispatch_async(dispatch_get_main_queue(),^{
+                if(measure){self.nextDrawableSeconds+=elapsed;self.nextDrawableMaxSeconds=MAX(self.nextDrawableMaxSeconds,elapsed);}
+                [self encodeWidth:width height:height stride:stride sourceTexture:sourceTexture drawable:drawable
+                    acquisitionEpoch:epoch submitted:submitted completion:completion];
+            });
+            }
+        });
+    }else{
+        id<CAMetalDrawable> drawable=[self.presentationLayer nextDrawable];
+        if(self.measurePresentation){
+            double elapsed=CACurrentMediaTime()-submitted;self.nextDrawableSeconds+=elapsed;
+            self.nextDrawableMaxSeconds=MAX(self.nextDrawableMaxSeconds,elapsed);
+        }
+        [self encodeWidth:width height:height stride:stride sourceTexture:sourceTexture drawable:drawable
+            acquisitionEpoch:epoch submitted:submitted completion:completion];
+    }
+}
+- (void)encodeWidth:(NSUInteger)width height:(NSUInteger)height stride:(NSUInteger)stride
+    sourceTexture:(id<MTLTexture>)sourceTexture drawable:(id<CAMetalDrawable>)drawable
+    acquisitionEpoch:(NSUInteger)acquisitionEpoch submitted:(CFTimeInterval)submitted completion:(void (^)(BOOL))completion {
+    NSAssert(NSThread.isMainThread,@"Frame selection and encoding are main-thread owned");
+    if(!drawable || acquisitionEpoch!=self.displayEpoch || self.displaySleeping ||
+       !self.window.visible || self.window.miniaturized ||
+       drawable.texture.width!=width || drawable.texture.height!=height ||
+       (self.pendingSurfaceCompletion && (self.pendingSurfaceWidth!=width || self.pendingSurfaceHeight!=height ||
+                                         self.pendingSurfaceEpoch!=acquisitionEpoch))){
+        self.frameInFlight=NO;[self drainPendingSurface];completion(NO);return;
+    }
+    if(self.pendingSurfaceCompletion){
+        // Acquisition may wait for scanout. No pixel source was consumed on
+        // that worker: choose the held NEWEST version now, never upload an
+        // obsolete image simply because it asked for a drawable first.
+        void (^superseded)(BOOL)=completion;
+        sourceTexture=self.pendingSurfaceTexture;completion=self.pendingSurfaceCompletion;
+        self.pendingSurfaceTexture=nil;self.pendingSurfaceCompletion=nil;
+        self.pendingSurfaceWidth=self.pendingSurfaceHeight=self.pendingSurfaceEpoch=0;
+        self.coalescedBeforeEncoding++;
+        if(self.measurePresentation)submitted=CACurrentMediaTime();
+        superseded(NO);
+    }
     id<MTLCommandBuffer> command = [self.queue commandBuffer];
-    if (!drawable || !command) { completion(NO); return; }
+    if (!command) { self.frameInFlight=NO;[self drainPendingSurface];completion(NO);return; }
     // Obtain/retain the texture before presentation. CAMetalDrawable forbids
     // querying texture after present; the completion handler needs this same
     // resource, not a new drawable or an additional copy.
     id<MTLTexture> presentedTexture=drawable.texture;
     id<MTLBlitCommandEncoder> blit = [command blitCommandEncoder];
-    if (!blit) { completion(NO); return; }
+    if (!blit) { self.frameInFlight=NO;[self drainPendingSurface];completion(NO);return; }
     // Same GPU copy required by the command-line renderer; no CPU readback,
     // new pixel allocation, network frame encoding or intermediate texture.
-    [blit copyFromBuffer:self.frameBuffer sourceOffset:0 sourceBytesPerRow:stride
+    if(sourceTexture) {
+        [blit copyFromTexture:sourceTexture sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0,0,0)
+            sourceSize:MTLSizeMake(width,height,1) toTexture:presentedTexture destinationSlice:0
+            destinationLevel:0 destinationOrigin:MTLOriginMake(0,0,0)];
+    } else [blit copyFromBuffer:self.frameBuffer sourceOffset:0 sourceBytesPerRow:stride
         sourceBytesPerImage:stride * height sourceSize:MTLSizeMake(width, height, 1)
         toTexture:presentedTexture destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
-    [blit endEncoding]; [command presentDrawable:drawable]; self.frameInFlight = YES;
+    [blit endEncoding];
     NSUInteger epoch=self.displayEpoch;
+    VIMPresentedFingerprint *fingerprint=nil;id<MTLBuffer> fingerprintOutput=nil;NSUInteger fingerprintWords=0;
+    if(self.measureFingerprint) {
+        NSUInteger gx=(width+15)/16,gy=(height+15)/16;fingerprintWords=gx*gy*4;
+        if(self.fingerprintBuffer.length<fingerprintWords*sizeof(uint32_t))
+            self.fingerprintBuffer=[self.device newBufferWithLength:fingerprintWords*sizeof(uint32_t) options:MTLResourceStorageModeShared];
+        id<MTLComputeCommandEncoder> compute=self.fingerprintBuffer?[command computeCommandEncoder]:nil;
+        if(compute){
+            fingerprint=[VIMPresentedFingerprint new];fingerprint.epoch=epoch;fingerprint.width=width;fingerprint.height=height;
+            fingerprint.generation=self.fingerprintGeneration;
+            fingerprint.submittedAt=CACurrentMediaTime();
+            fingerprintOutput=self.fingerprintBuffer;
+            [compute setComputePipelineState:self.fingerprintPipeline];[compute setTexture:presentedTexture atIndex:0];
+            [compute setBuffer:fingerprintOutput offset:0 atIndex:0];
+            NSRect roi=self.fingerprintMarkerRect;uint32_t marker[]={roi.origin.x,roi.origin.y,NSMaxX(roi),NSMaxY(roi)};
+            [compute setBytes:marker length:sizeof(marker) atIndex:1];
+            MTLSize threads=self.fingerprintSingleSIMD?MTLSizeMake(self.fingerprintPipeline.threadExecutionWidth,1,1):MTLSizeMake(16,16,1);
+            [compute dispatchThreadgroups:MTLSizeMake(gx,gy,1) threadsPerThreadgroup:threads];
+            [compute endEncoding];
+        } else self.fingerprintFailures++;
+    }
+    if(fingerprint)[drawable addPresentedHandler:^(id<MTLDrawable> shown){
+        CFTimeInterval timestamp=shown.presentedTime;
+        dispatch_async(dispatch_get_main_queue(),^{fingerprint.presentedAt=timestamp;fingerprint.presentationReady=YES;[self resolveFingerprint:fingerprint];});
+    }];
+    if(self.measurePresentation) {
+        // The SDK explicitly defines 0 as not presented/skipped. Completion of
+        // the blit is not evidence that this drawable appeared on the display.
+        [drawable addPresentedHandler:^(id<MTLDrawable> shown) {
+            CFTimeInterval timestamp=shown.presentedTime;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if(epoch!=self.displayEpoch)return;
+                if(timestamp<=0) {self.skippedPresentations++;return;}
+                self.presentedFrames++;
+                if(!self.firstPresentedAt)self.firstPresentedAt=timestamp;
+                if(self.lastPresentedAt>0) {
+                    if(timestamp<self.lastPresentedAt)self.reorderedPresentations++;
+                    else {
+                        NSUInteger bucket=(NSUInteger)MIN(255.,(timestamp-self.lastPresentedAt)*1000.);
+                        self->_presentationTiming.gaps[bucket]++;
+                    }
+                }
+                self.lastPresentedAt=MAX(self.lastPresentedAt,timestamp);
+                if(timestamp>=submitted) {
+                    NSUInteger bucket=(NSUInteger)MIN(255.,(timestamp-submitted)*1000.);
+                    self->_presentationTiming.submissionDelays[bucket]++;
+                }
+            });
+        }];
+    }
+    [command presentDrawable:drawable]; self.frameInFlight = YES;
     [command addCompletedHandler:^(id<MTLCommandBuffer> finished) {
+        // SDK GPUStartTime/GPUEndTime are host seconds and valid only after
+        // real execution completes. Separate queueing from GPU work rather
+        // than calling the whole submission-to-present interval "blit time".
+        // Diagnostic only: no GPU query/readback, timer, log or ownership change.
+        CFTimeInterval gpuStart=self.measurePresentation?finished.GPUStartTime:0;
+        CFTimeInterval gpuEnd=self.measurePresentation?finished.GPUEndTime:0;
+        CFTimeInterval cpuCompleted=self.measurePresentation?CACurrentMediaTime():0;
+        uint64_t hash=UINT64_C(1469598103934665603)^width^((uint64_t)height<<32);
+        uint64_t regionHash=hash;
+        uint32_t marker=UINT32_MAX;
+        if(fingerprint && finished.status==MTLCommandBufferStatusCompleted){
+            const uint32_t *words=fingerprintOutput.contents;
+            for(NSUInteger i=0;i<fingerprintWords;i+=4){
+                hash=(hash^words[i])*UINT64_C(1099511628211);hash=(hash^words[i+1])*UINT64_C(1099511628211);
+                regionHash=(regionHash^words[i+3])*UINT64_C(1099511628211);
+                marker=MIN(marker,words[i+2]);
+            }
+        }
         dispatch_async(dispatch_get_main_queue(), ^{
+            if(self.measurePresentation && epoch==self.displayEpoch){
+                if(finished.status==MTLCommandBufferStatusCompleted && submitted>0 && cpuCompleted>=submitted){
+                    self->_presentationTiming.cpuCompleted++;
+                    self->_presentationTiming.cpuCompletionSeconds+=cpuCompleted-submitted;
+                    self->_presentationTiming.cpuCompletionDelays[(NSUInteger)MIN(255.,(cpuCompleted-submitted)*1000.)]++;
+                }
+                // Real Intel control on macOS26 reports end timestamps ~27ms
+                // AFTER the CPU has already observed completion. Do not turn
+                // that cross-clock failure into a fictitious queue bottleneck.
+                if(finished.status==MTLCommandBufferStatusCompleted && submitted>0 &&
+                   isfinite(gpuStart) && isfinite(gpuEnd) && gpuStart>=submitted && gpuEnd>=gpuStart && gpuEnd<=cpuCompleted){
+                    self->_presentationTiming.gpuTimed++;
+                    self->_presentationTiming.gpuQueueSeconds+=gpuStart-submitted;
+                    self->_presentationTiming.gpuWorkSeconds+=gpuEnd-gpuStart;
+                    self->_presentationTiming.gpuQueueDelays[(NSUInteger)MIN(255.,(gpuStart-submitted)*1000.)]++;
+                    self->_presentationTiming.gpuDurations[(NSUInteger)MIN(255.,(gpuEnd-gpuStart)*1000.)]++;
+                    self->_presentationTiming.gpuCompletionDelays[(NSUInteger)MIN(255.,(gpuEnd-submitted)*1000.)]++;
+                }else self->_presentationTiming.gpuUnavailable++;
+            }
+            if(fingerprint){fingerprint.fingerprint=hash;fingerprint.regionFingerprint=regionHash;fingerprint.marker=marker;fingerprint.valid=finished.status==MTLCommandBufferStatusCompleted;
+                fingerprint.gpuReady=YES;[self resolveFingerprint:fingerprint];}
             self.frameInFlight = NO;
             BOOL current=finished.status==MTLCommandBufferStatusCompleted&&epoch==self.displayEpoch&&!self.displaySleeping;
-            if(current){self.lastPresentedTexture=presentedTexture;self.presentationLayer.hidden=NO;}
+            if(current){self.lastPresentedTexture=presentedTexture;self.presentationLayer.hidden=NO;
+                self.completedFrames++;self.lastFrameCompletedAt=CACurrentMediaTime();}
             // Explicit developer diagnostic only. Snapshot our own shared frame
             // after successful GPU presentation, before returning its ownership.
             // No capture or filesystem work occurs in normal app launches.
             NSString *directory=self.diagnosticsDirectory;
-            if(directory.length && current) {
+            if(directory.length && current && !sourceTexture) {
                 NSString *request=[directory stringByAppendingPathComponent:@"capture.request"];
                 if([NSFileManager.defaultManager fileExistsAtPath:request]) {
                     CGColorSpaceRef color=CGColorSpaceCreateDeviceRGB();
@@ -499,6 +958,10 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
                     }
                 }
             }
+            // Start the held newest version before invoking the old owner's
+            // callback. Reentrant newer submissions then queue behind that
+            // blit instead of allowing an older pending image to run last.
+            [self drainPendingSurface];
             completion(current);
         });
     }];

@@ -1,0 +1,27 @@
+diff --git a/Library/OcAppleKernelLib/Link.c b/Library/OcAppleKernelLib/Link.c
+index d8d55e1..06bced2 100644
+--- a/Library/OcAppleKernelLib/Link.c
++++ b/Library/OcAppleKernelLib/Link.c
+@@ -1969,13 +1969,19 @@ InternalPrelinkKext (
+       (UINTN)(LinkEditFileSize - LinkEditSize)
+       );
+ 
+-    LinkEditSize = MACHO_ALIGN (LinkEditSize);
++    //
++    // Keep the file span at its actual packed length. Rounding it up can
++    // exceed MachoContext->FileSize for native 10.8 kexts whose original
++    // __LINKEDIT is not page-sized. The checked segment iterator would then
++    // omit it, and the reinitialised context could not expose its exports to
++    // a subsequent injected dependency. Only virtual storage needs padding.
++    //
+     if (Context->Is32Bit) {
+       LinkEditSegment->Segment32.FileSize = LinkEditSize;
+-      LinkEditSegment->Segment32.Size     = LinkEditSize;
++      LinkEditSegment->Segment32.Size     = MACHO_ALIGN (LinkEditSize);
+     } else {
+       LinkEditSegment->Segment64.FileSize = LinkEditSize;
+-      LinkEditSegment->Segment64.Size     = LinkEditSize;
++      LinkEditSegment->Segment64.Size     = MACHO_ALIGN (LinkEditSize);
+     }
+ 
+     DySymtab->LocalRelocationsOffset = (UINT32)(LinkEditFileOffset + RelocationsOffset);

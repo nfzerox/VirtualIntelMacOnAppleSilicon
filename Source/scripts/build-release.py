@@ -105,7 +105,7 @@ def main():
     signing_identity = resolve_identity(SOURCE)
     epoch = output('git', '-C', SOURCE, 'show', '-s', '--format=%ct', revision)
     xcode = output('xcodebuild', '-version')
-    sdk = output('xcrun', '--show-sdk-version')
+    sdk = output('xcrun', '--sdk', 'macosx', '--show-sdk-version')
     if args.output is None:
         parent = os.environ.get('VIM_BUILD_SCRATCH')
         if not parent:

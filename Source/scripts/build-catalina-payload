@@ -106,12 +106,6 @@ for resource in MTLRaytracingRuntime.rtlib MTLBVHBuilder.metallib MTLECBE.metall
         "$output/System/Library/Frameworks/Metal.framework/Versions/A/Resources/$resource"
 done
 
-(
-    cd "$output"
-    find . -type f ! -name manifest.sha256 -print0 | LC_ALL=C sort -z | \
-        xargs -0 shasum -a 256 > manifest.sha256
-)
-
 codesign --verify --strict --verbose=2 \
     "$output/System/Library/Extensions/IOAcceleratorFamily2.kext" \
     "$output/System/Library/Extensions/IOSurface.kext" \

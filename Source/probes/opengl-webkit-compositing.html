@@ -1,0 +1,95 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>WebKit compositing reference</title>
+<style>
+body { margin:0; padding:32px; font:18px Helvetica,sans-serif; color:#182638;
+  background:linear-gradient(125deg,#e5f3ff,#fff1df); }
+h1 { margin:0 0 12px; font-size:30px; }
+.grid { display:-webkit-flex; -webkit-flex-wrap:wrap; gap:24px; }
+.card { box-sizing:border-box; width:42%; min-width:240px; height:240px;
+  margin:14px; padding:20px; border-radius:14px; background:white;
+  box-shadow:0 8px 20px rgba(0,20,60,.3); overflow:hidden; }
+.promoted { -webkit-transform:translateZ(0); }
+.rotated { -webkit-transform:translateZ(0) rotate(3deg); }
+.stripes { height:115px; margin-top:16px;
+  background:repeating-linear-gradient(45deg,#e95353 0,#e95353 18px,#63baff 18px,#63baff 36px); }
+.scroll { height:150px; overflow:scroll; -webkit-transform:translateZ(0); }
+.scroll div { height:420px; background:linear-gradient(#ffe08a,#36bda0,#ab7edb); }
+canvas { width:100%; height:140px; margin-top:12px; }
+button { font:inherit; margin:12px 8px 12px 0; padding:8px 14px; }
+.footer { height:600px; padding:20px; background:linear-gradient(#c6e8ff,#fcbbd2); }
+</style>
+<h1>WebKit compositing reference</h1>
+<p>Compare the same page in native Intel Mavericks Safari and the VM.
+All four panels should retain their colors while scrolling and resizing.</p>
+<button onclick="document.body.className=document.body.className?'':'shift';
+ document.getElementById('rotated').style.webkitTransform=document.body.className?
+ 'translateZ(0) rotate(-3deg)':'translateZ(0) rotate(3deg)'">Change transform</button>
+<button onclick="window.scrollTo(0,350)">Scroll down</button>
+<div class="grid">
+ <div class="card">CPU-painted stripes<div class="stripes"></div></div>
+ <div class="card promoted">Composited stripes<div class="stripes"></div></div>
+ <div class="card rotated" id="rotated">Canvas / rotated layer<canvas id="canvas" width="640" height="280"></canvas></div>
+ <div class="card">Composited scrolling clip<div class="scroll"><div>Top<br>Redraw must preserve this gradient.</div></div></div>
+ <div class="card promoted">WebGL texture / framebuffer<canvas id="webgl" width="64" height="64"></canvas><small id="webgl-status">Not run</small></div>
+</div>
+<div class="footer">Page-scroll gradient: no black blocks or lost panels.<br><button onclick="window.scrollTo(0,0)">Back to top</button></div>
+<script>
+var c=document.getElementById('canvas').getContext('2d');
+for(var y=0;y<280;y+=28)for(var x=0;x<640;x+=32){
+ c.fillStyle=((x/32+y/28)%2)?'#28b599':'#7955bf';c.fillRect(x,y,32,28);
+}
+c.fillStyle='white';c.font='bold 38px Helvetica';c.fillText('Canvas pixels',32,155);
+
+// Finite local WebGL probe: no animation loop, network, extension dependency,
+// renderer preference change or fallback that could hide a failed GPU path.
+// Exact readback qualifies only this small draw, not browser/GL conformance.
+(function () {
+ var out=document.getElementById('webgl-status');
+ var canvas=document.getElementById('webgl');
+ var creationError='';
+ canvas.addEventListener('webglcontextcreationerror',function(event){creationError=event.statusMessage || 'Unspecified creation error';},false);
+ var gl=canvas.getContext('webgl',{preserveDrawingBuffer:true}) ||
+        canvas.getContext('experimental-webgl',{preserveDrawingBuffer:true});
+ if(!gl){out.textContent='WebGL unavailable: '+(creationError || 'no creation error reported; compare native policy');return;}
+ try {
+  function shader(type,source) {
+   var s=gl.createShader(type);gl.shaderSource(s,source);gl.compileShader(s);
+   if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));
+   return s;
+  }
+  var vs=shader(gl.VERTEX_SHADER,'attribute vec2 p; varying vec2 uv; void main(){uv=(p+1.0)*0.5;gl_Position=vec4(p,0.0,1.0);}');
+  var fs=shader(gl.FRAGMENT_SHADER,'precision mediump float; varying vec2 uv; uniform sampler2D image; void main(){gl_FragColor=texture2D(image,uv);}');
+  var program=gl.createProgram();gl.attachShader(program,vs);gl.attachShader(program,fs);gl.linkProgram(program);
+  if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program));
+  gl.useProgram(program);
+  var buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+  var p=gl.getAttribLocation(program,'p');gl.enableVertexAttribArray(p);gl.vertexAttribPointer(p,2,gl.FLOAT,false,0,0);
+  function texture(width,height,pixels) {
+   var t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);
+   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);
+   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,width,height,0,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+   return t;
+  }
+  var pixels=new Uint8Array([255,0,0,255,0,255,0,255,0,0,255,255,255,255,255,255]);
+  var source=texture(2,2,pixels),destination=texture(64,64,null);
+  var fbo=gl.createFramebuffer();gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,destination,0);
+  if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE)throw new Error('Incomplete framebuffer');
+  gl.bindTexture(gl.TEXTURE_2D,source);gl.uniform1i(gl.getUniformLocation(program,'image'),0);
+  gl.viewport(0,0,64,64);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+  var read=new Uint8Array(4),coordinates=[[16,16],[48,16],[16,48],[48,48]];
+  for(var i=0;i<4;i++) {
+   gl.readPixels(coordinates[i][0],coordinates[i][1],1,1,gl.RGBA,gl.UNSIGNED_BYTE,read);
+   for(var channel=0;channel<4;channel++)if(read[channel]!==pixels[i*4+channel])throw new Error('Framebuffer pixel mismatch at quadrant '+i);
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.bindTexture(gl.TEXTURE_2D,destination);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+  var error=gl.getError();if(error!==gl.NO_ERROR)throw new Error('GL error '+error);
+  out.textContent='PASS: four framebuffer pixels; inspect visible canvas too';
+ } catch(e) {out.textContent='FAIL: '+e.message;}
+}());
+</script>

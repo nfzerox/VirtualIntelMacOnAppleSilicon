@@ -37,6 +37,10 @@
 
 #include "chardev/char-io.h"
 #include "chardev/char-socket.h"
+#ifdef CONFIG_DARWIN
+#include "io/channel-watch.h"
+#include <sys/event.h>
+#endif
 
 static gboolean socket_reconnect_timeout(gpointer opaque);
 static void tcp_chr_telnet_init(Chardev *chr);
@@ -343,6 +347,12 @@ static void remove_hup_source(SocketChardev *s)
         g_source_unref(s->hup_source);
         s->hup_source = NULL;
     }
+#ifdef CONFIG_DARWIN
+    if (s->hup_kqueue >= 0) {
+        close(s->hup_kqueue);
+        s->hup_kqueue = -1;
+    }
+#endif
 }
 
 static void char_socket_yank_iochannel(void *opaque)
@@ -525,6 +535,52 @@ static gboolean tcp_chr_hup(QIOChannel *channel,
     return G_SOURCE_REMOVE;
 }
 
+#ifdef CONFIG_DARWIN
+static gboolean tcp_chr_unix_eof(QIOChannel *channel, GIOCondition cond,
+                                  void *opaque)
+{
+    SocketChardev *s = SOCKET_CHARDEV(opaque);
+    struct kevent event;
+    const struct timespec now = {0};
+
+    if (kevent(s->hup_kqueue, NULL, 0, &event, 1, &now) == 1 &&
+        (event.flags & EV_EOF)) {
+        return tcp_chr_hup(channel, cond, opaque);
+    }
+    return G_SOURCE_CONTINUE;
+}
+
+static GSource *tcp_chr_unix_eof_source(SocketChardev *s)
+{
+    struct kevent event;
+    int queue;
+
+    if (!s->addr || s->addr->type != SOCKET_ADDRESS_TYPE_UNIX ||
+        s->ioc != QIO_CHANNEL(s->sioc)) {
+        return NULL;
+    }
+    queue = kqueue();
+    if (queue < 0) {
+        return NULL;
+    }
+    qemu_set_cloexec(queue);
+    /*
+     * Darwin's GLib poll fallback can omit G_IO_HUP with unread data.
+     * Watch native EOF independently of the frontend's receive capacity.
+     * A high per-watch low-water mark leaves ordinary input to the existing
+     * read source; EOF bypasses the watermark, even with a full UART FIFO.
+     */
+    EV_SET(&event, s->sioc->fd, EVFILT_READ, EV_ADD | EV_CLEAR,
+           NOTE_LOWAT, INT_MAX, NULL);
+    if (kevent(queue, &event, 1, NULL, 0, NULL) < 0) {
+        close(queue);
+        return NULL;
+    }
+    s->hup_kqueue = queue;
+    return qio_channel_create_fd_watch(s->ioc, queue, G_IO_IN);
+}
+#endif
+
 static int tcp_chr_sync_read(Chardev *chr, const uint8_t *buf, int len)
 {
     SocketChardev *s = SOCKET_CHARDEV(chr);
@@ -600,6 +656,7 @@ static char *qemu_chr_compute_filename(SocketChardev *s)
 static void update_ioc_handlers(SocketChardev *s)
 {
     Chardev *chr = CHARDEV(s);
+    QIOChannelFunc hangup = tcp_chr_hup;
 
     if (s->state != TCP_CHARDEV_STATE_CONNECTED) {
         return;
@@ -612,7 +669,15 @@ static void update_ioc_handlers(SocketChardev *s)
                                      chr->gcontext);
 
     remove_hup_source(s);
-    s->hup_source = qio_channel_create_watch(s->ioc, G_IO_HUP);
+#ifdef CONFIG_DARWIN
+    s->hup_source = tcp_chr_unix_eof_source(s);
+    if (s->hup_source) {
+        hangup = tcp_chr_unix_eof;
+    }
+#endif
+    if (!s->hup_source) {
+        s->hup_source = qio_channel_create_watch(s->ioc, G_IO_HUP);
+    }
     /*
      * poll() is liable to return POLLHUP even when there is
      * still incoming data available to read on the FD. If
@@ -629,7 +694,7 @@ static void update_ioc_handlers(SocketChardev *s)
      * FD
      */
     g_source_set_priority(s->hup_source, G_PRIORITY_DEFAULT + 1);
-    g_source_set_callback(s->hup_source, (GSourceFunc)tcp_chr_hup,
+    g_source_set_callback(s->hup_source, (GSourceFunc)hangup,
                           chr, NULL);
     g_source_attach(s->hup_source, chr->gcontext);
 }
@@ -1576,10 +1641,20 @@ static void char_socket_class_init(ObjectClass *oc, const void *data)
                                    NULL);
 }
 
+#ifdef CONFIG_DARWIN
+static void char_socket_darwin_init(Object *obj)
+{
+    SOCKET_CHARDEV(obj)->hup_kqueue = -1;
+}
+#endif
+
 static const TypeInfo char_socket_type_info = {
     .name = TYPE_CHARDEV_SOCKET,
     .parent = TYPE_CHARDEV,
     .instance_size = sizeof(SocketChardev),
+#ifdef CONFIG_DARWIN
+    .instance_init = char_socket_darwin_init,
+#endif
     .instance_finalize = char_socket_finalize,
     .class_init = char_socket_class_init,
 };

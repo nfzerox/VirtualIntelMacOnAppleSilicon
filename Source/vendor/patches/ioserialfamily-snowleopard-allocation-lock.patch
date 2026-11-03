@@ -1,0 +1,70 @@
+--- a/IOSerialFamily.kmodproj/IOSerialBSDClient.cpp
++++ b/IOSerialFamily.kmodproj/IOSerialBSDClient.cpp
+@@ -228,0 +229 @@
++    IOLock *fAllocationLock;
+@@ -235,0 +237,2 @@
++    void lockAllocation() { IOLockLock(fAllocationLock); }
++    void unlockAllocation() { IOLockUnlock(fAllocationLock); }
+@@ -248,0 +252,6 @@
++class SerialAllocationScope {
++public:
++    SerialAllocationScope() { sBSDGlobals.lockAllocation(); }
++    ~SerialAllocationScope() { sBSDGlobals.unlockAllocation(); }
++};
++
+@@ -405 +414 @@
+-    return (fClients && fNames && fMajor != (unsigned int) -1);
++    return (fAllocationLock && fClients && fNames && fMajor != (unsigned int) -1);
+@@ -426,0 +436 @@
++    fAllocationLock = IOLockAlloc();
+@@ -431 +441 @@
+-    if (fClients && fNames) {
++    if (fAllocationLock && fClients && fNames) {
+@@ -460,0 +471,2 @@
++    if (fAllocationLock)
++        IOLockFree(fAllocationLock);
+@@ -517,3 +528,0 @@
+-// Assumes the caller has grabbed the funnel if necessary.
+-// Any call from UNIX is funnelled, I need to funnel any IOKit upcalls
+-// explicitly.
+@@ -525 +534,4 @@
+-    return fClients[TTY_UNIT(dev)];
++    SerialAllocationScope guard;
++    unsigned unit = TTY_UNIT(dev);
++    IOSerialBSDClient *client = unit < fLastMinor ? fClients[unit] : 0;
++    return client == (IOSerialBSDClient *) -1 ? 0 : client;
+@@ -828 +840,3 @@
+-    do {
++    bool registered = false;
++    {
++        SerialAllocationScope guard;
+@@ -830,13 +844,5 @@
+-        if ((dev_t) -1 == fBaseDev)
+-            break;
+-
+-        if (!createDevNodes())
+-            break;
+-
+-        if (!setBaseTypeForDev())
+-            break;
+-
+-        if (!sBSDGlobals.registerTTY(fBaseDev, this))
+-            break;
+-
+-        // Let userland know that this serial port exists
++        registered = fBaseDev != (dev_t) -1 && createDevNodes() &&
++            setBaseTypeForDev() && sBSDGlobals.registerTTY(fBaseDev, this);
++    }
++    if (registered) {
++        // Publish without holding the allocation lock across IOKit matching.
+@@ -845 +851 @@
+-    } while (0);
++    }
+@@ -942 +948,2 @@
+-	if ((dev_t) -1 != fBaseDev)
++	if ((dev_t) -1 != fBaseDev) {
++	    SerialAllocationScope guard;
+@@ -943,0 +951 @@
++	}
+@@ -3164,0 +3173 @@
++	SerialAllocationScope guard;

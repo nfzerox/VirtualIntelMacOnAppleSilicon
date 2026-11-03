@@ -9,26 +9,16 @@
  */
 
 #ifdef TIGER // needed for compile fix
-#include <sys/param.h>
-#include <sys/systm.h>
-#include <sys/conf.h>
-#include <sys/msgbuf.h>
-#include <sys/proc_internal.h>
-#include <sys/ioctl.h>
-#include <sys/tty.h>
-#include <sys/file_internal.h>
-#include <sys/syslog.h>
+#include <sys/types.h>
 #include <stdarg.h>
-#include <sys/malloc.h>
-#include <sys/lock.h>
-
-#include <machine/spl.h>
 #include <libkern/libkern.h>
 
 int
 vprintf_vhda(const char *fmt, va_list ap)
 {
-	char tmp[65536]; /* Should be enough, right? */
+	// A native i386 kernel stack cannot hold the upstream64KiB temporary.
+	// Bound cold diagnostics without allocating or recursing into the driver.
+	char tmp[512];
 
 	vsnprintf(tmp, sizeof(tmp), fmt, ap);
 	printf("%s", tmp);
@@ -46,6 +36,32 @@ int snprintf_vhda(char *text, size_t maxlen, const char *fmt, ...)
     va_end(ap);
 	
     return retval;
+}
+
+size_t vim_tiger_audio_strlcpy(char *destination, const char *source, size_t capacity)
+{
+    size_t length = 0;
+    while (source[length]) ++length;
+    if (capacity) {
+        size_t count = length < capacity - 1 ? length : capacity - 1;
+        bcopy(source, destination, count);
+        destination[count] = 0;
+    }
+    return length;
+}
+
+size_t vim_tiger_audio_strlcat(char *destination, const char *source, size_t capacity)
+{
+    size_t used = 0, length = 0;
+    while (used < capacity && destination[used]) ++used;
+    while (source[length]) ++length;
+    if (used < capacity) {
+        size_t available = capacity - used - 1;
+        size_t count = length < available ? length : available;
+        bcopy(source, destination + used, count);
+        destination[used + count] = 0;
+    }
+    return used + length;
 }
 
 #endif

@@ -96,6 +96,10 @@ struct endp_data {
     int32_t bufpq_size;
     int32_t bufpq_target_size;
     USBPacket *pending_async_packet;
+    /* Residue of one physical SuperSpeed packet when serving EHCI. */
+    uint8_t high_speed_tail[512];
+    uint16_t high_speed_tail_len;
+    bool high_speed_tail_short;
 };
 
 struct PacketIdQueueEntry {
@@ -154,6 +158,7 @@ static void usbredir_hello(void *priv, struct usb_redir_hello_header *h);
 static void usbredir_device_connect(void *priv,
     struct usb_redir_device_connect_header *device_connect);
 static void usbredir_device_disconnect(void *priv);
+static void usbredir_setup_usb_eps(USBRedirDevice *dev);
 static void usbredir_interface_info(void *priv,
     struct usb_redir_interface_info_header *interface_info);
 static void usbredir_ep_info(void *priv,
@@ -380,6 +385,7 @@ static void usbredir_cancel_packet(USBDevice *udev, USBPacket *p)
     USBRedirDevice *dev = USB_REDIRECT(udev);
     int i = USBEP2I(p->ep);
 
+    dev->endpoint[i].high_speed_tail_len = 0;
     if (p->combined) {
         usb_combined_packet_cancel(udev, p);
         return;
@@ -520,6 +526,9 @@ static void usbredir_handle_reset(USBDevice *udev)
 {
     USBRedirDevice *dev = USB_REDIRECT(udev);
 
+    for (int i = 0; i < MAX_ENDPOINTS; i++) {
+        dev->endpoint[i].high_speed_tail_len = 0;
+    }
     DPRINTF("reset device\n");
     usbredirparser_send_reset(dev->parser);
     usbredirparser_do_write(dev->parser);
@@ -783,6 +792,32 @@ static void usbredir_stop_bulk_receiving(USBRedirDevice *dev, uint8_t ep)
     usbredir_free_bufpq(dev, ep);
 }
 
+static bool usbredir_legacy_bot_in(USBRedirDevice *dev, int i)
+{
+    if (!dev->bulk_only || !(I2EP(i) & USB_DIR_IN) || !dev->dev.port ||
+        dev->device_info.speed != usb_redir_speed_super ||
+        !(dev->dev.port->speedmask & USB_SPEED_MASK_HIGH) ||
+        (dev->dev.port->speedmask & USB_SPEED_MASK_SUPER) ||
+        dev->endpoint[i].max_packet_size != 1024) {
+        return false;
+    }
+    for (int j = 0; j < dev->interface_info.interface_count && j < 32; j++) {
+        if (dev->interface_info.interface[j] == dev->endpoint[i].interface &&
+            dev->interface_info.interface_class[j] == 8 &&
+            dev->interface_info.interface_subclass[j] == 6 &&
+            dev->interface_info.interface_protocol[j] == 0x50) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static size_t usbredir_legacy_bot_wire_length(size_t size)
+{
+    /* Leave short, non-sector requests such as BOT CSW untouched. */
+    return size % 1024 == 512 ? size + 512 : size;
+}
+
 static void usbredir_handle_bulk_data(USBRedirDevice *dev, USBPacket *p,
                                       uint8_t ep)
 {
@@ -793,6 +828,22 @@ static void usbredir_handle_bulk_data(USBRedirDevice *dev, USBPacket *p,
     if (usbredir_already_in_flight(dev, p->id)) {
         p->status = USB_RET_ASYNC;
         return;
+    }
+
+    if (usbredir_legacy_bot_in(dev, EP2I(ep))) {
+        struct endp_data *endp = &dev->endpoint[EP2I(ep)];
+        if (size && endp->high_speed_tail_len) {
+            size_t prefix = MIN(size, endp->high_speed_tail_len);
+            usb_packet_copy(p, endp->high_speed_tail, prefix);
+            endp->high_speed_tail_len -= prefix;
+            memmove(endp->high_speed_tail, endp->high_speed_tail + prefix,
+                    endp->high_speed_tail_len);
+            size -= prefix;
+            if (!size || endp->high_speed_tail_short) {
+                return;
+            }
+        }
+        size = usbredir_legacy_bot_wire_length(size);
     }
 
     if (dev->endpoint[EP2I(ep)].bulk_receiving_enabled) {
@@ -1009,6 +1060,7 @@ static void usbredir_stop_ep(USBRedirDevice *dev, int i)
 {
     uint8_t ep = I2EP(i);
 
+    dev->endpoint[i].high_speed_tail_len = 0;
     switch (dev->endpoint[i].type) {
     case USB_ENDPOINT_XFER_BULK:
         if (ep & USB_DIR_IN) {
@@ -1124,6 +1176,18 @@ static void usbredir_handle_control(USBDevice *udev, USBPacket *p,
 
     /* Special cases for certain standard device requests */
     switch (request) {
+    case EndpointOutRequest | USB_REQ_CLEAR_FEATURE:
+        if (value == 0) { /* ENDPOINT_HALT */
+            dev->endpoint[EP2I(index)].high_speed_tail_len = 0;
+        }
+        break;
+    case ClassInterfaceOutRequest | 0xff: /* BOT reset recovery */
+        for (int i = 0; i < MAX_ENDPOINTS; i++) {
+            if (dev->endpoint[i].interface == index) {
+                dev->endpoint[i].high_speed_tail_len = 0;
+            }
+        }
+        break;
     case DeviceOutRequest | USB_REQ_SET_ADDRESS:
         DPRINTF("set address %d\n", value);
         dev->dev.addr = value;
@@ -1708,6 +1772,10 @@ static void usbredir_device_connect(void *priv,
 
     dev->dev.speedmask = (1 << dev->dev.speed) | dev->compatible_speedmask;
     dev->device_info = *device_connect;
+    if (dev->bulk_only && dev->device_info.speed == usb_redir_speed_super &&
+        !(dev->dev.port->speedmask & USB_SPEED_MASK_SUPER)) {
+        usbredir_setup_usb_eps(dev);
+    }
 
     if (usbredir_check_filter(dev)) {
         WARNING("Device %04x:%04x rejected by device filter, not attaching\n",
@@ -1786,7 +1854,10 @@ static void usbredir_set_pipeline(USBRedirDevice *dev, struct USBEndpoint *uep)
          * Explicitly clear this when an alternate changes from BOT to UAS.
          * Local fork debugging fix, not an upstream contribution.
          */
-        uep->pipeline = uep->max_streams == 0 && uep->max_packet_size != 0 &&
+        /* A widened read can leave bytes for the next packet. Submit those
+         * reads serially so later requests cannot overtake the residue. */
+        uep->pipeline = !usbredir_legacy_bot_in(dev, USBEP2I(uep)) &&
+            uep->max_streams == 0 && uep->max_packet_size != 0 &&
             usbredirparser_peer_has_cap(dev->parser,
                                        usb_redir_cap_32bits_bulk_length);
     }
@@ -2081,6 +2152,30 @@ static void usbredir_bulk_packet(void *priv, uint64_t id,
     if (p) {
         size_t size = usb_packet_size(p);
         usbredir_handle_status(dev, p, bulk_packet->status);
+        if (usbredir_legacy_bot_in(dev, EP2I(ep))) {
+            struct endp_data *endp = &dev->endpoint[EP2I(ep)];
+            size_t needed = size - p->actual_length;
+            size_t wire = usbredir_legacy_bot_wire_length(needed);
+            endp->high_speed_tail_len = 0;
+            if (p->status == USB_RET_SUCCESS && data_len == len &&
+                data_len >= 0 && (size_t)data_len <= wire) {
+                size_t copied = MIN(needed, data_len);
+                if (copied) {
+                    usb_packet_copy(p, data, copied);
+                }
+                endp->high_speed_tail_len = data_len - copied;
+                if (endp->high_speed_tail_len) {
+                    memcpy(endp->high_speed_tail, data + copied,
+                           endp->high_speed_tail_len);
+                    endp->high_speed_tail_short = (size_t)data_len < wire;
+                }
+            } else if (p->status == USB_RET_SUCCESS) {
+                p->status = USB_RET_BABBLE;
+            }
+            usb_packet_complete(&dev->dev, p);
+            free(data);
+            return;
+        }
         if (data_len > 0) {
             usbredir_log_data(dev, "bulk data in:", data, data_len);
             if (data_len > size) {

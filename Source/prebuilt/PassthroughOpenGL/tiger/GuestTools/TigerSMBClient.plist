@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Architecture</key>
+	<string>i386</string>
+	<key>Files</key>
+	<dict>
+		<key>SMB-COPYRIGHT.txt</key>
+		<true/>
+		<key>SMB-VIM-LICENSE.txt</key>
+		<true/>
+		<key>TigerSMBClient-Info.plist</key>
+		<true/>
+		<key>tiger-smbfs</key>
+		<true/>
+	</dict>
+	<key>FormatVersion</key>
+	<integer>1</integer>
+	<key>Guest</key>
+	<string>tiger</string>
+	<key>MinimumOS</key>
+	<string>10.4</string>
+	<key>PolicyVersion</key>
+	<integer>2</integer>
+	<key>RequiresGuestDeveloperTools</key>
+	<false/>
+	<key>UpstreamCommit</key>
+	<string>1b47f5645571a9af0e85e55af5ff68f09d310537</string>
+</dict>
+</plist>

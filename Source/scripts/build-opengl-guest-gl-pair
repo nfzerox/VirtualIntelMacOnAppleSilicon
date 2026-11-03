@@ -1,0 +1,84 @@
+#!/bin/bash
+# Paired PassthroughOpenGL GLI/client build, independent of QEMU/host rebuilding.
+# Requires the period SDK and an i386-capable Apple compiler (Rosetta on ARM).
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+sdk="${VIM_OPENGL_SDK:-$root/resources/sdk/MacOSX10.9.sdk}"
+cc="${VIM_OPENGL_CC:-$root/resources/xcode/XcodeMojave.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang}"
+build="${VIM_GUEST_GL_PAIR_BUILD:-$root/Build/PassthroughOpenGLResearch/GuestGLPair}"
+minimum="${VIM_OPENGL_MIN_VERSION:-10.9}"
+dispatch_sdk="${VIM_OPENGL_DISPATCH_SDK:-$sdk}"
+wire_sdk="${VIM_OPENGL_WIRE_SDK:-$sdk}"
+[[ -x "$cc" && -f "$sdk/usr/include/stdio.h" ]] || {
+    echo 'Set VIM_OPENGL_CC to an i386-capable Apple clang and VIM_OPENGL_SDK to the macOS 10.9 SDK.' >&2
+    exit 2
+}
+mkdir -p "$build"
+python3 "$root/scripts/generate-passthrough-opengl.py" "$wire_sdk" "$build"
+dispatch_args=(--dispatch-sdk "$dispatch_sdk")
+if [[ "$minimum" == 10.7 ]]; then dispatch_args=(--runtime-dispatch-count 968); fi
+if [[ "$minimum" == 10.14 ]]; then dispatch_args=(--runtime-dispatch-count 975); fi
+python3 "$root/scripts/generate-opengl-gli.py" "$build/passthrough-opengl-gli-map.json" "$build/passthrough-opengl-gli-generated.inc" "${dispatch_args[@]}"
+flags=(-O2 -g -fno-omit-frame-pointer -Wall -Wextra -Werror -Wno-deprecated-declarations
+    -Wno-unused-function -Wno-missing-braces -Wno-missing-field-initializers
+    -arch x86_64 -arch i386 -isysroot "$sdk" -mmacosx-version-min="$minimum" -I "$build")
+if [[ "$minimum" == 10.5 || "$minimum" == 10.6 || "$minimum" == 10.7 || "$minimum" == 10.14 ]]; then
+    expected=968
+    if [[ "$minimum" == 10.5 ]]; then expected=757; fi
+    if [[ "$minimum" == 10.6 ]]; then expected=764; fi
+    if [[ "$minimum" == 10.14 ]]; then expected=975; fi
+    [[ -f "$build/PeriodABI/OpenGL/gliDispatch.h" ]] &&
+        grep -Fxq "#define VIM_GLI_DISPATCH_COUNT $expected" "$build/passthrough-opengl-gli-generated.inc" || {
+        echo 'This guest requires its measured period dispatch layout.' >&2
+        exit 2
+    }
+    flags+=(-I "$build/PeriodABI")
+fi
+client_flags=("${flags[@]}")
+if [[ "$minimum" == 10.6 ]]; then
+    # Keep the bounded memchr idiom as a native call, guarding against a
+    # compiler substituting strnlen, which 10J3250 libSystem does not export.
+    # Keep memchr as its optimized native library call;
+    # retain other builtins and hot-path optimization.
+    client_flags+=(-fno-builtin-memchr)
+fi
+if [[ "${VIM_PASSTHROUGH_OPENGL_CLIENT_PROFILE:-0}" == 1 ]]; then client_flags+=(-DVIM_PASSTHROUGH_OPENGL_CLIENT_PROFILE=1); fi
+# Research-only own-PPC-function cache-invalidation control. Never enable in
+# packaged guest support: production performs only the guarded CGL correction.
+if [[ "${VIM_ROSETTA_RECOVERY_DIAGNOSTICS:-0}" == 1 ]]; then client_flags+=(-DVIM_ROSETTA_RECOVERY_DIAGNOSTICS=1); fi
+"$cc" "${client_flags[@]}" -dynamiclib "$root/PassthroughOpenGL/passthrough-opengl-client.c" \
+    -Wl,-install_name,@rpath/libVIMPassthroughOpenGL.dylib -framework IOKit -framework CoreFoundation \
+    -o "$build/libVIMPassthroughOpenGL.dylib"
+if [[ "${VIM_PASSTHROUGH_OPENGL_CLIENT_PROFILE:-0}" == 1 ]]; then
+    # Check the actual standalone artifact, not only a fixture which arms its
+    # private metadata from C and can conceal global-optimizer elimination.
+    for arch in x86_64 i386; do
+        for symbol in active serial inflight ms report; do
+            nm -arch "$arch" -j "$build/libVIMPassthroughOpenGL.dylib" |
+                grep -Fx "_dg_client_profile_$symbol" >/dev/null || {
+                    echo "Missing $arch guest profile metadata: $symbol" >&2
+                    exit 1
+                }
+        done
+    done
+fi
+frameworks=(-framework CoreFoundation -framework CoreGraphics -framework IOKit)
+if [[ "$minimum" != 10.5 ]]; then frameworks+=(-framework IOSurface); fi
+"$cc" "${client_flags[@]}" -DVIM_PASSTHROUGH_OPENGL_BACKEND=1 \
+    -dynamiclib -fvisibility=hidden "$root/PassthroughOpenGL/passthrough-opengl-gli.c" "$build/libVIMPassthroughOpenGL.dylib" \
+    -Wl,-install_name,@rpath/libVIMGLI.dylib -Wl,-exported_symbols_list,"$root/PassthroughOpenGL/gli.exports" \
+    -Wl,-rpath,@loader_path "${frameworks[@]}" \
+    -o "$build/GLEngine"
+install_name_tool -change @rpath/libVIMPassthroughOpenGL.dylib @loader_path/libVIMPassthroughOpenGL.dylib "$build/GLEngine"
+for binary in GLEngine libVIMPassthroughOpenGL.dylib; do
+    for arch in x86_64 i386; do
+        lipo "$build/$binary" -verify_arch "$arch"
+    done
+    codesign --force --sign - --digest-algorithm=sha1,sha256 "$build/$binary"
+    codesign --verify --strict "$build/$binary"
+done
+"$cc" "${flags[@]}" "$root/probes/opengl-gli-accelerator-service.c" \
+    -framework IOKit -framework CoreFoundation -o "$build/passthrough-opengl-gli-accelerator-service"
+"$cc" "${flags[@]}" "$root/probes/opengl-direct-array-allocation.c" \
+    -framework IOKit -framework CoreFoundation -o "$build/opengl-direct-array-allocation"
+printf 'Built PassthroughOpenGL x64/i386 pair: %s\n' "$build"

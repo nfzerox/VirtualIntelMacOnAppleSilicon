@@ -59,6 +59,16 @@ static inline NSString *VIMAudioSelection(NSDictionary *configuration,BOOL input
     if(configuration[@"AudioEnabled"]&&![configuration[@"AudioEnabled"] boolValue])return @"disabled";
     return configuration[input?@"AudioInputDevice":@"AudioOutputDevice"]?:@"default";
 }
+static inline BOOL VIMGuestSupportsRetinaDisplay(NSDictionary *configuration) {
+    return ![@[@"tiger",@"leopard",@"snowleopard"] containsObject:configuration[@"Guest"]?:@""];
+}
 static inline NSString *VIMDisplayMode(NSDictionary *configuration) {
-    return configuration[@"DisplayMode"]?:(configuration[@"RetinaEnabled"]&&![configuration[@"RetinaEnabled"] boolValue]?@"scaled":@"retina");
+    NSString *mode=configuration[@"DisplayMode"];
+    // These systems have no distinct backing-pixel/logical-point mode. Old
+    // imported Retina preferences must not request an impossible 2x mode.
+    if(!VIMGuestSupportsRetinaDisplay(configuration))return [mode isEqual:@"space"]?@"space":@"scaled";
+    return mode?:(configuration[@"RetinaEnabled"]&&![configuration[@"RetinaEnabled"] boolValue]?@"scaled":@"retina");
+}
+static inline NSString *VIMDisplayScalingFilter(NSDictionary *configuration) {
+    return configuration[@"DisplayScalingFilter"]?:(VIMGuestSupportsRetinaDisplay(configuration)?@"linear":@"nearest");
 }

@@ -2,8 +2,40 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>FormatVersion</key><integer>1</integer>
-<key>Revision</key><integer>2</integer>
+<key>Revision</key><integer>8</integer>
 <key>Installers</key><array>
+<dict><key>Guest</key><string>tiger</string><key>Name</key><string>Mac OS X Tiger</string><key>Version</key><string>10.4.10</string><key>Assembly</key><string>restore-dvd</string><key>Files</key><array>
+<dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://dn720202.ca.archive.org/0/items/10.4.10-8-r-4088-acdt/10.4.10-8R4088-iMac7%2C1-Disc-1.dmg</string></dict>
+</array></dict>
+<dict><key>Guest</key><string>leopard</string><key>Name</key><string>Mac OS X Leopard</string><key>Version</key><string>10.5.7</string><key>Assembly</key><string>restore-dvd</string><key>Files</key><array>
+<dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://archive.org/download/10.5.7-9-j-3050/10.5.7-9J3050.dmg</string></dict>
+</array></dict>
+<dict><key>Guest</key><string>snowleopard</string><key>Name</key><string>Mac OS X Snow Leopard</string><key>Version</key><string>10.6.7</string><key>Assembly</key><string>restore-dvd</string><key>Files</key><array>
+<dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://archive.org/download/macosx-snowleopard-archive/10.6.7-10J3250-MBP8X-OSX.dmg</string></dict>
+</array></dict>
+<dict><key>Guest</key><string>lion</string><key>Name</key><string>Mac OS X Lion</string><key>Version</key><string>10.7.5</string><key>Assembly</key><string>installer-dmg</string><key>Files</key><array>
+<dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://updates.cdn-apple.com/2021/macos/041-7683-20210614-E610947E-C7CE-46EB-8860-D26D71F0D3EA/InstallMacOSX.dmg</string><key>SHA256</key><string>DB0B2300DE719FA3E4EE132B55AFD4E689211AD5332760FE5FE7A30351C9E75C</string></dict>
+</array></dict>
+<dict><key>Guest</key><string>mountainlion</string><key>Name</key><string>OS X Mountain Lion</string><key>Version</key><string>10.8.5</string><key>Assembly</key><string>installer-dmg</string><key>Files</key><array>
+<dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://updates.cdn-apple.com/2021/macos/031-0627-20210614-90D11F33-1A65-42DD-BBEA-E1D9F43A6B3F/InstallMacOSX.dmg</string><key>SHA256</key><string>B006A6D63F20D0B369493469699D42D5CBCA91C295B40B273F6FE9EECA3484CE</string></dict>
+</array></dict>
+<dict><key>Guest</key><string>mavericks</string><key>Name</key><string>OS X Mavericks</string><key>Version</key><string>10.9</string><key>Assembly</key><string>recovery-esd</string><key>Files</key><array>
+<dict><key>Role</key><string>esd</string><key>URL</key><string>http://oscdn.apple.com/content/downloads/33/62/031-10295/gho4r94w66f5v4ujm0sz7k1m0hua68i6oo/OSInstaller/InstallESD.dmg</string><key>SHA256</key><string>C861FD59E82BF777496809A0D2A9B58F66691EE56738031F55874A3FE1D7C3FF</string></dict>
+</array></dict>
+<dict><key>Guest</key><string>yosemite</string><key>Name</key><string>OS X Yosemite</string><key>Version</key><string>10.10.5</string><key>Assembly</key><string>installer-dmg</string><key>Files</key><array>
+<dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://updates.cdn-apple.com/2019/cert/061-41343-20191023-02465f92-3ab5-4c92-bfe2-b725447a070d/InstallMacOSX.dmg</string></dict>
+</array></dict>
+<dict><key>Guest</key><string>elcapitan</string><key>Name</key><string>OS X El Capitan</string><key>Version</key><string>10.11.6</string><key>Assembly</key><string>installer-dmg</string><key>Files</key><array>
+<dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://updates.cdn-apple.com/2019/cert/061-41424-20191024-218af9ec-cf50-4516-9011-228c78eda3d2/InstallMacOSX.dmg</string></dict>
+</array></dict>
+<dict><key>Guest</key><string>sierra</string><key>Name</key><string>macOS Sierra</string><key>Version</key><string>10.12.6</string><key>Assembly</key><string>installer-dmg</string><key>Files</key><array>
+<dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://updates.cdn-apple.com/2019/cert/061-39476-20191023-48f365f4-0015-4c41-9f44-39d3d2aca067/InstallOS.dmg</string></dict>
+</array></dict>
+<dict><key>Guest</key><string>highsierra</string><key>Name</key><string>macOS High Sierra</string><key>Version</key><string>10.13.6</string><key>Assembly</key><string>split-legacy</string><key>Files</key><array>
+<dict><key>Role</key><string>assistant</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/06/50/041-91758-A_M8T44LH2AW/b5r4og05fhbgatve4agwy4kgkzv07mdid9/InstallAssistantAuto.pkg</string></dict>
+<dict><key>Role</key><string>recovery</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/06/50/041-91758-A_M8T44LH2AW/b5r4og05fhbgatve4agwy4kgkzv07mdid9/RecoveryHDMetaDmg.pkg</string></dict>
+<dict><key>Role</key><string>esd</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/06/50/041-91758-A_M8T44LH2AW/b5r4og05fhbgatve4agwy4kgkzv07mdid9/InstallESDDmg.pkg</string></dict>
+</array></dict>
 <dict><key>Guest</key><string>mojave</string><key>Name</key><string>macOS Mojave</string><key>Version</key><string>10.14.6</string><key>Assembly</key><string>split-legacy</string><key>Files</key><array>
 <dict><key>Role</key><string>assistant</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/17/32/061-26589-A_8GJTCGY9PC/25fhcu905eta7wau7aoafu8rvdm7k1j4el/InstallAssistantAuto.pkg</string></dict>
 <dict><key>Role</key><string>recovery</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/17/32/061-26589-A_8GJTCGY9PC/25fhcu905eta7wau7aoafu8rvdm7k1j4el/RecoveryHDMetaDmg.pkg</string></dict>
@@ -16,10 +48,5 @@
 </array></dict>
 <dict><key>Guest</key><string>bigsur</string><key>Name</key><string>macOS Big Sur</string><key>Version</key><string>11.7.11</string><key>Assembly</key><string>assistant-pkg</string><key>Files</key><array>
 <dict><key>Role</key><string>assistant</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/10/18/047-32248-A_Y7S9K47C9M/rqg3zuwb6dkofsdilmz22awvxtq2sxwr15/InstallAssistant.pkg</string></dict>
-</array></dict>
-<dict><key>Guest</key><string>highsierra</string><key>Name</key><string>macOS High Sierra</string><key>Version</key><string>10.13.6</string><key>Assembly</key><string>split-legacy</string><key>Files</key><array>
-<dict><key>Role</key><string>assistant</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/06/50/041-91758-A_M8T44LH2AW/b5r4og05fhbgatve4agwy4kgkzv07mdid9/InstallAssistantAuto.pkg</string></dict>
-<dict><key>Role</key><string>recovery</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/06/50/041-91758-A_M8T44LH2AW/b5r4og05fhbgatve4agwy4kgkzv07mdid9/RecoveryHDMetaDmg.pkg</string></dict>
-<dict><key>Role</key><string>esd</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/06/50/041-91758-A_M8T44LH2AW/b5r4og05fhbgatve4agwy4kgkzv07mdid9/InstallESDDmg.pkg</string></dict>
 </array></dict>
 </array></dict></plist>

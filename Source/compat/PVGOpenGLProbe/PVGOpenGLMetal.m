@@ -521,8 +521,8 @@ __attribute__((constructor)) static void enablePVGProfile(void) {
             }
         }
         class_addMethod(objc_getClass("MTLIOAccelDevice"),sel_registerName("newGLDrawable"),(IMP)PVGNewGLDrawable,"@@:");
-        BOOL legacyQueue=class_addMethod(queueDescriptor,sel_registerName("setIsOpenGLQueue:"),(IMP)setOpenGLQueue,"v@:c");
-        if(legacyQueue)class_addMethod(queueDescriptor,sel_registerName("isOpenGLQueue"),(IMP)isOpenGLQueue,"c@:");
+        BOOL openGLQueue=class_addMethod(queueDescriptor,sel_registerName("setIsOpenGLQueue:"),(IMP)setOpenGLQueue,"v@:c");
+        if(openGLQueue)class_addMethod(queueDescriptor,sel_registerName("isOpenGLQueue"),(IMP)isOpenGLQueue,"c@:");
         Class descriptor = objc_getClass("MTLRenderPipelineDescriptorInternal");
         // Research only: Catalina's PVG pipeline serializer does not transmit
         // the native OpenGL-mode bit (private flags bit7). Lowering is handled
@@ -581,7 +581,7 @@ __attribute__((constructor)) static void enablePVGProfile(void) {
             (IMP)defaultDepthStencilWriteMode, "v@:c");
         class_addMethod(objc_getClass("MTLRenderPassDescriptorInternal"),
             sel_registerName("setPointCoordYFlipEnabled:"), (IMP)researchPointCoordFlip, "v@:c");
-        if(legacyQueue)preserveDescriptorCopies(); // Mojave-only absent API path
+        if(openGLQueue)preserveDescriptorCopies(); // Mojave-only absent API path
         for (id device in devices) {
             if (![NSStringFromClass([device class]) isEqualToString:@"AppleParavirtDevice"])
                 continue;
@@ -595,7 +595,7 @@ __attribute__((constructor)) static void enablePVGProfile(void) {
                 }
             }
             class_addMethod(objc_getClass("AppleParavirtTexture"),sel_registerName("swizzleKey"),(IMP)textureViewSwizzle,"I@:");
-            if(legacyQueue&&!originalQueue) {
+            if(openGLQueue&&!originalQueue) {
                 SEL create=sel_registerName("newCommandQueueWithDescriptor:");
                 Method method=class_getInstanceMethod([device class],create);
                 if(method) {

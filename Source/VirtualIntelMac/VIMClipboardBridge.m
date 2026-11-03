@@ -1,4 +1,5 @@
 #import "VIMClipboardBridge.h"
+#import "../tools/guest-clipboard-publication.h"
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -16,6 +17,7 @@ static const NSUInteger MaxText=1024*1024,MaxWire=8*1024*1024;
 @property BOOL authenticated;
 @property BOOL wasAllowed;
 @property NSInteger change;
+@property VIMClipboardPendingPublication publication;
 @property NSUInteger sent;
 @property NSUInteger received;
 @property NSUInteger heartbeat;
@@ -72,6 +74,7 @@ static const NSUInteger MaxText=1024*1024,MaxWire=8*1024*1024;
     self.input=nil;self.output=nil;self.incoming=nil;self.outgoing=nil;
     self.authenticated=NO;self.wasAllowed=NO;self.sent=0;self.received=0;
     self.heartbeat=0;self.awaitingHeartbeat=0;self.lastHeartbeat=0;self.heartbeatDeadline=0;
+    self.publication=(VIMClipboardPendingPublication){0};
 }
 - (void)fail {
     BOOL hadConnection=self.input!=nil;[self disconnect];
@@ -153,9 +156,19 @@ static const NSUInteger MaxText=1024*1024,MaxWire=8*1024*1024;
     // Keep the baseline while another app is active, so copying there and
     // returning to this VM works. Still never export pre-connection contents.
     self.wasAllowed=YES;
-    if(self.change==pasteboard.changeCount)return;self.change=pasteboard.changeCount;
+    NSInteger change=pasteboard.changeCount;
+    if(self.change==change)return;
+    VIMClipboardPendingPublication pending=self.publication;
+    if(!VIMClipboardPublicationDue(&pending,change,now)){self.publication=pending;return;}
     NSString *text=[pasteboard stringForType:NSPasteboardTypeString];
-    if(text&&[text lengthOfBytesUsingEncoding:NSUTF8StringEncoding]<=MaxText)
+    if(!text){
+        if(pasteboard.types.count&&![pasteboard availableTypeFromArray:@[NSPasteboardTypeString]]){
+            self.change=change;self.publication=(VIMClipboardPendingPublication){0};
+        }else{VIMClipboardPublicationPending(&pending,now);self.publication=pending;}
+        return;
+    }
+    self.change=change;self.publication=(VIMClipboardPendingPublication){0};
+    if([text lengthOfBytesUsingEncoding:NSUTF8StringEncoding]<=MaxText)
         [self send:@{@"type":@"text",@"sequence":@(++self.sent),@"text":text}];
 }
 - (void)stream:(NSStream *)stream handleEvent:(NSStreamEvent)event {

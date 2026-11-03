@@ -1,0 +1,47 @@
+Apple samba-100.9, commit 55b54999e108fc287b6dfd5e8e5a06a60d4bc6c0
+https://github.com/apple-oss-distributions/samba/tree/samba-100.9
+
+Source is copied directly into this repository, without a submodule or nested
+Git checkout. The included source already contains Apple's period patches;
+do not apply the original patch series a second time. Only the source/build
+inputs needed for the Tiger server and native DirectoryService/VFS modules
+are included. Original file notices and samba/COPYING are retained.
+
+Tiger reports native smbd Version 3.0.10. Modern-host native SMB negotiation
+reaches the authentication exchange, then the old SPNEGO parser rejects the
+mechListMIC. Research candidates must verify, not discard, that integrity
+message, and retain native account authentication and safe recovery.
+
+compat/netgr.h, membershipPriv.h and ntsid.h are unmodified declarations from
+Apple Libinfo-222.4.12 lookup.subproj and membership.subproj, respectively,
+commit 60ca71e7b20d5c3d7521b541e93e988994f22018:
+https://github.com/apple-oss-distributions/Libinfo/tree/Libinfo-222.4.12
+The genuine Tiger SDK omits these native exported APIs' prototypes. No Libinfo
+implementation or later-host header is linked into the guest.
+
+Local changes: research SPNEGO mechListMIC parsing/validation and directional
+NTLM2 MIC generation; exchange-state cleanup; the native, already-authenticated
+NetInfo account's opted-in SMB-NT session-key derivation; period header/prototype fixes;
+SAMBA_DEBUGLEVEL spelling in namequery and generated build-options output;
+the printer-name error branch returns NULL instead of an unspecified pointer.
+config.site.tiger records measured guest-side runtime configure contracts.
+The native server's build options and genuine SDK establish 64-bit off_t,
+long-long, mmap and POSIX locking support. Runtime platform probes establish
+Darwin's variable-length sockaddr interface iterator and native iconv. The
+cross-build must not replace these with configure's unknown/disabled defaults.
+Compiler-generated header dependencies are included by the build recipe;
+reconfiguration invalidates derived objects so config.h changes cannot leave
+the old dummy interface iterator in an apparently updated server.
+Build metadata contains product/toolchain facts, not the builder's identity.
+Source/scripts/tiger_samba_build.py builds this source with the genuine SDK,
+not an unrelated newer Samba or a separate password database.
+
+Source/scripts/build-tiger-samba.py publishes/reuses the native component.
+Status: production integration under qualification. A
+private-loopback candidate passes native authentication, client-MIC rejection,
+real SMB mount read/write, Unicode filenames/rename and production Bonjour
+share enumeration in8R4088. This does not qualify all signing/file-locking
+semantics, updates or release integration. In
+particular this OSS build has no WITH_BRLM: the genuine SDK includes Apple's
+ByteRangeLocking binary but omits its private header. Do not claim native
+ByteRangeLocking/VFS parity without measuring its actual interface.

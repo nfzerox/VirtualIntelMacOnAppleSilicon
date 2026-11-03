@@ -3,6 +3,7 @@
 // verification is a separate operation and never inferred from copying files.
 #import <Foundation/Foundation.h>
 #import "VIMFileTransaction.h"
+#import "guest-system-version.h"
 #import <Metal/Metal.h>
 #import <objc/runtime.h>
 #import <IOKit/IOKitLib.h>
@@ -12,6 +13,7 @@
 #include <sys/file.h>
 #include <sys/sysctl.h>
 #include <dlfcn.h>
+#include "guest-hidpi-policy.h"
 
 static void Check(BOOL ok,NSString *message){if(!ok)@throw [NSException exceptionWithName:@"InstallRejected" reason:message userInfo:nil];}
 static NSString *KernelValue(const char *key) {
@@ -23,7 +25,7 @@ static NSDictionary *LiveAdmissionWithPolicy(BOOL requireLibraryValidation) {
     Check(geteuid()==0,@"Guest installation requires root privileges");
     NSDictionary *version=[NSDictionary dictionaryWithContentsOfFile:@"/System/Library/CoreServices/SystemVersion.plist"];
     NSString *release=version[@"ProductVersion"],*build=version[@"ProductBuildVersion"];
-    Check([release isKindOfClass:NSString.class]&&([release hasPrefix:@"10.14."]||[release hasPrefix:@"10.15."]||[release hasPrefix:@"11."]),@"This installer must run inside a Mojave, Catalina or Big Sur guest, not on the host");
+    Check([@[@"mojave",@"catalina",@"bigsur"] containsObject:VIMGuestForSystemVersion(release)?:@""],@"This installer must run inside a Mojave, Catalina or Big Sur guest, not on the host");
     Check([KernelValue("kern.osversion") isEqual:build],@"The running kernel does not match the installed system; finish updating and restart first");
     // Values and API from vendored xnu-6153.141.1/bsd/sys/csr.h:
     // Require untrusted kexts (bit 0) and unrestricted filesystem (bit 1).
@@ -39,9 +41,9 @@ static NSDictionary *LiveAdmissionWithPolicy(BOOL requireLibraryValidation) {
         if(csrCheck([permission[@"Mask"] unsignedIntValue])!=0)[missing addObject:permission[@"Name"]];
     Check(missing.count==0,[NSString stringWithFormat:@"Guest SIP policy does not allow %@. The general 'SIP disabled' status is not sufficient; use the required guest EFI policy.",[missing componentsJoinedByString:@", "]]);
     NSArray *arguments=[KernelValue("kern.bootargs") componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    BOOL legacyAMFI=[arguments containsObject:@"amfi_get_out_of_my_way=0x1"]||[arguments containsObject:@"amfi_get_out_of_my_way=1"];
+    BOOL openGLAMFI=[arguments containsObject:@"amfi_get_out_of_my_way=0x1"]||[arguments containsObject:@"amfi_get_out_of_my_way=1"];
     BOOL signatureOnly=[arguments containsObject:@"amfi_allow_any_signature=1"]||[arguments containsObject:@"amfi_allow_any_signature=0x1"];
-    if(requireLibraryValidation&&signatureOnly&&!legacyAMFI) {
+    if(requireLibraryValidation&&signatureOnly&&!openGLAMFI) {
         // Measured Mojave policy: preserve third-party identity/TCC while amfid
         // admits donor libraries. Do not mistake the narrower boot arg alone
         // for a graphics-compatible policy, or require Apple-internal SIP.
@@ -50,7 +52,7 @@ static NSDictionary *LiveAdmissionWithPolicy(BOOL requireLibraryValidation) {
         Check(disabled&&CFGetTypeID((__bridge CFTypeRef)disabled)==CFBooleanGetTypeID()&&[disabled boolValue],
             @"Guest Library Validation compatibility policy is missing; finish guest setup before using signature-only AMFI");
     }
-    Check(legacyAMFI||signatureOnly,@"Required guest AMFI boot policy is missing; restart using the app-provided EFI configuration");
+    Check(openGLAMFI||signatureOnly,@"Required guest AMFI boot policy is missing; restart using the app-provided EFI configuration");
     NSFileManager *fm=NSFileManager.defaultManager;
     Check([fm fileExistsAtPath:@"/private/var/db/.AppleSetupDone"]&&[fm fileExistsAtPath:@"/System/Library/CoreServices/Finder.app"],@"Complete macOS setup before installing graphics drivers");
     for(NSString *path in @[@"/macOS Install Data",@"/OS X Install Data",@"/System/Installation/CDIS/macOS Utilities.app",@"/System/Installation/CDIS/Recovery Springboard.app"])
@@ -215,6 +217,8 @@ static NSDictionary *ApplyTransaction(NSURL *journal,BOOL rollback) {
             NSDictionary *cache=bigsur?@{@"CacheRequired":@NO,@"Policy":@"library-only"}:RebuildBootCaches(root,mojave,log);
             NSDictionary *shaders=QuarantineGuestShaderCaches(root);
             Check([shaders[@"Errors"] count]==0,[@"Could not preserve old shader caches: " stringByAppendingString:[shaders[@"Errors"] componentsJoinedByString:@"; "]]);
+            BOOL displayPolicyChanged=NO;
+            if([root.path isEqual:@"/"])Check(VIMPrepareNativeHiDPIPolicy(&displayPolicyChanged),@"The native Retina display policy could not be saved");
             SaveInstallResult(journal,state,@"awaiting-reboot",@{@"FilesPublished":@YES,@"Cache":cache,@"ShaderCaches":shaders,@"RebootRequired":@YES,@"CacheLog":log.path});
             return @{@"FilesPublished":@YES,@"Cache":cache,@"ShaderCaches":shaders,@"RebootRequired":@YES,@"Ready":@NO};
         } @catch(NSException *failure) {
@@ -230,6 +234,15 @@ static NSDictionary *ApplyTransaction(NSURL *journal,BOOL rollback) {
 }
 #include "guest-install-verification.h"
 int main(int argc,const char **argv){@autoreleasepool {
+    if(argc==2&&!strcmp(argv[1],"--configure-display-policy")) {
+        @try {
+            LiveAdmission();BOOL changed=NO;
+            Check(VIMPrepareNativeHiDPIPolicy(&changed),@"The native Retina display policy could not be saved");
+            NSDictionary *result=@{@"DisplayPolicyPrepared":@YES,@"Changed":@(changed),@"RestartRequired":@(changed)};
+            NSData *data=[NSJSONSerialization dataWithJSONObject:result options:0 error:NULL];
+            fwrite(data.bytes,1,data.length,stdout);fputc('\n',stdout);return 0;
+        }@catch(NSException *exception){fprintf(stderr,"%s\n",exception.reason.UTF8String);return 65;}
+    }
     if(argc==3&&(!strcmp(argv[1],"--configure-boot-policy")||!strcmp(argv[1],"--boot-policy-status"))) {
         @try {
             NSDictionary *result=BootPolicyOperation(@(argv[2]),!strcmp(argv[1],"--configure-boot-policy"));
@@ -294,7 +307,7 @@ int main(int argc,const char **argv){@autoreleasepool {
         Check([release isKindOfClass:NSString.class]&&[guest isKindOfClass:NSString.class],@"Invalid guest identity");
         BOOL mojave=[release isEqual:@"10.14"]||[release hasPrefix:@"10.14."];
         BOOL catalina=[release isEqual:@"10.15"]||[release hasPrefix:@"10.15."];
-        BOOL bigsur=[release hasPrefix:@"11."];
+        BOOL bigsur=[VIMGuestForSystemVersion(release) isEqual:@"bigsur"];
         Check((mojave&&[guest isEqual:@"mojave"])||(catalina&&[guest isEqual:@"catalina"])||(bigsur&&[guest isEqual:@"bigsur"]),@"Unsupported backport target");
         for(NSString *marker in @[@"macOS Install Data",@"OS X Install Data"])
             Check(![NSFileManager.defaultManager fileExistsAtPath:[root URLByAppendingPathComponent:marker].path],@"Finish the macOS installation/update before preparing a driver transaction");

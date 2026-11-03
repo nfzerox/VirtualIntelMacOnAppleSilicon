@@ -12,6 +12,7 @@ import sys
 import tempfile
 
 prepare, install, tools = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve(), Path(sys.argv[3]).resolve()
+release=sys.argv[4] if len(sys.argv)>4 else '11.0.1'
 def dependency(name):
     name=name.encode();size=(24+len(name)+8)&~7
     return struct.pack('<6I',12,size,24,0,0,0)+name+bytes(size-24-len(name))
@@ -27,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix='vim-bigsur-install-') as temporary:
     assert extracted['Extracted'] and extracted['EntryCount']==record['EntryCount']
     payload=Path(extracted['PayloadDirectory'])
     version=root/'System/Library/CoreServices/SystemVersion.plist';version.parent.mkdir(parents=True)
-    version.write_bytes(plistlib.dumps({'ProductVersion':'11.0.1','ProductBuildVersion':'20B9999'}))
+    version.write_bytes(plistlib.dumps({'ProductVersion':release,'ProductBuildVersion':'20B9999'}))
     originals={}
     for name in ('AppleParavirtGPUMetal','AppleMetalOpenGLRenderer'):
         bundle=root/'System/Library/Extensions'/f'{name}.bundle';binary=bundle/'Contents/MacOS'/name

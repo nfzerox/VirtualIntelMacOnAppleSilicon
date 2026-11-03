@@ -1,0 +1,6 @@
+target create /tmp/passthrough-opengl-native-control
+command script import /tmp/lldb_opengl_cgs.py
+vim-trace-cgs
+settings set target.env-vars VIM_GL_WINDOW_SOFTWARE=1 VIM_GL_WINDOW_SECONDS=6
+run
+quit

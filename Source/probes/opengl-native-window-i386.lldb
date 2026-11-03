@@ -1,0 +1,13 @@
+# Run from a directory containing the i386-capable opengl-gl-window.m build
+# named native-gl-window. This traces only our finite Intel-selected fixture;
+# it does not attach to or patch WindowServer or an unrelated application.
+settings set target.env-vars VIM_GL_WINDOW_INTEL_HD5000=1 VIM_GL_WINDOW_SECONDS=2
+target create --arch i386 native-gl-window
+breakpoint set --name gliInitializeLibrary --shlib GLEngine --skip-prologue false
+breakpoint command add 1 --script-type python --one-liner 'p=frame.GetThread().GetProcess(); a=__import__("struct").unpack("<8I",p.ReadMemory(frame.GetSP(),32,lldb.SBError())); print("GLI initialize stack",a); print("device services",__import__("struct").unpack("<%uI"%a[3],p.ReadMemory(a[1],a[3]*4,lldb.SBError()))) if a[3]<=32 else None; print(frame.GetThread().GetFrameAtIndex(1)); return False'
+breakpoint set --name gliAttachDrawableWithOptions --shlib GLEngine --skip-prologue false --condition '*(unsigned int *)($esp+8) == 80'
+breakpoint command add 2 --script-type python --one-liner 'p=frame.GetThread().GetProcess(); print("GLI attach stack", __import__("struct").unpack("<6I", p.ReadMemory(frame.GetSP(),24,lldb.SBError()))); a=p.ReadUnsignedFromMemory(frame.GetSP()+12,4,lldb.SBError()); print("window ids", __import__("struct").unpack("<3I",p.ReadMemory(a,12,lldb.SBError()))); print(frame.GetThread().GetFrameAtIndex(1)); return False'
+breakpoint set --name SLSBindSurface --skip-prologue false
+breakpoint command add 3 --script-type python --one-liner 'print("SLS bind stack", __import__("struct").unpack("<8I", frame.GetThread().GetProcess().ReadMemory(frame.GetSP(),32,lldb.SBError()))); print(frame.GetThread().GetFrameAtIndex(1)); return False'
+run
+quit

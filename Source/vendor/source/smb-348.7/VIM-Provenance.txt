@@ -1,0 +1,28 @@
+Apple smb-348.7, commit 91f35b3eb0b2445137005c97a04da6482e0c2a11
+https://github.com/apple-oss-distributions/smb/tree/smb-348.7
+
+Original source and notices copied directly, without a Git submodule.
+The original smbfs1.4.6 metadata matches the native Leopard9L31a client.
+
+Purpose: narrow native Darwin9 SMB client compatibility, preserving the
+original filesystem, password ioctl, Finder integration, transport and explicit
+Kerberos/gssd path. No replacement host server, authentication proxy, guest
+password database, userland injection or global host-security change.
+
+The BSD-2-Clause vim_ntlmssp_wire files are shared unchanged with the vendored
+Tiger client. vim_ntlmssp_native uses that codec with Darwin9's own Unicode,
+MD4/MD5/random/time APIs and opaque KPI mbufs. The original password path
+negotiates Unicode and extended security at the wire boundary, then owns the
+NTLMv2/SPNEGO handshake, key exchange, transcript/mechanism MIC and signed SMB
+requests/replies. Explicit Kerberos callers keep their original implementation.
+Named transactions retain Unicode when this native NTLMSSP path is selected.
+A read-only net.smb.fs.vim_client=2 identifies the resident custom client.
+
+Initial qualification: all31 source-phase units compile and the i386 native
+relocatable links with actual10.5 SDK, Apple GCC4.2 and Darwin9 XNU headers.
+The real9L31a guest's kextload -n -t accepts the private bundle. Its private
+load, native11-share listing, native mount/read/write/Unicode-name round trip
+and the production app's Open in Finder/native public-share mount pass.
+Apple's system kext is unchanged. Normal cold boot and repeat repair also
+pass with the production app/helper; this does not qualify every Leopard
+build, a fresh OS install or ARM host.

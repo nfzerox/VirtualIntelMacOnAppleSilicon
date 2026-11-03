@@ -6,6 +6,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <servers/bootstrap.h>
+#include "../PassthroughOpenGL/display-surface-message.h"
 
 // Matches QEMU hw/display/apple-gfx-app-wire.h, private same-host ABI v1.
 typedef struct {
@@ -42,9 +44,85 @@ static NSError *VIMDisplayError(NSString *message) {
 @property(nonatomic) NSUInteger requestedWidth;
 @property(nonatomic) NSUInteger requestedHeight;
 @property(nonatomic) uint32_t powerEpoch;
+@property(nonatomic) dispatch_source_t surfaceListener;
+@property(nonatomic) dispatch_source_t surfaceProcessMonitor;
+@property(nonatomic) NSString *surfaceServiceName;
+@property(nonatomic) pid_t surfaceRendererPID;
+@property(nonatomic) uint64_t surfaceGeneration;
+@property(nonatomic) uint64_t surfaceTicket;
+@property(nonatomic) NSUInteger surfaceEndpointEpoch;
+@property(nonatomic) BOOL surfaceActive;
 @end
 
 @implementation VIMDisplayConnection
+- (NSString *)enableSurfaceTransportForRendererPID:(pid_t)pid error:(NSError **)error {
+    NSAssert(NSThread.isMainThread,@"Main-thread lifecycle");
+    if(self.stopped || pid<=0 || (self.surfaceListener && pid!=self.surfaceRendererPID))return nil;
+    if(self.surfaceListener)return self.surfaceServiceName;
+    mach_port_t port=MACH_PORT_NULL;
+    kern_return_t kr=mach_port_allocate(mach_task_self(),MACH_PORT_RIGHT_RECEIVE,&port);
+    if(!kr)kr=mach_port_insert_right(mach_task_self(),port,port,MACH_MSG_TYPE_MAKE_SEND);
+    NSString *name=[@"com.mac.virtualintelmac.surface." stringByAppendingString:NSUUID.UUID.UUIDString];
+    if(!kr)kr=bootstrap_register(bootstrap_port,(char *)name.UTF8String,port);
+    if(kr){
+        if(port)mach_port_destroy(mach_task_self(),port);
+        if(error)*error=VIMDisplayError(@"The GPU display connection could not be created.");
+        return nil;
+    }
+    self.surfaceRendererPID=pid;self.surfaceServiceName=name;
+    self.surfaceListener=dispatch_source_create(DISPATCH_SOURCE_TYPE_MACH_RECV,port,0,dispatch_get_main_queue());
+    if(!self.surfaceListener){mach_port_destroy(mach_task_self(),port);return nil;}
+    __weak VIMDisplayConnection *weakSelf=self;
+    NSUInteger endpointEpoch=self.surfaceEndpointEpoch;
+    self.surfaceProcessMonitor=dispatch_source_create(DISPATCH_SOURCE_TYPE_PROC,(uintptr_t)pid,
+        DISPATCH_PROC_EXIT,dispatch_get_main_queue());
+    if(!self.surfaceProcessMonitor){
+        dispatch_source_set_cancel_handler(self.surfaceListener,^{mach_port_destroy(mach_task_self(),port);});
+        dispatch_resume(self.surfaceListener);[self disableSurfaceTransport];return nil;
+    }
+    dispatch_source_set_event_handler(self.surfaceProcessMonitor,^{
+        VIMDisplayConnection *connection=weakSelf;
+        if(connection && connection.surfaceEndpointEpoch==endpointEpoch)[connection disableSurfaceTransport];
+    });
+    dispatch_resume(self.surfaceProcessMonitor);
+    dispatch_source_set_event_handler(self.surfaceListener,^{[weakSelf receiveSurface:port];});
+    dispatch_source_set_cancel_handler(self.surfaceListener,^{mach_port_destroy(mach_task_self(),port);});
+    dispatch_resume(self.surfaceListener);return name;
+}
+- (void)receiveSurface:(mach_port_t)port {
+    if(self.stopped)return;
+    __block struct VIMSurfaceFrameMessage frame;
+    IOSurfaceRef surface=NULL;
+    kern_return_t kr=VIMSurfaceFrameReceive(port,geteuid(),self.surfaceRendererPID,&frame,&surface,0);
+    if(kr==MACH_RCV_TIMED_OUT)return;
+    if(kr){
+        // An oversized message remains queued. Close this endpoint instead of
+        // repeatedly waking on it. Invalid messages have already lost rights.
+        if(kr==MACH_RCV_TOO_LARGE)[self disableSurfaceTransport];
+        return;
+    }
+    if(frame.generation<self.surfaceGeneration ||
+       (frame.generation==self.surfaceGeneration && frame.ticket<=self.surfaceTicket)){
+        CFRelease(surface);VIMSurfaceFrameRelease(&frame,VIMSurfaceSkipped,0);return;
+    }
+    self.surfaceGeneration=frame.generation;self.surfaceTicket=frame.ticket;
+    VIMMetalView *view=self.view;
+    if(!view){CFRelease(surface);VIMSurfaceFrameRelease(&frame,VIMSurfaceSkipped,0);return;}
+    NSUInteger endpointEpoch=self.surfaceEndpointEpoch;
+    [view presentSurface:surface width:frame.width height:frame.height completion:^(BOOL completed){
+        if(completed && !self.stopped && endpointEpoch==self.surfaceEndpointEpoch)self.surfaceActive=YES;
+        VIMSurfaceFrameRelease(&frame,completed?VIMSurfaceGPUCompleted:VIMSurfaceSkipped,0);
+    }];
+    CFRelease(surface);
+}
+- (void)disableSurfaceTransport {
+    NSAssert(NSThread.isMainThread,@"Main-thread lifecycle");
+    if(self.surfaceListener){dispatch_source_cancel(self.surfaceListener);self.surfaceListener=nil;}
+    if(self.surfaceProcessMonitor){dispatch_source_cancel(self.surfaceProcessMonitor);self.surfaceProcessMonitor=nil;}
+    self.surfaceEndpointEpoch++;self.surfaceActive=NO;
+    self.surfaceGeneration=0;self.surfaceTicket=0;self.surfaceRendererPID=0;self.surfaceServiceName=nil;
+    [self.view invalidatePresentation];
+}
 - (instancetype)initWithView:(VIMMetalView *)view failure:(void (^)(NSError *))failure error:(NSError **)error {
     NSAssert(NSThread.isMainThread, @"Main-thread lifecycle");
     if (!(self = [super init])) return nil;
@@ -183,7 +261,7 @@ static NSError *VIMDisplayError(NSString *message) {
         dispatch_async(dispatch_get_main_queue(), ^{
             VIMMetalView *view = self.view;
             BOOL current=frame.operation==2?self.powerEpoch==0:frame.reserved==self.powerEpoch;
-            if (self.stopped || !view || !current) { dispatch_semaphore_signal(completed); return; }
+            if (self.stopped || !view || !current || self.surfaceActive) { dispatch_semaphore_signal(completed); return; }
             [view presentWidth:frame.width height:frame.height stride:frame.stride completion:^(BOOL presented) {
                 dispatch_semaphore_signal(completed);
             }];
@@ -227,9 +305,12 @@ static NSError *VIMDisplayError(NSString *message) {
     if (self.peer >= 0) shutdown(self.peer, SHUT_RDWR);
     [self.lock unlock];
     if (self.listener) { dispatch_source_cancel(self.listener); self.listener = nil; }
+    if (self.surfaceListener) [self disableSurfaceTransport];
     unlink(self.socketPath.fileSystemRepresentation); rmdir(self.directory.fileSystemRepresentation);
 }
 - (void)dealloc {
+    if (_surfaceProcessMonitor) dispatch_source_cancel(_surfaceProcessMonitor);
+    if (_surfaceListener) dispatch_source_cancel(_surfaceListener);
     if (_listener) dispatch_source_cancel(_listener);
     if (_socketPath) unlink(_socketPath.fileSystemRepresentation);
     if (_directory) rmdir(_directory.fileSystemRepresentation);

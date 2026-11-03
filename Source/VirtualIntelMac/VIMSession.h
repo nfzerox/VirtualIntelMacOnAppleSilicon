@@ -4,6 +4,9 @@ NS_ASSUME_NONNULL_BEGIN
 @interface VIMSession : NSWindowController <NSMenuItemValidation>
 @property(nonatomic, readonly) BOOL retinaEnabled;
 @property(nonatomic, readonly) NSString *displayMode;
+@property(nonatomic, readonly) BOOL supportsRetinaDisplay;
+@property(nonatomic, readonly) NSString *displayScalingFilter;
++ (void)displayScalingPreferencesChangedForMachine:(VIMMachine *)machine;
 /// Opens/focuses the window without starting an emulator or acquiring the disk.
 + (void)showMachineWindow:(VIMMachine *)machine;
 /// YES accepts the request; Apple silicon first verifies Rosetta asynchronously.
@@ -22,7 +25,6 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)enableGuestRemoteLogin:(VIMMachine *)machine completion:(void (^)(NSError *_Nullable))completion;
 + (void)clipboardPreferencesChangedForMachine:(VIMMachine *)machine;
 + (void)openGuestPreferences:(NSString *)pane machine:(VIMMachine *)machine completion:(void (^)(NSError *_Nullable))completion;
-+ (void)checkGuestFileSharing:(VIMMachine *)machine completion:(void (^)(NSError *_Nullable))completion;
 + (void)openHostConnection:(NSURL *)URL inMachine:(VIMMachine *)machine completion:(void (^)(NSError *_Nullable))completion;
 + (NSString *)statusForMachine:(VIMMachine *)machine;
 + (void)stopAll;
@@ -42,6 +44,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (IBAction)sendMenuShortcut:(NSMenuItem *)sender;
 - (IBAction)resetMachine:(id)sender;
 - (IBAction)changeRetinaMode:(NSMenuItem *)sender;
+- (IBAction)changeDisplayScalingFilter:(NSMenuItem *)sender;
 - (IBAction)takeScreenshot:(id)sender;
 - (IBAction)showNetworkSettings:(id)sender;
 - (IBAction)showSoundSettings:(id)sender;
@@ -51,11 +54,16 @@ NS_ASSUME_NONNULL_BEGIN
 - (IBAction)showKeyboardSettings:(id)sender;
 - (IBAction)sendForceQuitKey:(id)sender;
 - (IBAction)toggleDeviceToolbar:(id)sender;
+- (IBAction)downloadApps:(id)sender;
 - (IBAction)chooseOpticalMedia:(id)sender;
 - (IBAction)ejectOpticalMedia:(id)sender;
 + (void)chooseOpticalMediaForMachine:(VIMMachine *)machine window:(NSWindow *)window;
 + (void)ejectOpticalMediaForMachine:(VIMMachine *)machine window:(NSWindow *)window;
 + (NSString *)connectedOpticalMediaForMachine:(VIMMachine *)machine;
++ (NSArray<NSDictionary *> *)connectedImagesForMachine:(VIMMachine *)machine;
++ (void)chooseImageForMachine:(VIMMachine *)machine slot:(NSUInteger)slot window:(NSWindow *)window;
++ (void)ejectImageForMachine:(VIMMachine *)machine slot:(NSUInteger)slot window:(NSWindow *)window;
++ (void)insertImage:(NSString *)path slot:(NSUInteger)slot machine:(VIMMachine *)machine completion:(void (^)(NSError *_Nullable))completion;
 /// Same media operation used by the picker/eject UI. Empty path ejects.
 + (void)insertOpticalMedia:(NSString *)path machine:(VIMMachine *)machine completion:(void (^)(NSError *_Nullable))completion;
 @end

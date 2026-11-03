@@ -1,0 +1,128 @@
+#!/bin/bash
+# Mavericks i386 research clients. Separate outputs; never installs into a guest.
+# Modern clang still emits i386 objects; use ld64 from an expanded legacy Xcode.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+sdk="${VIM_OPENGL_SDK:-$root/resources/sdk/MacOSX10.9.sdk}"
+generated="${VIM_PASSTHROUGH_OPENGL_BUILD:-$root/Build/PassthroughOpenGLResearch/GL}"
+build="${VIM_PASSTHROUGH_OPENGL_I386_BUILD:-$generated/i386}"
+ld="${VIM_OPENGL_LD:-$root/resources/xcode/XcodeMojave.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/ld}"
+if [[ ! -x "$ld" ]]; then
+    echo 'Set VIM_OPENGL_LD to an i386-capable Apple ld64 (for example Xcode 10).' >&2
+    exit 1
+fi
+mkdir -p "$build"
+python3 "$root/scripts/generate-passthrough-opengl.py" "$sdk" "$generated"
+python3 "$root/scripts/generate-opengl-gli.py" "$generated/passthrough-opengl-gli-map.json" "$generated/passthrough-opengl-gli-generated.inc"
+flags=(-arch i386 -isysroot "$sdk" -mmacosx-version-min=10.9 -I "$generated" -O2 -g -fno-omit-frame-pointer
+    -Wall -Wextra -Werror -Wno-deprecated-declarations -Wno-misleading-indentation -Wno-unused-function)
+# Match the explicit x64 experiment; normal builds keep the original lifetime.
+if [[ "${VIM_GLI_CONNECTION_REUSE_EXPERIMENT:-0}" == 1 ]]; then flags+=(-DVIM_GLI_CONNECTION_REUSE_EXPERIMENT=1); fi
+link=(-arch i386 -macosx_version_min 10.9 -syslibroot "$sdk" -lSystem)
+clang "${flags[@]}" -c "$root/PassthroughOpenGL/passthrough-opengl-client.c" -o "$build/client.o"
+"$ld" "${link[@]}" -dylib "$build/client.o" -framework IOKit -framework CoreFoundation \
+    -install_name @rpath/libVIMPassthroughOpenGL.dylib -o "$build/libVIMPassthroughOpenGL.dylib"
+clang "${flags[@]}" -DVIM_PASSTHROUGH_OPENGL_BACKEND=1 -c "$root/PassthroughOpenGL/direct-cgl.c" -o "$build/cgl.o"
+"$ld" "${link[@]}" -dylib "$build/cgl.o" -reexport_library "$build/libVIMPassthroughOpenGL.dylib" \
+    -install_name @rpath/libVIMCGL.dylib -rpath @loader_path \
+    -framework IOSurface -framework CoreFoundation -o "$build/libVIMCGL.dylib"
+clang "${flags[@]}" -DVIM_PASSTHROUGH_OPENGL_BACKEND=1 -fvisibility=hidden \
+    -c "$root/PassthroughOpenGL/passthrough-opengl-gli.c" -o "$build/gli.o"
+"$ld" "${link[@]}" -dylib "$build/gli.o" "$build/libVIMPassthroughOpenGL.dylib" \
+    -install_name @rpath/libVIMGLI.dylib -rpath @loader_path \
+    -exported_symbols_list "$root/PassthroughOpenGL/gli.exports" \
+    -framework IOSurface -framework CoreFoundation -framework CoreGraphics -framework IOKit \
+    -o "$build/libVIMGLI.dylib"
+for probe in passthrough-opengl-interface passthrough-opengl-arrays passthrough-opengl-textures passthrough-opengl-recovery-format opengl-core-profile passthrough-opengl-instancing passthrough-opengl-buffers passthrough-opengl-pbo passthrough-opengl-texture1d passthrough-opengl-texture3d passthrough-opengl-image-store passthrough-opengl-pixel-store-float; do
+    clang "${flags[@]}" -c "$root/probes/$probe.c" -o "$build/$probe.o"
+    # The recovery probe deliberately exercises Apple's public CGL entry.
+    if [[ "$probe" == passthrough-opengl-recovery-format || "$probe" == opengl-core-profile || "$probe" == passthrough-opengl-instancing || "$probe" == passthrough-opengl-buffers || "$probe" == passthrough-opengl-pbo || "$probe" == passthrough-opengl-texture1d || "$probe" == passthrough-opengl-texture3d || "$probe" == passthrough-opengl-image-store || "$probe" == passthrough-opengl-pixel-store-float ]]; then
+        "$ld" "${link[@]}" "$build/$probe.o" -framework OpenGL -o "$build/$probe"
+    else
+        "$ld" "${link[@]}" "$build/$probe.o" -L "$build" -lVIMCGL -rpath @executable_path \
+            -framework IOSurface -framework CoreFoundation -o "$build/$probe"
+        install_name_tool -change @rpath/libVIMCGL.dylib @executable_path/libVIMCGL.dylib "$build/$probe"
+    fi
+done
+# Guarded padded/overlapping image pitches use the same public CGL fixture.
+for image_height in 1 5; do
+    clang "${flags[@]}" -DVIM_TEST_IMAGE_HEIGHT="$image_height" \
+        -c "$root/probes/opengl-gl-texture3d.c" -o "$build/volume-height-$image_height.o"
+    "$ld" "${link[@]}" "$build/volume-height-$image_height.o" -framework OpenGL \
+        -o "$build/passthrough-opengl-texture3d-height-$image_height"
+done
+# Private transport qualification is architecture-independent, including a
+# Retina-sized owned drawable. It must not route through the system GLI.
+clang "${flags[@]}" -c "$root/probes/opengl-direct-backing-owner.c" -o "$build/backing-owner.o"
+"$ld" "${link[@]}" "$build/backing-owner.o" -framework IOKit -framework CoreFoundation \
+    -o "$build/opengl-direct-backing-owner"
+clang "${flags[@]}" -c "$root/probes/opengl-direct-backing-stats.c" -o "$build/backing-stats.o"
+"$ld" "${link[@]}" "$build/backing-stats.o" -framework IOKit -framework CoreFoundation \
+    -o "$build/opengl-direct-backing-stats"
+clang "${flags[@]}" -c "$root/probes/opengl-direct-program-locations.c" -o "$build/program-locations.o"
+"$ld" "${link[@]}" "$build/program-locations.o" -framework IOKit -framework CoreFoundation \
+    -o "$build/opengl-direct-program-locations"
+clang "${flags[@]}" -c "$root/probes/opengl-direct-exchange-trap.c" -o "$build/exchange-trap.o"
+"$ld" "${link[@]}" "$build/exchange-trap.o" -framework IOKit -framework CoreFoundation \
+    -o "$build/opengl-direct-exchange-trap"
+clang "${flags[@]}" -c "$root/probes/opengl-direct-full-read-wire.c" -o "$build/full-read.o"
+"$ld" "${link[@]}" "$build/full-read.o" -framework IOKit -framework CoreFoundation \
+    -o "$build/opengl-direct-full-read-wire"
+clang "${flags[@]}" -c "$root/probes/opengl-direct-shared-family-wire.c" -o "$build/shared-family.o"
+"$ld" "${link[@]}" "$build/shared-family.o" -framework IOKit -framework CoreFoundation \
+    -o "$build/opengl-direct-shared-family-wire"
+clang "${flags[@]}" -c "$root/probes/opengl-direct-common-state-wire.c" -o "$build/common-state.o"
+"$ld" "${link[@]}" "$build/common-state.o" -framework IOKit -framework CoreFoundation \
+    -o "$build/opengl-direct-common-state-wire"
+clang "${flags[@]}" -c "$root/probes/opengl-passthrough-opengl-read-rect.c" -o "$build/read-rect.o"
+"$ld" "${link[@]}" "$build/read-rect.o" -L "$build" -lVIMPassthroughOpenGL -rpath @executable_path \
+    -o "$build/opengl-passthrough-opengl-read-rect"
+install_name_tool -change @rpath/libVIMPassthroughOpenGL.dylib @executable_path/libVIMPassthroughOpenGL.dylib "$build/opengl-passthrough-opengl-read-rect"
+clang "${flags[@]}" -c "$root/probes/opengl-passthrough-opengl-masked-read.c" -o "$build/masked-read.o"
+"$ld" "${link[@]}" "$build/masked-read.o" -L "$build" -lVIMPassthroughOpenGL -rpath @executable_path \
+    -framework IOKit -framework CoreFoundation -o "$build/opengl-passthrough-opengl-masked-read"
+install_name_tool -change @rpath/libVIMPassthroughOpenGL.dylib @executable_path/libVIMPassthroughOpenGL.dylib "$build/opengl-passthrough-opengl-masked-read"
+clang "${flags[@]}" -c "$root/probes/opengl-passthrough-opengl-import-view.c" -o "$build/import-view.o"
+"$ld" "${link[@]}" "$build/import-view.o" -L "$build" -lVIMPassthroughOpenGL -rpath @executable_path \
+    -o "$build/opengl-passthrough-opengl-import-view"
+install_name_tool -change @rpath/libVIMPassthroughOpenGL.dylib @executable_path/libVIMPassthroughOpenGL.dylib "$build/opengl-passthrough-opengl-import-view"
+clang "${flags[@]}" -c "$root/probes/opengl-passthrough-opengl-patch.c" -o "$build/patch.o"
+"$ld" "${link[@]}" "$build/patch.o" -L "$build" -lVIMPassthroughOpenGL -rpath @executable_path \
+    -o "$build/opengl-passthrough-opengl-patch"
+install_name_tool -change @rpath/libVIMPassthroughOpenGL.dylib @executable_path/libVIMPassthroughOpenGL.dylib "$build/opengl-passthrough-opengl-patch"
+clang "${flags[@]}" -c "$root/probes/opengl-passthrough-opengl-packet-input.c" -o "$build/packet-input.o"
+"$ld" "${link[@]}" "$build/packet-input.o" -framework IOKit -framework CoreFoundation \
+    -o "$build/opengl-passthrough-opengl-packet-input"
+# A second identical fixture tests native CGL's dispatch through our GLI,
+# rather than our standalone public-CGL adapter.
+"$ld" "${link[@]}" "$build/passthrough-opengl-interface.o" -framework OpenGL \
+    -framework IOSurface -framework CoreFoundation -o "$build/opengl-native-gl-interface"
+# Current native-CGL ownership and public-parameter regressions must exercise
+# the actual 32-bit GLI too, not just the standalone CGL adapter above.
+for probe in passthrough-opengl-surface-live passthrough-opengl-surface-parameters passthrough-opengl-webgl-state passthrough-opengl-recovery-objects passthrough-opengl-uniform-query passthrough-opengl-call-lists passthrough-opengl-query-replies passthrough-opengl-client-vertex-stack; do
+    clang "${flags[@]}" -c "$root/probes/$probe.c" -o "$build/$probe.o"
+    "$ld" "${link[@]}" "$build/$probe.o" -framework OpenGL \
+        -framework IOSurface -framework CoreFoundation -o "$build/$probe"
+done
+clang "${flags[@]}" -c "$root/probes/opengl-gl-window.m" -o "$build/window.o"
+clang "${flags[@]}" -c "$root/probes/opengl-gl-surface-state.m" -o "$build/surface-state.o"
+"$ld" "${link[@]}" "$build/surface-state.o" -framework Cocoa -framework OpenGL -framework IOKit \
+    -o "$build/passthrough-opengl-surface-state"
+"$ld" "${link[@]}" "$build/window.o" -framework Cocoa -framework OpenGL \
+    -o "$build/opengl-native-gl-window"
+clang "${flags[@]}" -DVIM_GL_WINDOW_CORE=1 -c "$root/probes/opengl-gl-window.m" -o "$build/core-window.o"
+"$ld" "${link[@]}" "$build/core-window.o" -framework Cocoa -framework OpenGL \
+    -o "$build/opengl-core-gl-window"
+for probe in opengl-passthrough-opengl-vram-read passthrough-opengl-native-attachment passthrough-opengl-current-import passthrough-opengl-shared-current-import; do
+    clang "${flags[@]}" -c "$root/probes/$probe.m" -o "$build/$probe.o"
+    "$ld" "${link[@]}" "$build/$probe.o" -framework Cocoa -framework OpenGL -framework IOKit \
+        -o "$build/$probe"
+done
+for library in libVIMCGL.dylib libVIMGLI.dylib; do
+    install_name_tool -change @rpath/libVIMPassthroughOpenGL.dylib @loader_path/libVIMPassthroughOpenGL.dylib "$build/$library"
+done
+for binary in "$build"/*.dylib "$build"/opengl-*; do
+    [[ "$binary" == *.o ]] && continue
+    codesign --force --sign - "$binary"
+done
+printf 'Built isolated i386 PassthroughOpenGL clients: %s\nNo guest system files modified.\n' "$build"

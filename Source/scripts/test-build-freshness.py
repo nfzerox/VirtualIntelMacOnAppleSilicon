@@ -51,6 +51,15 @@ with tempfile.TemporaryDirectory(prefix='vim-freshness-test-') as temporary:
         added.unlink()
         ignored = qemu/'Build'; ignored.mkdir(); (ignored/'temporary.o').write_text('ignored')
         assert freshness.snapshot(source, 'runtime') == before
+        patches = source/'vendor/patches'; patches.mkdir()
+        unrelated = patches/'opencore-memory-map.patch'; unrelated.write_text('firmware only')
+        assert freshness.snapshot(source, 'runtime') == before
+        unrelated.write_text('new firmware correction')
+        assert freshness.snapshot(source, 'runtime') == before
+        usb_patch = patches/'libusb-storage.patch'; usb_patch.write_text('dependency change')
+        assert freshness.snapshot(source, 'runtime') != before
+        usb_patch.unlink()
+        assert freshness.snapshot(source, 'runtime') == before
         (qemu/'machine.c').unlink()
         assert freshness.snapshot(source, 'runtime') != before
         (qemu/'machine.c').write_text('original')

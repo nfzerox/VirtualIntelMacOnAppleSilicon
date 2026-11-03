@@ -1,0 +1,16 @@
+#!/bin/zsh
+# Launch the real app with the explicit, unaccelerated Mavericks research gate.
+set -euo pipefail
+if (( $# != 2 )); then
+    print -u2 'Usage: open-opengl-research-vm /path/to/Virtual\ Intel\ Mac.app /path/to/Mavericks.vintelmac'
+    exit 64
+fi
+app=${1:A}
+machine=${2:A}
+[[ -x "$app/Contents/MacOS/Virtual Intel Mac" && -f "$machine/Machine.plist" ]] || {
+    print -u2 'The app or virtual Mac package is missing.'; exit 66
+}
+[[ $(/usr/libexec/PlistBuddy -c 'Print :Guest' "$machine/Machine.plist") == mavericks ]] || {
+    print -u2 'This research launcher only accepts Mavericks packages.'; exit 64
+}
+exec open -n "$app" --args --opengl-guest-research 1 --open-vm "$machine"

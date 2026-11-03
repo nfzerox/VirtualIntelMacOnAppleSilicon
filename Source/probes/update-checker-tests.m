@@ -56,6 +56,20 @@ int main(void) { @autoreleasepool {
     NSUInteger previous = requests;
     TestChecker *checker = [TestChecker new]; [checker checkManually:NO];
     require(!checker.checking && requests == previous, @"daily automatic throttle");
-    puts("PASS: version parsing, eight mocked API responses, daily throttle; no network or UI alerts");
+    status=200;body=[@"{\"tag_name\":\"v2.0\",\"draft\":false,\"prerelease\":false}" dataUsingEncoding:NSUTF8StringEncoding];
+    [NSUserDefaults.standardUserDefaults removeObjectForKey:@"VIMLastUpdateAttempt"];
+    [NSUserDefaults.standardUserDefaults removeObjectForKey:@"VIMAnnouncedRelease"];
+    checker=[TestChecker new];[checker checkManually:NO];
+    NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:5];
+    while(checker.checking&&deadline.timeIntervalSinceNow>0)
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+    require(!checker.checking&&[checker.title isEqual:@"A New Version Is Available"],@"automatic new-release alert");
+    [NSUserDefaults.standardUserDefaults removeObjectForKey:@"VIMLastUpdateAttempt"];
+    checker=[TestChecker new];[checker checkManually:NO];
+    deadline=[NSDate dateWithTimeIntervalSinceNow:5];
+    while(checker.checking&&deadline.timeIntervalSinceNow>0)
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+    require(!checker.checking&&!checker.title,@"already announced release stays quiet");
+    puts("PASS: version parsing, mocked API responses, daily throttle, automatic alert and announcement suppression; no network or UI alerts");
     return 0;
 } }

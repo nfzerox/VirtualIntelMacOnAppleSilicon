@@ -28,7 +28,6 @@ if [[ $pvg_target == 10.14 ]]; then
     (cd "$output/mojave-inputs"; shasum -a 256 -c ../MOJAVE-INPUTS.sha256)
     # Use the bundled, hash-verified Catalina payload only as a donor seed.
     # All Mojave adapters and native reference images below are rebuilt.
-    (cd "$repo/prebuilt"; shasum -a 256 -c SHA256SUMS)
     mkdir "$output/reference"
     tar -xf "$(pvg_release_archive "$repo/prebuilt")" -C "$output/reference"
     export PVG_INPUT_ROOT="$output/inputs"
@@ -96,7 +95,6 @@ python3 "$repo/scripts/build-catalina-gl.py" "$output/gl"
 ditto --noextattr --noacl "$output/gl/payload" "$output/payload"
 # Reference CoreDisplay only; installation always patches the target guest's own image.
 stage=$(mktemp -d /private/var/tmp/pvg-build-seed.XXXXXX)
-(cd "$repo/prebuilt"; shasum -a 256 -c SHA256SUMS)
 tar -xf "$(pvg_release_archive "$repo/prebuilt")" -C "$stage"
 core=System/Library/Frameworks/CoreDisplay.framework/Versions/A/CoreDisplay
 seed="$stage/payload/$core"

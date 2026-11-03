@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import "VIMInstallerCatalog.h"
+#import "VIMInstallerSource.h"
 static void check(BOOL ok,NSString *message) { if(!ok){NSLog(@"FAIL: %@",message);exit(1);} }
 static NSData *embedded,*remote;
 static NSURL *cacheURL;
@@ -36,12 +37,36 @@ int main(int argc,char **argv) { @autoreleasepool {
     if(argc!=2)return 64;
     NSData *data=[NSData dataWithContentsOfFile:@(argv[1])];NSError *error=nil;
     VIMInstallerCatalog *catalog=[VIMInstallerCatalog catalogWithData:data error:&error];
-    check(catalog.supportedInstallers.count==3,@"three supported guests");
-    for(NSDictionary *entry in catalog.supportedInstallers)check(![entry[@"Guest"] isEqual:@"highsierra"],@"High Sierra dormant");
+    NSArray *expectedGuests=@[@"tiger",@"leopard",@"snowleopard",@"lion",@"mountainlion",@"mavericks",@"yosemite",@"elcapitan",@"sierra",@"highsierra",@"mojave",@"catalina",@"bigsur"];
+    check([[catalog.supportedInstallers valueForKey:@"Guest"] isEqual:expectedGuests],@"thirteen supported guests in chronological order");
     NSMutableDictionary *bad=[NSPropertyListSerialization propertyListWithData:data options:NSPropertyListMutableContainersAndLeaves format:nil error:NULL];
     bad[@"Installers"][0][@"Files"][0][@"URL"]=@"https://example.org/untrusted.pkg";
     NSData *badData=[NSPropertyListSerialization dataWithPropertyList:bad format:NSPropertyListXMLFormat_v1_0 options:0 error:NULL];
-    check(![VIMInstallerCatalog catalogWithData:badData error:NULL],@"reject non-Apple payload");
+    check(![VIMInstallerCatalog catalogWithData:badData error:NULL],@"reject unapproved payload");
+    NSURL *tiger=[NSURL URLWithString:catalog.supportedInstallers[0][@"Files"][0][@"URL"]];
+    check([VIMInstallerSource isApprovedURL:tiger]&&[VIMInstallerSource isRestoreDVDAsset:tiger forGuest:@"tiger"],@"the supplied Tiger restore item uses the common downloader");
+    check(![VIMInstallerSource isRestoreDVDAsset:tiger forGuest:@"leopard"],@"Tiger cannot be mistaken for Leopard");
+    NSURL *snow=[NSURL URLWithString:catalog.supportedInstallers[2][@"Files"][0][@"URL"]];
+    check([VIMInstallerSource isSnowLeopardRestoreAsset:snow],@"only the supplied Snow Leopard restore item is approved");
+    NSURL *leopard=[NSURL URLWithString:@"https://archive.org/download/10.5.7-9-j-3050/10.5.7-9J3050.dmg"];
+    check([VIMInstallerSource isApprovedURL:leopard]&&[VIMInstallerSource isRestoreDVDAsset:leopard forGuest:@"leopard"],@"the supplied Leopard restore item uses the common downloader");
+    check(![VIMInstallerSource isSnowLeopardRestoreAsset:leopard]&&![VIMInstallerSource isRestoreDVDAsset:snow forGuest:@"leopard"],@"restore versions cannot be interchanged");
+    check(![VIMInstallerSource isRestoreDVDAsset:[NSURL URLWithString:@"https://archive.org/download/10.5.7-9-j-3050/other.dmg"] forGuest:@"leopard"],@"unrecognized restore payload refused");
+    NSError *offline=[NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorNotConnectedToInternet userInfo:nil];
+    NSError *http=[NSError errorWithDomain:@"VirtualIntelMac.Download" code:2 userInfo:nil];
+    for(NSString *zone in @[@"Asia/Shanghai",@"Asia/Chongqing",@"Asia/Chungking",@"Asia/Harbin",@"Asia/Urumqi",@"Asia/Kashgar",@"PRC"])
+        check([VIMInstallerSource shouldExplainArchiveFailure:offline source:snow guest:@"snowleopard" region:@"US" timeZone:zone],@"mainland timezone guidance");
+    for(NSString *guest in @[@"tiger",@"leopard",@"snowleopard"])
+        check([VIMInstallerSource shouldExplainArchiveFailure:http source:leopard guest:guest region:@"CN" timeZone:@"America/Chicago"],@"mainland region guidance for HTTP failure");
+    check(![VIMInstallerSource shouldExplainArchiveFailure:offline source:snow guest:@"snowleopard" region:@"HK" timeZone:@"Asia/Hong_Kong"],@"Hong Kong is not classified as mainland");
+    check(![VIMInstallerSource shouldExplainArchiveFailure:offline source:snow guest:@"snowleopard" region:@"TW" timeZone:@"Asia/Taipei"],@"Taiwan is not classified as mainland");
+    check(![VIMInstallerSource shouldExplainArchiveFailure:offline source:[NSURL URLWithString:@"https://updates.cdn-apple.com/InstallMacOSX.dmg"] guest:@"lion" region:@"CN" timeZone:@"Asia/Shanghai"],@"Apple downloads retain their normal errors");
+    for(NSError *local in @[[NSError errorWithDomain:NSPOSIXErrorDomain code:28 userInfo:nil],
+        [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteOutOfSpaceError userInfo:nil],
+        [NSError errorWithDomain:@"VirtualIntelMac.Download" code:1 userInfo:nil],
+        [NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorCancelled userInfo:nil],
+        [NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorCannotWriteToFile userInfo:nil]])
+        check(![VIMInstallerSource shouldExplainArchiveFailure:local source:snow guest:@"snowleopard" region:@"CN" timeZone:@"Asia/Shanghai"],@"local file, state and cancellation errors are never regional network errors");
     check(![VIMInstallerCatalog catalogWithData:[NSData dataWithBytes:"bad" length:3] error:NULL],@"reject malformed plist");
     for(id invalid in @[@YES,@0,@(-1),@1.5,@"2"])
         check(![VIMInstallerCatalog catalogWithData:Revision(data,invalid) error:NULL],@"revision must be a positive integer");
@@ -68,5 +93,5 @@ int main(int argc,char **argv) { @autoreleasepool {
     check([local.host isEqual:@"127.0.0.1"] && [local.path isEqual:apple.path],@"loopback retains Apple path");
     [defaults setVolatileDomain:@{@"VIMDebugMode":@NO,@"VIMDownloadServer":@"http://127.0.0.1:8765"} forName:NSArgumentDomain];
     check([[VIMInstallerCatalog downloadURLForAppleURL:apple] isEqual:apple],@"override disabled outside debug");
-    puts("PASS: catalog schema, integer revision, newer embedded/cache/remote selection, older/equal refresh refusal, v1 guest gate, URL restriction, debug override; no network or real cache writes");return 0;
+    puts("PASS: catalog schema, integer revision, newer embedded/cache/remote selection, older/equal refresh refusal, thirteen-guest catalog, source URL restriction, debug override; no network or real cache writes");return 0;
 } }

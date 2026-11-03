@@ -1,0 +1,36 @@
+#!/bin/bash
+# Isolated guest-local x64 executor / i386 client. Does not install a renderer,
+# replace a payload or rebuild QEMU. The paired wire comes from the10.9 SDK.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+build="${VIM_MOJAVE32_BROKER_BUILD:-$root/Build/Mojave32Broker}"
+sdk="${VIM_OPENGL_SDK:-$root/resources/sdk/MacOSX10.9.sdk}"
+cc="${VIM_OPENGL_CC:-$root/resources/xcode/XcodeMojave.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang}"
+mkdir -p "$build"
+python3 "$root/scripts/generate-passthrough-opengl.py" "$sdk" "$build"
+flags=(-O2 -g -fno-omit-frame-pointer -Wall -Wextra -Werror -Wno-deprecated-declarations -Wno-unused-function -Wno-missing-braces)
+transport="$root/PassthroughOpenGL/passthrough-opengl-mach-stream.c"
+# Existing period SDK supplies a usable i386 libSystem. The memory protocol
+# has fixed-width counters and Mach descriptors, not native pthread layouts.
+"$cc" "${flags[@]}" -arch i386 -arch x86_64 -isysroot "$sdk" -mmacosx-version-min=10.14 \
+    -DVIM_GL_MACH_CLIENT_LIBRARY=1 -fvisibility=hidden -dynamiclib "$transport" -lbsm \
+    -Wl,-install_name,@rpath/libVIMOpenGLMach.dylib -o "$build/libVIMOpenGLMach.dylib"
+"$cc" "${flags[@]}" -arch i386 -arch x86_64 -isysroot "$sdk" -mmacosx-version-min=10.14 \
+    "$root/probes/opengl-mach-stream.c" "$transport" -lbsm -o "$build/opengl-mach-stream"
+"$cc" "${flags[@]}" -Wno-missing-braces -Wno-missing-field-initializers \
+    -arch i386 -isysroot "$sdk" -mmacosx-version-min=10.14 -I "$build" \
+    -fvisibility=hidden -DVIM_PASSTHROUGH_OPENGL_INPROCESS_CLIENT=1 -Wl,-exported_symbol,_main \
+    "$root/probes/opengl-direct-inprocess.c" -framework IOKit -framework CoreFoundation \
+    -o "$build/opengl-broker-i386"
+# The existing interpreter uses only Mojave-era APIs in this build. Compile
+# with its real SDK so newer host APIs cannot accidentally become imports.
+host_sdk="${VIM_MOJAVE32_HOST_SDK:-$root/resources/xcode/XcodeMojave.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk}"
+xcrun clang "${flags[@]}" -Wno-misleading-indentation -arch x86_64 -isysroot "$host_sdk" -mmacosx-version-min=10.14 -I "$build" \
+    -DVIM_PASSTHROUGH_OPENGL_MACH_EXECUTOR=1 \
+    "$root/PassthroughOpenGL/passthrough-opengl-host.c" "$transport" \
+    -framework OpenGL -framework IOSurface -framework CoreFoundation -lbsm \
+    -o "$build/passthrough-opengl-mojave32"
+for name in libVIMOpenGLMach.dylib opengl-mach-stream opengl-broker-i386 passthrough-opengl-mojave32; do
+    codesign --force --sign - "$build/$name"
+done
+printf 'Built isolated Mojave32 shared-memory broker proof: %s\n' "$build"

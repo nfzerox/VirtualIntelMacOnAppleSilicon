@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Architecture</key>
+	<string>i386</string>
+	<key>Files</key>
+	<dict>
+		<key>SMB-COPYRIGHT.txt</key>
+		<true/>
+		<key>SMB-VIM-LICENSE.txt</key>
+		<true/>
+		<key>Samba-COPYING.txt</key>
+		<true/>
+		<key>TigerSMB.plist</key>
+		<true/>
+		<key>TigerSMBClient-Info.plist</key>
+		<true/>
+		<key>TigerSMBClient.plist</key>
+		<true/>
+		<key>guest-clipboard</key>
+		<true/>
+		<key>guest-display</key>
+		<true/>
+		<key>guest-host-connection</key>
+		<true/>
+		<key>guest-ssh</key>
+		<true/>
+		<key>opengl-audio-defaults</key>
+		<true/>
+		<key>opengl-create-account</key>
+		<true/>
+		<key>opengl-desktop-status</key>
+		<true/>
+		<key>opengl-file-sharing</key>
+		<true/>
+		<key>opengl-graphics-check</key>
+		<true/>
+		<key>opengl-guest-agent</key>
+		<true/>
+		<key>opengl-setup-status</key>
+		<true/>
+		<key>opengl-tiger-audio</key>
+		<true/>
+		<key>opengl-tiger-console</key>
+		<true/>
+		<key>opengl-tiger-install-config</key>
+		<true/>
+		<key>opengl-tiger-installer-bootstrap</key>
+		<true/>
+		<key>tiger-opendirectory.so</key>
+		<true/>
+		<key>tiger-smbd</key>
+		<true/>
+		<key>tiger-smbfs</key>
+		<true/>
+	</dict>
+	<key>FormatVersion</key>
+	<integer>1</integer>
+	<key>MinimumOS</key>
+	<string>10.4</string>
+	<key>RequiresGuestDeveloperTools</key>
+	<false/>
+</dict>
+</plist>

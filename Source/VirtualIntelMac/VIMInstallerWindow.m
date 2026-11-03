@@ -54,7 +54,7 @@ static VIMInstallerWindow *installerController;
     if((self=[super initWithWindow:window])) {
         window.title=@"macOS Installers";window.releasedWhenClosed=NO;
         self.selection=[NSPopUpButton new];
-        self.status=[NSTextField wrappingLabelWithString:@"Choose a macOS installer to download. Existing downloads resume automatically."];
+        self.status=[NSTextField wrappingLabelWithString:@"Choose an OS installer to download. Existing downloads resume automatically."];
         self.location=[NSTextField wrappingLabelWithString:@""];self.location.selectable=YES;
         self.location.textColor=NSColor.secondaryLabelColor;
         self.progress=[NSProgressIndicator new];self.progress.indeterminate=NO;self.progress.maxValue=1;
@@ -164,7 +164,7 @@ static VIMInstallerWindow *installerController;
         NSURL *media=nil;
         if(installer)media=[guest isEqual:@"bigsur"]?
             [worker createBigSurMediaFromInstaller:installer jobDirectory:mediaJob error:&failure]:
-            [worker createLegacyMediaFromInstaller:installer guest:guest jobDirectory:mediaJob error:&failure];
+            [worker createRecoveryMediaFromInstaller:installer guest:guest jobDirectory:mediaJob error:&failure];
         if(media) {
             [VIMInstallerAssembly retireCompletedDownloads:files];
             if(![NSUserDefaults.standardUserDefaults boolForKey:@"VIMKeepInstallers"])

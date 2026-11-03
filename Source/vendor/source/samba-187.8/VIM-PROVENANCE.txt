@@ -1,0 +1,17 @@
+Apple samba187.8, already patched by Apple, from:
+https://github.com/apple-oss-distributions/samba/tree/samba-187.8
+Commit: 8157479ed3e94c6403b024a9703162139e2e79a5
+
+This is an ordinary vendored source copy, not a Git submodule. Included:
+the complete native source/build helpers, Apple Leopard configure cache,
+upstream README and GPLv2 COPYING. Documentation, web UI, examples and Apple
+packaging not used by our executable/auth-module build are omitted.
+
+Virtual Intel Mac changes implement the bounded NTLM/SPNEGO mechanism-list
+MIC exchange and Local/Default NTLMv2 session-key support. The original
+DirectoryService challenge-response verifier, OD/PAM/SACL and native sharing,
+ACL and streams modules are retained. No new password database is created.
+Build-environment strings are made generic. A research diff against the
+original seven C/header files is retained in Source/probes/patches.
+
+See samba/COPYING and the individual source copyright notices.

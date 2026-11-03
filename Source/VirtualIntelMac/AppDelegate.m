@@ -155,6 +155,12 @@
     // Relaunch opens the library, never an unsolicited creation assistant.
     // Saved downloads remain resumable when the user explicitly opens setup.
     if([arguments containsObject:@"--new-mac"])[VIMNewMachineWindow showWithInstaller:nil guest:nil];
+    NSUInteger newGuestConfiguration=[arguments indexOfObject:@"--configure-new-guest"];
+    if(newGuestConfiguration!=NSNotFound&&newGuestConfiguration+1<arguments.count)
+        [VIMNewMachineWindow showConfigurationForGuest:arguments[newGuestConfiguration+1]];
+    NSUInteger installerDownload=[arguments indexOfObject:@"--download-installer"];
+    if(installerDownload!=NSNotFound&&installerDownload+1<arguments.count)
+        [VIMNewMachineWindow downloadInstallerForGuest:arguments[installerDownload+1]];
     self.updateTimer = [NSTimer scheduledTimerWithTimeInterval:3600 repeats:YES block:^(NSTimer *timer) {
         [self.updateChecker checkManually:NO];
     }];
@@ -270,7 +276,7 @@
         if(!VIMSession.hasRunningMachines){[timer invalidate];weakSelf.quitTimer=nil;[NSApp terminate:nil];return;}
         if(deadline.timeIntervalSinceNow>0)return;
         [timer invalidate];weakSelf.quitTimer=nil;
-        NSAlert *alert=[NSAlert new];alert.messageText=@"macOS is still shutting down";
+        NSAlert *alert=[NSAlert new];alert.messageText=@"Your virtual Mac is still shutting down";
         alert.informativeText=@"The app will stay open so you can check the virtual Mac’s window. If guest tools are unavailable, choose Shut Down from its Apple menu. Use Force Stop only if it is unresponsive.";
         [alert addButtonWithTitle:@"Keep App Open"];VIMPresentAlert(alert,nil,nil);
     }];
@@ -380,7 +386,7 @@
         NSViewController *advanced=[NSViewController new];advanced.view=[[VIMSettingsPage alloc] initWithFrame:NSMakeRect(0,0,640,330)];
         NSButton *keep=[NSButton checkboxWithTitle:@"Keep downloaded files and installers" target:self action:@selector(changeInstallerRetention:)];
         keep.state=[NSUserDefaults.standardUserDefaults boolForKey:@"VIMKeepInstallers"]?NSControlStateValueOn:NSControlStateValueOff;
-        NSTextField *retention=[NSTextField wrappingLabelWithString:@"Keep the finished Install macOS app and installer disk image for another virtual Mac. Temporary preparation files are always removed. Otherwise, the installer image is removed after macOS is installed and graphics support is verified."];
+        NSTextField *retention=[NSTextField wrappingLabelWithString:@"Keep the finished installer app and disk image for another virtual Mac. Temporary preparation files are always removed. Otherwise, the installer image is removed after the operating system is installed and graphics support is verified."];
         retention.textColor=NSColor.secondaryLabelColor;
         NSStackView *options=[NSStackView stackViewWithViews:@[keep,retention]];options.orientation=NSUserInterfaceLayoutOrientationVertical;options.alignment=NSLayoutAttributeLeading;options.spacing=8;options.translatesAutoresizingMaskIntoConstraints=NO;[advanced.view addSubview:options];
         [NSLayoutConstraint activateConstraints:@[[options.leadingAnchor constraintEqualToAnchor:advanced.view.leadingAnchor constant:32],[options.trailingAnchor constraintEqualToAnchor:advanced.view.trailingAnchor constant:-32],[options.topAnchor constraintEqualToAnchor:advanced.view.topAnchor constant:28],[options.bottomAnchor constraintEqualToAnchor:advanced.view.bottomAnchor constant:-24],[advanced.view.widthAnchor constraintEqualToConstant:640]]];

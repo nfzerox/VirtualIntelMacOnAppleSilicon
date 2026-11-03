@@ -1,0 +1,34 @@
+# One original configure runtime test has no cross-compilation branch.
+# The genuine10.4u/i386 tiger-krb5-keytab probe runs successfully in8R4088:
+# WRFILE_supported=1 error=0. This is backend discovery, not a keytab write.
+samba_cv_HAVE_WRFILE_KEYTAB=yes
+# The genuine10.4u sys/time.h declares gettimeofday(timeval *, timezone *).
+# Original configure calls its runtime-only check "cross" otherwise, selecting
+# a one-argument ABI that this SDK explicitly rejects.
+samba_cv_HAVE_GETTIMEOFDAY_TZ=yes
+# The original variable-length sockaddr iterator (named "AIX" upstream) finds
+# en0 AND lo0 inside8R4088; fixed-stride IFCONF finds only lo0 on this BSD ABI.
+# tiger-samba-platform exercises both, not the modern builder's network stack.
+samba_cv_HAVE_IFACE_AIX=yes
+samba_cv_HAVE_IFACE_IFCONF=no
+samba_cv_HAVE_C99_VSNPRINTF=yes
+# Actual8R4088 original smbd -b (preserved native binary), genuine10.4u
+# declarations and Tiger's runtime platform probe establish these Darwin
+# contracts. Do not silently select the cross="unknown" small-file/no-mmap
+# branches: in particular off_t and long long really are64 bits on i386.
+samba_cv_have_longlong=yes
+samba_cv_SIZEOF_OFF_T=yes
+samba_cv_HAVE_MMAP=yes
+samba_cv_HAVE_FCNTL_LOCK=yes
+samba_cv_HAVE_FTRUNCATE_EXTEND=yes
+samba_cv_HAVE_SECURE_MKSTEMP=yes
+samba_cv_HAVE_DEVICE_MAJOR_FN=yes
+samba_cv_HAVE_DEVICE_MINOR_FN=yes
+samba_cv_HAVE_MAKEDEV=yes
+samba_cv_SYSCONF_SC_NGROUPS_MAX=yes
+samba_cv_HAVE_ROOT=yes
+samba_cv_HAVE_BROKEN_GETGROUPS=no
+samba_cv_HAVE_BROKEN_READDIR=no
+samba_cv_HAVE_BROKEN_FCNTL64_LOCKS=no
+samba_cv_FTRUNCATE_NEEDS_ROOT=no
+samba_cv_REALPATH_TAKES_NULL=no

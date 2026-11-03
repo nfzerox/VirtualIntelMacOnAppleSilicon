@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Architecture</key>
+	<string>i386</string>
+	<key>FormatVersion</key>
+	<integer>1</integer>
+	<key>Guest</key>
+	<string>tiger</string>
+	<key>HasNativeAudioPayload</key>
+	<true/>
+	<key>MinimumOS</key>
+	<string>10.4</string>
+	<key>RequiresGuestDeveloperTools</key>
+	<false/>
+</dict>
+</plist>

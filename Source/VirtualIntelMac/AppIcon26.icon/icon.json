@@ -1,0 +1,53 @@
+{
+  "fill-specializations": [
+    { "value": { "automatic-gradient": "extended-srgb:0.925,0.935,0.950,1" } },
+    { "appearance": "dark", "value": { "automatic-gradient": "extended-srgb:0.055,0.070,0.090,1" } }
+  ],
+  "groups": [
+    {
+      "blur-material": 0.25,
+      "layers": [
+        {
+          "name": "Mac",
+          "image-name": "laptop-1.svg",
+          "glass": true,
+          "fill-specializations": [
+            { "value": { "solid": "extended-srgb:0.24,0.28,0.33,1" } },
+            { "appearance": "dark", "value": { "solid": "extended-srgb:0.88,0.93,0.99,1" } }
+          ]
+        }
+      ]
+    },
+    {
+      "blur-material": 0.25,
+      "opacity": 0.68,
+      "layers": [
+        {
+          "name": "Virtual Mac",
+          "image-name": "laptop-2.svg",
+          "glass": true,
+          "fill-specializations": [
+            { "value": { "solid": "extended-srgb:0.24,0.28,0.33,1" } },
+            { "appearance": "dark", "value": { "solid": "extended-srgb:0.88,0.93,0.99,1" } }
+          ]
+        }
+      ]
+    },
+    {
+      "blur-material": 0.25,
+      "opacity": 0.58,
+      "layers": [
+        {
+          "name": "Intel Mac",
+          "image-name": "laptop-3.svg",
+          "glass": true,
+          "fill-specializations": [
+            { "value": { "solid": "extended-srgb:0.24,0.28,0.33,1" } },
+            { "appearance": "dark", "value": { "solid": "extended-srgb:0.88,0.93,0.99,1" } }
+          ]
+        }
+      ]
+    }
+  ],
+  "supported-platforms": { "squares": "shared" }
+}

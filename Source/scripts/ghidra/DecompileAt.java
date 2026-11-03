@@ -17,6 +17,8 @@ public class DecompileAt extends GhidraScript {
         if (args.length == 0) {
             throw new IllegalArgumentException("provide one or more hexadecimal addresses");
         }
+        println("PROGRAM " + currentProgram.getName() + " image-base=" + currentProgram.getImageBase() +
+            " min=" + currentProgram.getMinAddress() + " max=" + currentProgram.getMaxAddress());
 
         DecompInterface decompiler = new DecompInterface();
         decompiler.toggleCCode(true);

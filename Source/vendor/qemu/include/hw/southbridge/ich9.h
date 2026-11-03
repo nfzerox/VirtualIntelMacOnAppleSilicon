@@ -68,6 +68,10 @@ struct ICH9LPCState {
     Notifier machine_ready;
 
     qemu_irq gsi[IOAPIC_NUM_PINS];
+
+    /* Local legacy-guest experiment: _PIC(1) removes only PIRQ F's
+     * duplicate PIC fanout, keeping its native GSI21 route intact. */
+    bool apic_pirq_f_native_only;
 };
 
 #define ICH9_MASK(bit, ms_bit, ls_bit) \

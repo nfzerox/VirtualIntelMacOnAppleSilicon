@@ -1,0 +1,11 @@
+#!/bin/zsh
+# Guest-only native Recovery control; current SDK, Mojave deployment floor.
+set -euo pipefail
+root=${0:A:h:h}
+out=${1:?usage: build-native-installer NEW_OUTPUT}
+[[ ! -e $out ]] || { print -u2 'Choose a new output file.'; exit 73; }
+xcrun clang -arch x86_64 -mmacosx-version-min=10.14 -fobjc-arc -O2 \
+    -Wall -Wextra -Werror -Wno-deprecated-declarations \
+    "$root/tools/guest-native-installer.m" -framework Foundation -framework IOKit -o "$out"
+codesign --force --sign - "$out"
+codesign --verify --strict "$out"

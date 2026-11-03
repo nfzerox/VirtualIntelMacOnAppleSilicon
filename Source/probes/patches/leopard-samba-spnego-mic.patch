@@ -1,0 +1,446 @@
+--- a/samba/source/include/auth.h
++++ b/samba/source/include/auth.h
+@@ -140,6 +140,11 @@
+ 	struct auth_context *auth_context;
+ 	struct auth_serversupplied_info *server_info;
+ 	struct ntlmssp_state *ntlmssp_state;
++	/* SPNEGO integrity belongs to this authentication exchange, not a
++	 * process-global token cache. Append fields to preserve existing prefixes. */
++	DATA_BLOB spnego_mech_list;
++	DATA_BLOB spnego_server_mic;
++	BOOL spnego_mic_invalid;
+ } AUTH_NTLMSSP_STATE;
+ 
+ /* Changed from 1 -> 2 to add the logon_parameters field. */
+
+--- a/samba/source/auth/auth_ntlmssp.c
++++ b/samba/source/auth/auth_ntlmssp.c
+@@ -188,6 +188,7 @@
+ void auth_ntlmssp_end(AUTH_NTLMSSP_STATE **auth_ntlmssp_state)
+ {
+ 	TALLOC_CTX *mem_ctx = (*auth_ntlmssp_state)->mem_ctx;
++	data_blob_free(&(*auth_ntlmssp_state)->spnego_server_mic);
+ 
+ 	if ((*auth_ntlmssp_state)->ntlmssp_state) {
+ 		ntlmssp_end(&(*auth_ntlmssp_state)->ntlmssp_state);
+
+--- a/samba/source/libsmb/clispnego.c
++++ b/samba/source/libsmb/clispnego.c
+@@ -483,14 +483,78 @@
+ 
+ 	asn1_free(&data);
+ 	return True;
++}
++
++/* Preserve the initiator's DER MechTypeList, excluding its outer [0] tag.
++ * The normal mechanism parser has already validated this initial token.
++ * RFC4178 section5 signs this exact sequence, NOT the NTLM response token. */
++BOOL spnego_mech_list_blob(DATA_BLOB blob, DATA_BLOB *list)
++{
++	ASN1_DATA data;
++	int start, length;
++	*list = data_blob(NULL, 0);
++	asn1_load(&data, blob);
++	asn1_start_tag(&data, ASN1_APPLICATION(0));
++	asn1_check_OID(&data, OID_SPNEGO);
++	asn1_start_tag(&data, ASN1_CONTEXT(0));
++	asn1_start_tag(&data, ASN1_SEQUENCE(0));
++	asn1_start_tag(&data, ASN1_CONTEXT(0));
++	start = data.ofs;
++	asn1_start_tag(&data, ASN1_SEQUENCE(0));
++	length = data.ofs - start + asn1_tag_remaining(&data);
++	if (!data.has_error && start >= 0 && length > 2 &&
++	    start <= data.length && length <= data.length - start) {
++		*list = data_blob(data.data + start, length);
++	}
++	asn1_free(&data);
++	return list->data != NULL;
+ }
+ 
++/* NTLM's optional SPNEGO MIC is not ignorable authentication padding.
++ * Keep the old public parser unchanged for its other callers. This entry
++ * requires a nonempty mechanism token and a complete16-byte NTLM MIC if one
++ * is present; unknown/duplicate/trailing fields are never silently stripped. */
++BOOL spnego_parse_ntlm_auth_mic(DATA_BLOB blob, DATA_BLOB *auth, DATA_BLOB *mic)
++{
++	ASN1_DATA data;
++	*auth = data_blob(NULL, 0);
++	*mic = data_blob(NULL, 0);
++	asn1_load(&data, blob);
++	asn1_start_tag(&data, ASN1_CONTEXT(1));
++	asn1_start_tag(&data, ASN1_SEQUENCE(0));
++	asn1_start_tag(&data, ASN1_CONTEXT(2));
++	asn1_read_OctetString(&data, auth);
++	asn1_end_tag(&data);
++	if (!data.has_error && asn1_tag_remaining(&data) > 0) {
++		asn1_start_tag(&data, ASN1_CONTEXT(3));
++		asn1_read_OctetString(&data, mic);
++		asn1_end_tag(&data);
++		if (mic->length != 16) data.has_error = True;
++	}
++	asn1_end_tag(&data);
++	asn1_end_tag(&data);
++	if (data.has_error || data.ofs != data.length || !auth->length) {
++		data_blob_free(auth);
++		data_blob_free(mic);
++		asn1_free(&data);
++		return False;
++	}
++	asn1_free(&data);
++	return True;
++}
++
+ /*
+   generate a minimal SPNEGO response packet.  Doesn't contain much.
+ */
+ DATA_BLOB spnego_gen_auth_response(DATA_BLOB *reply, NTSTATUS nt_status,
+ 				   const char *mechOID)
+ {
++	return spnego_gen_auth_response_mic(reply, nt_status, mechOID, NULL);
++}
++
++DATA_BLOB spnego_gen_auth_response_mic(DATA_BLOB *reply, NTSTATUS nt_status,
++				   const char *mechOID, const DATA_BLOB *mic)
++{
+ 	ASN1_DATA data;
+ 	DATA_BLOB ret;
+ 	uint8 negResult;
+@@ -521,6 +585,11 @@
+ 		asn1_pop_tag(&data);
+ 	}
+ 
++	if (mic && mic->length) {
++		asn1_push_tag(&data, ASN1_CONTEXT(3));
++		asn1_write_OctetString(&data, mic->data, mic->length);
++		asn1_pop_tag(&data);
++	}
+ 	asn1_pop_tag(&data);
+ 	asn1_pop_tag(&data);
+ 
+
+--- a/samba/source/libsmb/ntlmssp.c
++++ b/samba/source/libsmb/ntlmssp.c
+@@ -935,10 +935,10 @@
+ 		NTLMSSP_NEGOTIATE_SIGN |
+ 		NTLMSSP_NEGOTIATE_SEAL;
+ 
+-	/* OD Password Server doesn't support 128bit keys yet. */
+-	if (lp_opendirectory) {
+-		(*ntlmssp_state)->neg_flags &= ~NTLMSSP_NEGOTIATE_128;
+-	}
++	/* Local Darwin9 DirectoryService returns a full16-byte NTLMv2 key.
++	 * The obsolete Password Server restriction otherwise negotiates weak
++	 * sealing while modern Apple's NTLM mechanism derives full-strength
++	 * MIC sealing keys. Keep the advertised full-strength capability. */
+ 
+ 	return NT_STATUS_OK;
+ }
+
+--- a/samba/source/smbd/sesssetup.c
++++ b/samba/source/smbd/sesssetup.c
+@@ -615,7 +615,10 @@
+ 	DATA_BLOB response;
+ 	struct auth_serversupplied_info *server_info = NULL;
+ 
+-	if (NT_STATUS_IS_OK(nt_status)) {
++	if ((*auth_ntlmssp_state)->spnego_mic_invalid) {
++		/* An integrity failure must never fall through map-to-guest. */
++		nt_status = NT_STATUS_ACCESS_DENIED;
++	} else if (NT_STATUS_IS_OK(nt_status)) {
+ 		server_info = (*auth_ntlmssp_state)->server_info;
+ 	} else {
+ 		nt_status = do_map_to_guest(nt_status, 
+@@ -654,7 +657,8 @@
+ 	}
+ 
+ 	if (wrap) {
+-		response = spnego_gen_auth_response(ntlmssp_blob, nt_status, OID_NTLMSSP);
++		response = spnego_gen_auth_response_mic(ntlmssp_blob, nt_status, OID_NTLMSSP,
++			NT_STATUS_IS_OK(nt_status) ? &(*auth_ntlmssp_state)->spnego_server_mic : NULL);
+ 	} else {
+ 		response = *ntlmssp_blob;
+ 	}
+@@ -773,6 +777,25 @@
+ 		/* Kill the intermediate vuid */
+ 		invalidate_vuid(vuid);
+ 		return ERROR_NT(nt_status_squash(status));
++	}
++
++	{
++		DATA_BLOB list = data_blob(NULL, 0);
++		if (!spnego_mech_list_blob(blob1, &list)) {
++			data_blob_free(&secblob);
++			auth_ntlmssp_end(auth_ntlmssp_state);
++			invalidate_vuid(vuid);
++			return ERROR_NT(NT_STATUS_INVALID_PARAMETER);
++		}
++		(*auth_ntlmssp_state)->spnego_mech_list = data_blob_talloc(
++			(*auth_ntlmssp_state)->mem_ctx, list.data, list.length);
++		data_blob_free(&list);
++		if (!(*auth_ntlmssp_state)->spnego_mech_list.data) {
++			data_blob_free(&secblob);
++			auth_ntlmssp_end(auth_ntlmssp_state);
++			invalidate_vuid(vuid);
++			return ERROR_NT(NT_STATUS_NO_MEMORY);
++		}
+ 	}
+ 
+ 	status = auth_ntlmssp_update(*auth_ntlmssp_state, 
+@@ -800,11 +823,12 @@
+ 			     AUTH_NTLMSSP_STATE **auth_ntlmssp_state)
+ {
+ 	DATA_BLOB auth = data_blob(NULL,0);
++	DATA_BLOB mic = data_blob(NULL,0);
+ 	DATA_BLOB auth_reply = data_blob(NULL,0);
+ 	DATA_BLOB secblob = data_blob(NULL,0);
+ 	NTSTATUS status = NT_STATUS_INVALID_PARAMETER;
+ 
+-	if (!spnego_parse_auth(blob1, &auth)) {
++	if (!spnego_parse_ntlm_auth_mic(blob1, &auth, &mic)) {
+ #if 0
+ 		file_save("auth.dat", blob1.data, blob1.length);
+ #endif
+@@ -816,6 +840,13 @@
+ 
+ 	if (auth.data[0] == ASN1_APPLICATION(0)) {
+ 		/* Might be a second negTokenTarg packet */
++		if (mic.length) {
++			/* This added verifier is specifically NTLM, not a claim to
++			 * verify a Kerberos MIC using the wrong mechanism. */
++			data_blob_free(&auth);data_blob_free(&mic);
++			invalidate_vuid(vuid);
++			return ERROR_NT(NT_STATUS_INVALID_PARAMETER);
++		}
+ 
+ 		char *kerb_mech = NULL;
+ 		status = parse_spnego_mechanisms(auth, &secblob, &kerb_mech);
+@@ -848,15 +879,35 @@
+ 	if (!*auth_ntlmssp_state) {
+ 		/* Kill the intermediate vuid */
+ 		invalidate_vuid(vuid);
++		data_blob_free(&auth);data_blob_free(&mic);
+ 
+ 		/* auth before negotiatiate? */
+ 		return ERROR_NT(nt_status_squash(NT_STATUS_INVALID_PARAMETER));
+ 	}
+ 	
++	if (mic.length) (*auth_ntlmssp_state)->spnego_mic_invalid = True;
+ 	status = auth_ntlmssp_update(*auth_ntlmssp_state, 
+ 					auth, &auth_reply);
++
++	if (NT_STATUS_IS_OK(status) && mic.length) {
++		NTLMSSP_STATE *ntlm = (*auth_ntlmssp_state)->ntlmssp_state;
++		DATA_BLOB list = (*auth_ntlmssp_state)->spnego_mech_list;
++		status = NT_STATUS_ACCESS_DENIED;
++		if (list.length && (ntlm->neg_flags & NTLMSSP_NEGOTIATE_SIGN) &&
++		    (ntlm->neg_flags & NTLMSSP_NEGOTIATE_NTLM2)) {
++			status = ntlmssp_check_packet(ntlm, list.data, list.length,
++				list.data, list.length, &mic);
++			if (NT_STATUS_IS_OK(status)) {
++				status = ntlmssp_sign_packet(ntlm, list.data, list.length,
++					list.data, list.length, &(*auth_ntlmssp_state)->spnego_server_mic);
++			}
++		}
++		(*auth_ntlmssp_state)->spnego_mic_invalid = !NT_STATUS_IS_OK(status);
++		if (!NT_STATUS_IS_OK(status)) DEBUG(1,("SPNEGO mechanism-list MIC verification failed\n"));
++	}
+ 
+ 	data_blob_free(&auth);
++	data_blob_free(&mic);
+ 
+ 	reply_spnego_ntlmssp(conn, inbuf, outbuf, vuid, 
+ 			     auth_ntlmssp_state,
+
+--- a/samba/source/auth/auth_odsam.c
++++ b/samba/source/auth/auth_odsam.c
+@@ -253,8 +253,7 @@
+ 			    const DATA_BLOB *ntv2_response,
+ 			    DATA_BLOB *user_sess_key)
+ {
+-	static const char const method[] =
+-			"dsAuthMethodStandard:dsAuthNodeNTLMv2";
++	static const char method[] = "dsAuthMethodStandard:dsAuthNodeNTLMv2";
+ 
+ 	tDirStatus 		status		= eDSAuthServerError;
+ 	unsigned long		curr		= 0;
+@@ -325,8 +324,7 @@
+ 
+ 		authBuff->fBufferLength = curr;
+ 
+-		status = dsDoDirNodeAuth( userNode, authType, True,
+-				authBuff, stepBuff, NULL );
++		status = dsDoDirNodeAuth(userNode,authType,True,authBuff,stepBuff,NULL);
+ 		LOG_DS_ERROR(ds_trace, status, "dsDoNodeAuth");
+ 		DEBUG(module_debug, ("User \"%s\" %s ""with \"%s\"\n", user,
+ 			    status == eDSNoErr ? "authenticated successfully"
+@@ -456,8 +454,12 @@
+ 			ntv2_response->length, ntv2_response->data,
+ 			domain, &session_key_len, user_sess_key->data);
+ 		unbecome_root();
++		if (keyStatus != eDSNoErr || session_key_len != 16) {
++			data_blob_free(user_sess_key);
++			return keyStatus != eDSNoErr ? keyStatus : eDSInvalidBuffFormat;
++		}
+ 
+-		LOG_DS_ERROR_MSG(ds_trace, status,
++		LOG_DS_ERROR_MSG(ds_trace, keyStatus,
+ 			"opendirectory_ntlmv2user_session_key",
+ 			("%u byte session key (%s)\n",
+ 			 session_key_len,
+
+--- a/samba/source/lib/opendirectory.c
++++ b/samba/source/lib/opendirectory.c
+@@ -375,10 +375,10 @@
+ 	}
+ }
+ 
+-static tDirStatus get_node_ref_and_name(
++static tDirStatus get_node_ref_and_name_location(
+ 			struct opendirectory_session *session,
+ 			const char *name, const char *recordType,
+-			tDirNodeReference *nodeRef, char *outRecordName)
++			tDirNodeReference *nodeRef, char *outRecordName, BOOL *isLocal)
+ {
+ 	tDirStatus		status			= eDSNoErr;
+ 	unsigned long		returnCount		= 0;
+@@ -399,6 +399,7 @@
+ 
+ 	*nodeRef = 0;
+ 	*outRecordName = '\0';
++	if (isLocal) *isLocal = False;
+ 
+ 	nodeBuffer = DS_DEFAULT_BUFFER(session->ref);
+ 	if (nodeBuffer == NULL) {
+@@ -477,6 +478,7 @@
+         }
+ 
+         if (strlen(NodePathStr) != 0 && strlen(outRecordName) != 0) {
++		if (isLocal) *isLocal = strcmp(NodePathStr,"/Local/Default") == 0;
+ 		NodePath = dsBuildFromPath(session->ref, NodePathStr, "/");
+ 		status = dsOpenDirNode(session->ref, NodePath, nodeRef);
+ 		opendirectory_free_list(session, NodePath);
+@@ -489,6 +491,96 @@
+ 	opendirectory_free_list(session, recType);
+ 	opendirectory_free_list(session, attrType);
+ 
++	return status;
++}
++
++static tDirStatus get_node_ref_and_name(struct opendirectory_session *session,
++	const char *name, const char *recordType, tDirNodeReference *nodeRef, char *recordName)
++{
++	return get_node_ref_and_name_location(session,name,recordType,nodeRef,recordName,NULL);
++}
++
++/* Darwin9's Local node verifies NTLMv2 but does not implement the Password
++ * Server's key-retrieval API. Use ONLY its already-opted-in native SMB-NT
++ * credential, inside the root authentication server, after native password
++ * verification. No password/hash is copied to a new database or exported. */
++static tDirStatus local_ntlmv2_session_key(struct opendirectory_session *session,
++	tDirNodeReference node, const char *recordName, const char *domain,
++	const unsigned char *response, unsigned responseLength, unsigned char key[16])
++{
++	tDirStatus status=eDSAuthFailed;
++	tRecordReference record=0;
++	tDataNodePtr type=NULL,name=NULL,attribute=NULL;
++	tAttributeValueEntryPtr value=NULL;
++	tAttributeEntryPtr info=NULL;
++	char guid[37]={0},path[128],hex[32];
++	unsigned char hash[16]={0},v2[16]={0};
++	struct stat st;
++	int fd=-1,i;
++	BOOL optedIn=False;
++	if (geteuid()!=0 || !response || responseLength<24) goto done;
++	type=dsDataNodeAllocateString(session->ref,kDSStdRecordTypeUsers);
++	name=dsDataNodeAllocateString(session->ref,recordName);
++	if (!type || !name || dsOpenRecord(node,type,name,&record)!=eDSNoErr) goto done;
++	attribute=dsDataNodeAllocateString(session->ref,kDS1AttrGeneratedUID);
++	if (!attribute || dsGetRecordAttributeValueByIndex(record,attribute,1,&value)!=eDSNoErr ||
++	    !value || value->fAttributeValueData.fBufferLength!=36) goto done;
++	memcpy(guid,value->fAttributeValueData.fBufferData,36);
++	for (i=0;i<36;i++) {
++		if (i==8 || i==13 || i==18 || i==23) {if(guid[i]!='-') goto done;}
++		else if (!((guid[i]>='0'&&guid[i]<='9') || (guid[i]>='A'&&guid[i]<='F') ||
++		           (guid[i]>='a'&&guid[i]<='f'))) goto done;
++	}
++	dsDeallocAttributeValueEntry(session->ref,value);value=NULL;
++	opendirectory_free_node(session,attribute);attribute=NULL;
++	attribute=dsDataNodeAllocateString(session->ref,kDSNAttrAuthenticationAuthority);
++	if (!attribute || dsGetRecordAttributeInfo(record,attribute,&info)!=eDSNoErr ||
++	    !info || info->fAttributeValueCount>16) goto done;
++	for (i=1;i<=info->fAttributeValueCount;i++) {
++		char authority[1024];unsigned n;
++		if (dsGetRecordAttributeValueByIndex(record,attribute,i,&value)!=eDSNoErr || !value) goto done;
++		n=value->fAttributeValueData.fBufferLength;
++		if (n>=sizeof(authority)) goto done;
++		memcpy(authority,value->fAttributeValueData.fBufferData,n);authority[n]=0;
++		if (strncmp(authority,";ShadowHash;HASHLIST:<",strlen(";ShadowHash;HASHLIST:<"))==0 &&
++		    (strstr(authority,"<SMB-NT,") || strstr(authority,",SMB-NT,") ||
++		     strstr(authority,"<SMB-NT>") || strstr(authority,",SMB-NT>"))) optedIn=True;
++		dsDeallocAttributeValueEntry(session->ref,value);value=NULL;
++	}
++	if (!optedIn) goto done;
++	/* Fixed root-owned parents and a validated GUID, never a client path.
++	 * Reject links, permissive credentials and unexpected data formats. */
++	if (lstat("/private/var/db/shadow",&st)!=0 || !S_ISDIR(st.st_mode) || st.st_uid || (st.st_mode&022)) goto done;
++	if (lstat("/private/var/db/shadow/hash",&st)!=0 || !S_ISDIR(st.st_mode) || st.st_uid || (st.st_mode&077)) goto done;
++	snprintf(path,sizeof(path),"/private/var/db/shadow/hash/%s",guid);
++	fd=open(path,O_RDONLY|O_NOFOLLOW);
++	if (fd<0 || fstat(fd,&st)!=0 || !S_ISREG(st.st_mode) || st.st_uid ||
++	    st.st_nlink!=1 || (st.st_mode&077) || st.st_size<32 || st.st_size>8192 ||
++	    read(fd,hex,sizeof(hex))!=sizeof(hex)) goto done;
++	for (i=0;i<32;i++) {
++		unsigned char c=hex[i];unsigned nibble;
++		if (c>='0'&&c<='9') nibble=c-'0';
++		else if (c>='A'&&c<='F') nibble=c-'A'+10;
++		else if (c>='a'&&c<='f') nibble=c-'a'+10;
++		else goto done;
++		hash[i/2]=(hash[i/2]<<4)|nibble;
++	}
++	/* Match the Local plugin's uppercase username+domain calculation. */
++	if (!ntv2_owf_gen(hash,recordName,domain,True,v2)) goto done;
++	SMBsesskeygen_ntv2(v2,response,key);
++	status=eDSNoErr;
++done:
++	if(fd>=0)close(fd);
++	if(value)dsDeallocAttributeValueEntry(session->ref,value);
++	if(info)dsDeallocAttributeEntry(session->ref,info);
++	opendirectory_free_node(session,attribute);
++	if(record)dsCloseRecord(record);
++	opendirectory_free_node(session,name);opendirectory_free_node(session,type);
++	/* Volatile erasure must survive optimized compilation. */
++	{ volatile unsigned char *p;size_t n;
++	  for(p=hash,n=sizeof(hash);n--;)*p++=0;
++	  for(p=v2,n=sizeof(v2);n--;)*p++=0;
++	  for(p=(unsigned char *)hex,n=sizeof(hex);n--;)*p++=0; }
+ 	return status;
+ }
+ 
+@@ -775,15 +867,23 @@
+ 	tDataNodePtr		recordType		= NULL;
+ 	tDirNodeReference nodeRef = 0;
+ 	char recordName[256] = {0};
++	BOOL isLocal=False;
++	*session_key_len=0;
+ 
+ 	status = opendirectory_connect(&session);
+ 	if (status != eDSNoErr) {
+ 		return status;
+ 	}
+ 
+-	status = get_node_ref_and_name(&session, account_name,
+-			    kDSStdRecordTypeUsers, &nodeRef, recordName);
++	status = get_node_ref_and_name_location(&session, account_name,
++			    kDSStdRecordTypeUsers, &nodeRef, recordName, &isLocal);
+ 	if (status != eDSNoErr) {
++		goto cleanup;
++	}
++	if(isLocal) {
++		status=local_ntlmv2_session_key(&session,nodeRef,recordName,domain,
++			ntv2response,ntv2response_len,session_key);
++		if(status==eDSNoErr)*session_key_len=16;
+ 		goto cleanup;
+ 	}
+ 
+
+

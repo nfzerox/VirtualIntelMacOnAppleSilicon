@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Replace bulk payload archives with guest-readable, immutable support discs."""
-import hashlib
 from pathlib import Path
 import plistlib
 import shutil
@@ -15,18 +14,15 @@ def build(payloads, tools):
     for guest in ('mojave', 'catalina', 'bigsur'):
         record = manifest['Guests'][guest]
         archive = payloads/record['Archive']
-        if hashlib.sha256(archive.read_bytes()).hexdigest() != record['SHA256']:
-            raise RuntimeError(f'{guest}: support payload checksum mismatch')
         if record['Archive'] not in (guest+'.tar.xz', guest+'.tar.gz'):
             raise RuntimeError('Invalid guest payload archive name')
         sources = {'payload.tar.xz' if archive.suffix == '.xz' else 'payload.tar.gz': archive}
         sources.update({name: tools/name for name in
                         ('guest-macho', 'guest-image-patch', 'guest-prepare', 'guest-install', 'guest-progress', 'codesign_allocate')})
         sources['SupportIcon.png'] = tools/f'{guest}-support-icon.png'
-        entries = {name: {'Size': path.stat().st_size,
-                          'SHA256': hashlib.sha256(path.read_bytes()).hexdigest()}
+        entries = {name: {'Size': path.stat().st_size}
                    for name, path in sources.items()}
-        data = plistlib.dumps({'FormatVersion': 1, 'Guest': guest, 'Files': entries},
+        data = plistlib.dumps({'FormatVersion': 1, 'Kind': 'VirtualIntelMacSupport', 'Guest': guest},
                               fmt=plistlib.FMT_BINARY, sort_keys=True)
         # Build beside the final output so large inputs stay on the configured
         # external scratch/library drive, not in the startup disk's /tmp.
@@ -40,10 +36,10 @@ def build(payloads, tools):
                 raise RuntimeError(f'Support media already exists: {image}')
             subprocess.run(['/usr/bin/hdiutil', 'makehybrid', '-hfs', '-iso', '-joliet', '-hfs-volume-name',
                             'Virtual Intel Mac Support', '-o', str(image), str(stage), '-quiet'], check=True)
-        (payloads/f'{guest}-support.plist').write_bytes(data)
-        receipts[guest] = {'Image': image.name, 'SHA256': hashlib.sha256(image.read_bytes()).hexdigest(),
-                            'Manifest': f'{guest}-support.plist', 'Files': entries}
-        # The archive is inside the ISO. Keep provenance in Payloads.plist, but
+        receipts[guest] = {'Image': image.name,
+                            'Files': entries}
+        # The archive is inside the ISO. Keep build provenance in Packaging.plist,
         # do not ship a second 70–100 MB copy or copy it into every VM bundle.
         archive.unlink()
+    (payloads/'Payloads.plist').unlink()
     return receipts

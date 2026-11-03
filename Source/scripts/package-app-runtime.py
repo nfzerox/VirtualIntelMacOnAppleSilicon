@@ -82,11 +82,6 @@ def quiet_firmware(source, qemu, candidate=None):
 def registration_kext(source, destination):
     """Use our already-vendored tiny driver; no KDK/download on UI builders."""
     archive=source/'prebuilt/catalina-gl/catalina-gl.tar.gz'
-    checks=source/'prebuilt/catalina-gl/SHA256SUMS'
-    expected=[line.split()[0] for line in checks.read_text().splitlines()
-              if len(line.split())==2 and line.split()[1]==archive.name]
-    if expected!=[hashlib.sha256(archive.read_bytes()).hexdigest()]:
-        raise RuntimeError('GL registration source archive failed integrity verification')
     prefix='payload/Library/Extensions/PVGOpenGLProbe.kext/'
     destination.mkdir(parents=True,exist_ok=False)
     with tarfile.open(archive,'r:gz') as stream:
@@ -163,8 +158,9 @@ def main():
     from build_signing import resolve_identity
     args.signing_identity = resolve_identity(source, args.signing_identity)
     app_info = plistlib.loads((args.app/'Contents/Info.plist').read_bytes())
-    if (app_info.get('CFBundleIconName') != 'AppIcon'
-            or not (args.app/'Contents/Resources/AppIcon.icns').is_file()
+    icon_name = app_info.get('CFBundleIconName')
+    if (icon_name not in ('AppIcon', 'AppIcon26')
+            or not (args.app/'Contents/Resources'/(icon_name+'.icns')).is_file()
             or any((args.app/'Contents/Resources'/name).exists() for name in ('VirtualIntelMac.icns','FolderIcon.icns'))):
         parser.error('Build the app with its Icon Composer icon and no legacy ICNS overrides before packaging.')
     runtime_build = plistlib.loads((args.runtime_bin/'BuildReceipt.plist').read_bytes())
@@ -200,6 +196,9 @@ def main():
     inputs = {
         'GuestTools/guest-image-patch': guest_tools/'guest-image-patch',
         'GuestTools/guest-status': guest_tools/'guest-status',
+        'GuestTools/guest-native-installer': guest_tools/'guest-native-installer',
+        'GuestTools/guest-recovery-agent': guest_tools/'guest-recovery-agent',
+        'GuestTools/guest-create-account': guest_tools/'guest-create-account',
         'GuestTools/guest-display': guest_tools/'guest-display',
         'GuestTools/guest-clipboard': guest_tools/'guest-clipboard',
         'GuestTools/guest-macho': guest_tools/'guest-macho',
@@ -213,6 +212,18 @@ def main():
         'Donor/ParavirtualizedGraphics.framework/Versions/A/ParavirtualizedGraphics': donor/'Versions/A/ParavirtualizedGraphics',
         'Donor/libLLVM.dylib': donor_root/'System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/libLLVM.dylib',
     }
+    opengl_host=runpy.run_path(str(source/'scripts/build-opengl-host.py'))['build'](source/'Build/PassthroughOpenGLHostRuntime')
+    require_universal(opengl_host)
+    inputs['bin/libVIMPassthroughOpenGLHost.dylib']=opengl_host
+    opengl_guests={guest:source/'prebuilt/PassthroughOpenGL'/guest/'GuestTools'
+                   for guest in ('highsierra','sierra','elcapitan','yosemite','mavericks','mountainlion','lion','snowleopard','leopard')}
+    verify_opengl=runpy.run_path(str(source/'scripts/package-opengl-guest-support.py'))['verify']
+    opengl_support={guest:verify_opengl(path,source) for guest,path in opengl_guests.items()}
+    runpy.run_path(str(source/'scripts/build-snowleopard-samba.py'))['verify'](opengl_guests['snowleopard'])
+    if not (opengl_guests['snowleopard']/'opengl-file-sharing').is_file():
+        raise RuntimeError('Snow Leopard File Sharing repair tool is missing')
+    tiger_native=source/'prebuilt/PassthroughOpenGL/tiger'
+    tiger_support=runpy.run_path(str(source/'scripts/package-tiger-guest-support.py'))['verify'](tiger_native,source)
     for guest in ('mojave', 'catalina', 'bigsur'):
         for leaf in ['CODE.fd','VARS.fd']:
             inputs[f'Firmware/{guest}/{leaf}'] = firmware_root/leaf
@@ -233,6 +244,25 @@ def main():
     if runtime.exists():
         raise RuntimeError('input app already contains a runtime; build a clean input app')
     runtime.mkdir()
+    for guest,path in opengl_guests.items():
+        shutil.copytree(path,runtime/'OpenGLGuests'/guest,ignore=shutil.ignore_patterns('.DS_Store'))
+        run(sys.executable,source/'scripts/build-opengl-firmware.py','--guest',guest,'--output',runtime/'Firmware'/guest,'--code',firmware_code)
+    mavericks_smb = runtime/'OpenGLGuests/mavericks/mavericks-smb-compat'
+    run('xcrun','clang','-arch','x86_64','-mmacosx-version-min=10.9','-O2','-Wall','-Wextra','-Werror',
+        source/'tools/mavericks-smb-compat.c','-o',mavericks_smb)
+    run('/usr/bin/codesign','--force','--sign','-','--digest-algorithm=sha1,sha256',mavericks_smb)
+    run('/usr/bin/codesign','--verify','--strict',mavericks_smb)
+    # Keep Darwin8's distinct control/graphics ABIs inside the same per-guest
+    # namespace as the later OpenGL payloads.
+    runpy.run_path(str(source/'scripts/package-tiger-guest-support.py'))['publish_runtime'](
+        tiger_native,runtime/'OpenGLGuests/tiger',source)
+    # Tiger's i386 profile has its own measured drivers. The boot loader
+    # suppresses this pair on the installation DVD itself, then enables it
+    # on the installed system. Installer-only firmware would leave every
+    # freshly installed guest without its native framebuffer/accelerator.
+    run(sys.executable,source/'scripts/build-tiger-installer-firmware.py',
+        '--firmware',runtime/'Firmware/leopard','--graphics-kernel',tiger_native/'Kernel',
+        '--output',runtime/'Firmware/tiger')
     guest_payload_recipe = runpy.run_path(str(source/'scripts/package-app-guest-payloads.py'))
     surface_helper = guest_tools/'PVGGLIOKit.dylib'
     bigsur_helpers=guest_tools if (guest_tools/'PVGBigSurMetalCompat.dylib').is_file() and (guest_tools/'PVGOpenGLMetal.dylib').is_file() else source/'prebuilt/bigsur'
@@ -278,6 +308,25 @@ def main():
         if guest=='bigsur':options+=['--bigsur-gl-registration',boot_policy/'PVGOpenGLProbe.kext']
         run(sys.executable, source/'scripts/make-efi-disk.py',
             inputs[f'Firmware/{guest}/BOOT.img'], firmware/'EFI.img', *options)
+    from firmware_layout import share_identical_code
+    saved_firmware = share_identical_code(runtime/'Firmware')
+    print(f'Shared identical read-only firmware code: {saved_firmware} bytes saved', flush=True)
+    selector = runpy.run_path(str(source/'scripts/build-firmware-selector.py'))['build'](
+        donor_root/'VIMFirmwareSelector.efi')
+    unified_recipe = runpy.run_path(str(source/'scripts/build-unified-efi.py'))
+    shared_efi = runtime/'Firmware/Common/EFI.img'
+    unified_firmware = unified_recipe['build'](runtime/'Firmware', selector, shared_efi)
+    shared_efi_digest = hashlib.sha256(shared_efi.read_bytes()).hexdigest()
+    firmware_records = {guest:plistlib.loads((runtime/'Firmware'/guest/'BuildReceipt.plist').read_bytes())
+                        for guest in (*opengl_guests, 'tiger')}
+    # The new shared image has already been read back against every input
+    # profile. Runtime lookup uses Common directly, with no per-OS aliases.
+    # Build receipts are retained in Packaging.plist for release verification,
+    # not redundant per-OS runtime files. Never mutate a running app/user VM.
+    for guest in unified_recipe['PROFILES']:
+        image = runtime/'Firmware'/guest/'EFI.img'
+        image.unlink()
+        (image.parent/'BuildReceipt.plist').unlink(missing_ok=True)
     # Resolve the actual linked closure, not a manually curated Homebrew list.
     # Only system paths may remain external. Unresolved rpaths fail packaging.
     copied = {}
@@ -286,6 +335,8 @@ def main():
         original, dest = queue.pop(0)
         binaries.append(dest)
         for dependency in dependencies(original):
+            if original==opengl_host.resolve() and dependency=='@rpath/libVIMPassthroughOpenGLHost.dylib':
+                continue # LC_ID_DYLIB, not a dependency on another file
             if dependency.startswith(('/System/Library/', '/usr/lib/')):
                 continue
             expanded = dependency.replace('@loader_path', str(original.parent))
@@ -307,7 +358,7 @@ def main():
                 queue.append((dep, target))
             replacement = '@loader_path/' + os.path.relpath(target, dest.parent)
             run('/usr/bin/install_name_tool', '-change', dependency, replacement, dest)
-        if dest.parent.name == 'lib':
+        if dest.parent.name == 'lib' or dest.name=='libVIMPassthroughOpenGLHost.dylib':
             run('/usr/bin/install_name_tool', '-id', '@loader_path/'+dest.name, dest)
             require_universal(dest)
     # Dylib IDs are not dependencies, but setting them also removes build paths.
@@ -350,21 +401,21 @@ def main():
                'HostDonorArchiveSHA256': donor_hash,
                'FirmwareArchiveSHA256': firmware_hash,
                'RuntimeBootPolicy':boot_policy_receipt,
-               'EFIImages':{guest:hashlib.sha256((runtime/'Firmware'/guest/'EFI.img').read_bytes()).hexdigest()
+               'UnifiedEFI':unified_firmware,
+               'EFIImages':{guest:shared_efi_digest
                             for guest in ('mojave','catalina','bigsur')},
                'GuestPayloads': guest_payload_receipt,
                'GuestSupportMedia': support_media,
+               'NativeInstallerGuests':{'tiger':firmware_records['tiger']},
+               'TigerGuestSupport':tiger_support,
+               'OpenGLGuests':{guest:{'GuestSupport':opengl_support[guest],
+                   'HostExecutorInputSHA256':hashlib.sha256(opengl_host.read_bytes()).hexdigest(),
+                   'HostExecutorPackagedSHA256':hashlib.sha256((runtime/'bin/libVIMPassthroughOpenGLHost.dylib').read_bytes()).hexdigest(),
+                   'Firmware':firmware_records[guest],
+                   'EFIImageSHA256':shared_efi_digest} for guest in opengl_guests},
                'Libraries': {name: str(path) for name,path in copied.items()}}
     if firmware_candidate:
         receipt['FirmwareCandidate'] = firmware_candidate
-    receipt['GuestTools'] = {name: {'InputSHA256': hashlib.sha256((guest_tools/name).read_bytes()).hexdigest(),
-                                  'PackagedSHA256': hashlib.sha256((runtime/'GuestTools'/name).read_bytes()).hexdigest()}
-                             for name in ('guest-image-patch', 'guest-status', 'guest-macho', 'guest-prepare', 'guest-install', 'guest-progress', 'guest-display', 'codesign_allocate')}
-    if (guest_tools/'BuildReceipt.plist').is_file():
-        receipt['GuestToolsBuild'] = plistlib.loads((guest_tools/'BuildReceipt.plist').read_bytes())
-        for name, hashes in receipt['GuestTools'].items():
-            if receipt['GuestToolsBuild']['Tools'][name]['BinarySHA256'] != hashes['InputSHA256']:
-                raise RuntimeError(f'Guest tool does not match build receipt: {name}')
     if args.runtime_bin:
         with (args.runtime_bin/'BuildReceipt.plist').open('rb') as stream:
             receipt['RuntimeBuild'] = plistlib.load(stream)

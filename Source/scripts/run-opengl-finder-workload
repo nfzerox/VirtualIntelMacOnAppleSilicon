@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""Build and run the real Finder mouse workload over an existing SSH login.
+
+No password is stored or permission granted. System settings/drivers are not
+changed; a temporary helper moves/resizes an ordinary window, then restores it.
+"""
+import argparse
+import datetime
+import json
+import hashlib
+import os
+from pathlib import Path
+import re
+import shlex
+import subprocess
+import sys
+
+root = Path(__file__).resolve().parent.parent
+p = argparse.ArgumentParser(description=__doc__)
+p.add_argument('destination', help='SSH destination, e.g. mac@127.0.0.1')
+p.add_argument('--port', type=int, default=2222)
+p.add_argument('--control-path', help='Existing authenticated SSH master (recommended)')
+p.add_argument('--output', type=Path)
+p.add_argument('--cycles', type=int, default=2, choices=range(1, 21), metavar='1..20')
+p.add_argument('--seconds', type=float, default=2)
+p.add_argument('--hz', type=float, default=120)
+p.add_argument('--seed', type=int, default=7411)
+p.add_argument('--operations', choices=['all', 'drag', 'resize', 'selection-finder', 'selection-desktop', 'selection-preview'], default='all')
+p.add_argument('--pid', type=int, help='Override Finder with a specific real application')
+args = p.parse_args()
+if not 1 <= args.port <= 65535 or not 1 <= args.seconds <= 10 or not 15 <= args.hz <= 120 or not 1 <= args.seed <= 0xffffffff:
+    p.error('Invalid port, duration, input rate or seed.')
+if args.destination.startswith('-') or (args.pid is not None and args.pid <= 0):
+    p.error('Invalid SSH destination or target PID.')
+if args.operations == 'selection-preview' and args.pid is None:
+    p.error('Preview selection requires --pid of the real Preview image window owner.')
+stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+output = (args.output or root/'Build/PassthroughOpenGLResearch/WindowInteraction'/stamp).resolve()
+output.mkdir(parents=True, exist_ok=False)
+build_env = dict(os.environ, VIM_WINDOW_INTERACTION_BUILD=str(output/'Build'))
+with (output/'build.log').open('w') as log:
+    subprocess.run(['bash', str(root/'scripts/build-opengl-window-interaction')], env=build_env,
+                   stdout=log, stderr=subprocess.STDOUT, check=True)
+sources = ['probes/opengl-window-interaction.m', 'scripts/build-opengl-window-interaction',
+           'PassthroughOpenGL/passthrough-opengl-client.c', 'PassthroughOpenGL/passthrough-opengl-scatter-client.c',
+           'VirtualIntelMac/VIMMetalView.m', 'vendor/qemu/ui/vim-display.c']
+metadata = {'CreatedAt': datetime.datetime.now().astimezone().isoformat(),
+            'SourceSHA256': {name: hashlib.sha256((root/name).read_bytes()).hexdigest() for name in sources},
+            'Arguments': vars(args) | {'output': str(output)}}
+(output/'metadata.json').write_text(json.dumps(metadata, indent=2)+'\n')
+options = ['-o', 'HostKeyAlgorithms=+ssh-rsa', '-o', 'KexAlgorithms=diffie-hellman-group14-sha1']
+if args.control_path:
+    options += ['-o', f'ControlPath={args.control_path}', '-o', 'BatchMode=yes']
+ssh = ['ssh', '-p', str(args.port), *options, args.destination]
+remote = subprocess.check_output(ssh+['mktemp -d /tmp/vim-finder-workload.XXXXXX'], text=True).strip()
+if not re.fullmatch(r'/tmp/vim-finder-workload\.[A-Za-z0-9]+', remote):
+    raise SystemExit('SSH did not return the expected private temporary directory.')
+binary = output/'Build/opengl-window-interaction'
+subprocess.run(['scp', '-O', '-P', str(args.port), *options, str(binary), f'{args.destination}:{remote}/workload'], check=True)
+command = [f'{remote}/workload', '--cycles', str(args.cycles), '--seconds', str(args.seconds),
+           '--hz', str(args.hz), '--seed', str(args.seed), '--operations', args.operations]
+if args.pid:
+    command += ['--pid', str(args.pid)]
+print(f'Running real application {args.operations} workload. Leave guest input alone during the run.', flush=True)
+with (output/'workload.json').open('w') as report, (output/'workload.log').open('w') as log:
+    result = subprocess.run(ssh+[shlex.join(command)], stdout=report, stderr=log)
+try:
+    data = json.loads((output/'workload.json').read_text())
+except (ValueError, OSError):
+    raise SystemExit(f'No valid result. Inspect {output}/workload.log; no successful benchmark is claimed.')
+print(f'Report: {output}/workload.json')
+for phase in data.get('Phases', []):
+    print(f"{phase['Operation']:6} {phase['Pattern']:18} {phase['ActualInputSeconds']:.3f}s; "
+          f"{len(phase['Events'])} events; missed deadlines {phase['MissedInputDeadlines']}; "
+          f"geometry {'verified' if phase['GeometryVerified'] else 'FAILED'}")
+if result.returncode or not data.get('Success') or not data.get('OriginalGeometryRestored'):
+    print((output/'workload.log').read_text(), file=sys.stderr)
+    raise SystemExit(result.returncode or 1)
+print('All phases verified; original window geometry restored. This is not an FPS/conformance assertion.')

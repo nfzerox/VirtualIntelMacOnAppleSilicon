@@ -1,0 +1,56 @@
+#!/bin/bash
+# Snow Leopard's actual Foundation/runtime, not a relabeled Lion binary.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+: "${VIM_SNOW_SDK:?Set VIM_SNOW_SDK to MacOSX10.6.sdk}"
+: "${VIM_SNOW_ARCLITE:?Set VIM_SNOW_ARCLITE to the Xcode 4.6 period libarclite_macosx.a}"
+cc="${VIM_OPENGL_CC:-$root/resources/xcode/XcodeMojave.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang}"
+output="${VIM_OPENGL_AGENT_BUILD:-$root/Build/SnowGuestTools}"
+mkdir -p "$output"
+flags=(-O2 -arch x86_64 -isysroot "$VIM_SNOW_SDK" -mmacosx-version-min=10.6 -Wall -Wextra -Werror -Wno-deprecated-declarations)
+# Upstream warnings are isolated from our -Werror build. The library is only
+# linked into cold guest controls; no JSON or regex work enters graphics.
+"$cc" -O2 -arch x86_64 -isysroot "$VIM_SNOW_SDK" -mmacosx-version-min=10.6 -fno-objc-arc \
+    -Wno-deprecated-objc-isa-usage -c "$root/vendor/source/JSONKit/JSONKit.m" -o "$output/JSONKit.o"
+"$cc" "${flags[@]}" -fno-objc-arc -c "$root/tools/opengl-period-foundation.m" -o "$output/PeriodFoundation.o"
+period=(-include "$root/tools/opengl-period-foundation.h")
+objects=("$output/JSONKit.o" "$output/PeriodFoundation.o")
+build_objc() {
+    local name="$1";shift
+    "$cc" "${flags[@]}" -fno-objc-arc -fblocks "${period[@]}" "$root/$name" "${objects[@]}" \
+        -framework Foundation "$@"
+}
+build_objc tools/opengl-desktop-status.m -framework SystemConfiguration -framework IOKit -o "$output/opengl-desktop-status"
+build_objc tools/guest-host-connection.m -o "$output/guest-host-connection"
+build_objc tools/guest-display.m -framework ApplicationServices -o "$output/guest-display"
+build_objc tools/opengl-guest-agent.m -framework IOKit -o "$output/opengl-guest-agent"
+build_objc tools/opengl-create-account.m -framework OpenDirectory -framework DiskArbitration -framework IOKit \
+    -framework CoreServices -framework Security -framework SystemConfiguration -o "$output/opengl-create-account"
+build_objc tools/opengl-install-bootstrap.m -framework IOKit -framework DiskArbitration -o "$output/opengl-install-bootstrap"
+build_objc tools/opengl-setup-status.m -framework SystemConfiguration -framework DiskArbitration -framework IOKit \
+    -framework CoreServices -framework Security -o "$output/opengl-setup-status"
+build_objc tools/opengl-file-sharing.m -framework DiskArbitration -framework IOKit -o "$output/opengl-file-sharing"
+build_objc tools/opengl-installer-automation.m -dynamiclib -framework AppKit \
+    -install_name @rpath/opengl-installer-automation.dylib -o "$output/opengl-installer-automation.dylib"
+build_objc PassthroughOpenGL/opengl-display-agent.m -framework AppKit -framework ApplicationServices \
+    -framework IOKit -o "$output/opengl-display-agent"
+"$cc" "${flags[@]}" "$root/tools/opengl-audio-defaults.c" -framework CoreAudio -framework CoreFoundation -framework IOKit -o "$output/opengl-audio-defaults"
+"$cc" "${flags[@]}" "$root/tools/opengl-installer-launch.c" -o "$output/opengl-installer-launch"
+"$cc" "${flags[@]}" -DkCGLPFASupportsAutomaticGraphicsSwitching=101 \
+    "$root/probes/opengl-gl-compatibility-core.c" -framework OpenGL -framework ApplicationServices -o "$output/opengl-graphics-check"
+# ARC did not ship in Snow Leopard's libobjc. Use the genuine Apple period
+# static backdeployment runtime, never a newer runtime dylib in the guest.
+"$cc" "${flags[@]}" "${period[@]}" -fobjc-arc -DVIM_OPENGL_GUEST=1 -c "$root/tools/guest-clipboard.m" -o "$output/guest-clipboard.o"
+# The link SDK describes the weak Lion-era objc imports that arclite fixes
+# up on Snow Leopard. Compile against 10.6 above, and retain a 10.6 minimum;
+# a 10.6 link SDK cannot describe those intentionally weak missing symbols.
+link_sdk="${VIM_SNOW_LINK_SDK:-$root/resources/sdk/MacOSX10.9.sdk}"
+"$cc" "${flags[@]}" -isysroot "$link_sdk" "$output/guest-clipboard.o" "${objects[@]}" -Wl,-force_load,"$VIM_SNOW_ARCLITE" \
+    -framework AppKit -framework IOKit -o "$output/guest-clipboard"
+for name in opengl-desktop-status guest-host-connection guest-display opengl-guest-agent \
+    opengl-create-account opengl-install-bootstrap opengl-setup-status opengl-file-sharing opengl-installer-automation.dylib \
+    opengl-display-agent opengl-audio-defaults opengl-installer-launch opengl-graphics-check guest-clipboard; do
+    codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/$name"
+    codesign --verify --strict "$output/$name"
+done
+echo "$output"

@@ -1,0 +1,74 @@
+#!/bin/bash
+# Coordinate a finite, exact-binary host trace with actual visible guest input.
+# No second QMP client, host ptrace, packet reads or rendering-policy changes.
+set -euo pipefail
+[[ ( $# == 5 || ( $# == 6 && ( $6 == residency || $6 == notifications ) ) ) && $(id -u) == 0 && -n ${SUDO_USER:-} ]] || {
+    echo 'Use sudo trace-opengl-host-gl-handoff QEMU_PID QEMU_BINARY SSH_MASTER GUEST_PORT NEW_ABSOLUTE_PREFIX [residency|notifications]' >&2
+    exit 2
+}
+task_pid=$1
+task_binary=$2
+task_master=$3
+task_port=$4
+task_prefix=$5
+[[ "$task_pid" =~ ^[1-9][0-9]*$ && "$task_port" =~ ^[1-9][0-9]*$ && "$task_prefix" == /* ]] || exit 2
+[[ $(ps -p "$task_pid" -o comm=) == "$task_binary" && -S "$task_master" ]] || exit 2
+if [[ ${6:-} != notifications ]]; then
+/usr/bin/dwarfdump --uuid "$task_binary" | /usr/bin/grep -q '5EF0FD8F-B497-31A8-BD08-70C5C551AC32 (x86_64)' || {
+    echo 'Refused unmatched Intel QEMU instruction layout; no trace/input started.' >&2
+    exit 2
+}
+fi
+task_root=$(cd "$(dirname "$0")/.." && pwd)
+task_probe=opengl-host-gl-handoff.d
+task_ready_marker='READY host exact GL handoff'
+task_end_marker='END host exact GL handoff'
+if [[ ${6:-} == residency || ${6:-} == notifications ]]; then
+    /usr/bin/dwarfdump --uuid "${task_binary%/*}/libVIMPassthroughOpenGLHost.dylib" | /usr/bin/grep -q 'FFFA8250-BA1F-356A-9BE7-C7F7C524EFBD (x86_64)' || {
+        echo 'Refused unmatched native residency executor; no trace/input started.' >&2;exit 2;
+    }
+    task_probe=opengl-host-gl-residency.d
+    task_ready_marker='READY host GL residency'
+    task_end_marker='END host GL residency'
+fi
+if [[ ${6:-} == notifications ]]; then
+    task_probe=opengl-host-backing-notifications.d
+    task_ready_marker='READY host backing notifications'
+    task_end_marker='END host backing notifications'
+fi
+for task_suffix in phases.log input.log stderr.log; do
+    [[ ! -e "$task_prefix.$task_suffix" ]] || exit 2
+done
+task_trace_pid=
+cleanup() {
+    if [[ -n "$task_trace_pid" ]] && kill -0 "$task_trace_pid" 2>/dev/null; then
+        kill -INT "$task_trace_pid" 2>/dev/null || true
+        wait "$task_trace_pid" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+/usr/sbin/dtrace -Z -q -p "$task_pid" -s "$task_root/probes/$task_probe" \
+    -o "$task_prefix.phases.log" 2>"$task_prefix.stderr.log" &
+task_trace_pid=$!
+task_ready=0
+for ((task_attempt=0; task_attempt<600; task_attempt++)); do
+    if [[ -r "$task_prefix.phases.log" ]] && /usr/bin/grep -q "^$task_ready_marker " "$task_prefix.phases.log"; then
+        task_ready=1; break
+    fi
+    kill -0 "$task_trace_pid" 2>/dev/null || { wait "$task_trace_pid"; exit 1; }
+    sleep 0.05
+done
+[[ "$task_ready" == 1 ]] || { echo 'Trace readiness failed; no input posted.' >&2; exit 1; }
+! /usr/bin/grep -q "^$task_end_marker" "$task_prefix.phases.log" || exit 1
+task_input='/var/tmp/opengl-native-transition-input mission-control; /var/tmp/opengl-native-transition-input app-expose'
+if [[ ${6:-} == notifications ]]; then
+    task_input='/var/tmp/opengl-native-transition-input-r114 mission-control; /var/tmp/opengl-native-transition-input-r114 app-expose; /var/tmp/opengl-native-transition-input-r114 launchpad; /var/tmp/opengl-native-transition-input-r114 mission-control; /var/tmp/opengl-native-transition-input-r114 launchpad'
+fi
+/usr/bin/sudo -u "$SUDO_USER" /usr/bin/ssh -S "$task_master" -p "$task_port" \
+    "${VIM_OPENGL_SSH_USER:-mac}@127.0.0.1" \
+    "$task_input" \
+    >"$task_prefix.input.log" 2>&1
+wait "$task_trace_pid"
+task_trace_pid=
+/usr/bin/grep -q "^$task_end_marker" "$task_prefix.phases.log"
+echo "Completed finite actual-input host handoff: $task_prefix"

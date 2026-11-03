@@ -50,6 +50,8 @@ NSError *VIMFriendlyDiscImageError(NSString *path,NSError *underlying) {
         advice=@"Virtual Intel Mac can’t read this image. Choose it again using Connect Image, and allow access if macOS asks.";
     else if([detail containsString:@"encrypt"]||[detail containsString:@"password"])
         advice=@"Password-protected disk images can’t be connected to a virtual Mac. Choose an unencrypted image instead.";
+    else if([detail containsString:@"no free ports"]||[detail containsString:@"not found (in use?)"])
+        advice=@"This virtual Mac’s USB ports are in use. Disconnect another image or USB device, then try again.";
     else if([detail containsString:@"xz"]||[detail containsString:@"lzma"]||[detail containsString:@"not supported"]||[detail containsString:@"unsupported"])
         advice=@"This image uses a disk format or compression method that Virtual Intel Mac can’t read. Choose an ISO, CDR, or a DMG saved as read-only or zlib compressed. No conversion was attempted, and your original image hasn’t been changed.";
     return [NSError errorWithDomain:@"VirtualIntelMac.DiscImage" code:2 userInfo:@{

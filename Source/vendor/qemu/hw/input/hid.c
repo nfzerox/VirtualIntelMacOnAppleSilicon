@@ -148,6 +148,12 @@ static void hid_pointer_event(DeviceState *dev, QemuConsole *src,
                 e->dz--;
             } else if (evt->btn.button == INPUT_BUTTON_WHEEL_DOWN) {
                 e->dz++;
+            } else if (hs->kind == HID_TABLET &&
+                       evt->btn.button == INPUT_BUTTON_WHEEL_LEFT) {
+                hs->ptr.horizontal[(hs->head + hs->n) & QUEUE_MASK]--;
+            } else if (hs->kind == HID_TABLET &&
+                       evt->btn.button == INPUT_BUTTON_WHEEL_RIGHT) {
+                hs->ptr.horizontal[(hs->head + hs->n) & QUEUE_MASK]++;
             }
         } else {
             e->buttons_state &= ~bmap[evt->btn.button];
@@ -204,6 +210,9 @@ static void hid_pointer_sync(DeviceState *dev)
         }
         prev->dz += curr->dz;
         curr->dz = 0;
+        hs->ptr.horizontal[(hs->head + hs->n - 1) & QUEUE_MASK] +=
+            hs->ptr.horizontal[(hs->head + hs->n) & QUEUE_MASK];
+        hs->ptr.horizontal[(hs->head + hs->n) & QUEUE_MASK] = 0;
     } else {
         /* prepare next (clear rel, copy abs + btns) */
         if (hs->kind == HID_MOUSE) {
@@ -214,6 +223,7 @@ static void hid_pointer_sync(DeviceState *dev)
             next->ydy = curr->ydy;
         }
         next->dz = 0;
+        hs->ptr.horizontal[(hs->head + hs->n + 1) & QUEUE_MASK] = 0;
         next->buttons_state = curr->buttons_state;
         /* make current guest visible, notify guest */
         hs->n++;
@@ -374,7 +384,7 @@ void hid_pointer_activate(HIDState *hs)
 
 int hid_pointer_poll(HIDState *hs, uint8_t *buf, int len)
 {
-    int dx, dy, dz, l;
+    int dx, dy, dz, horizontal, l;
     int index;
     HIDPointerEvent *e;
 
@@ -398,9 +408,15 @@ int hid_pointer_poll(HIDState *hs, uint8_t *buf, int len)
     }
     dz = int_clamp(e->dz, -127, 127);
     e->dz -= dz;
+    /* Tablet reports have a seventh byte for HID Consumer AC Pan. Do not
+     * consume motion which a short control transfer cannot actually carry. */
+    horizontal = hs->kind == HID_TABLET && len >= 7 ?
+        int_clamp(hs->ptr.horizontal[index & QUEUE_MASK], -127, 127) : 0;
+    hs->ptr.horizontal[index & QUEUE_MASK] -= horizontal;
 
     if (hs->n &&
         !e->dz &&
+        !hs->ptr.horizontal[index & QUEUE_MASK] &&
         (hs->kind == HID_TABLET || (!e->xdx && !e->ydy))) {
         /* that deals with this event */
         QUEUE_INCR(hs->head);
@@ -444,6 +460,9 @@ int hid_pointer_poll(HIDState *hs, uint8_t *buf, int len)
         }
         if (len > l) {
             buf[l++] = dz;
+        }
+        if (len > l) {
+            buf[l++] = horizontal;
         }
         break;
 
@@ -512,6 +531,7 @@ void hid_reset(HIDState *hs)
     case HID_MOUSE:
     case HID_TABLET:
         memset(hs->ptr.queue, 0, sizeof(hs->ptr.queue));
+        memset(hs->ptr.horizontal, 0, sizeof(hs->ptr.horizontal));
         break;
     }
     hs->head = 0;
@@ -589,6 +609,10 @@ static int hid_post_load(void *opaque, int version_id)
             evt.xdx = 0;
             evt.ydy = 0;
         }
+        s->ptr.horizontal[0] = s->ptr.horizontal[(s->head+s->n) & QUEUE_MASK];
+        for (unsigned i = 1; i < QUEUE_LENGTH; i++) {
+            s->ptr.horizontal[i] = 0;
+        }
         s->ptr.queue[0] = evt;
         s->head = 0;
         s->n = 1;
@@ -609,6 +633,28 @@ static const VMStateDescription vmstate_hid_ptr_queue = {
     }
 };
 
+static bool hid_horizontal_needed(void *opaque)
+{
+    HIDState *s = opaque;
+    for (unsigned i = 0; i < QUEUE_LENGTH; i++) {
+        if (s->ptr.horizontal[i]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static const VMStateDescription vmstate_hid_horizontal = {
+    .name = "HIDPointerDevice/horizontal-scroll",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .needed = hid_horizontal_needed,
+    .fields = (const VMStateField[]) {
+        VMSTATE_INT32_ARRAY(ptr.horizontal, HIDState, QUEUE_LENGTH),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
 const VMStateDescription vmstate_hid_ptr_device = {
     .name = "HIDPointerDevice",
     .version_id = 1,
@@ -622,6 +668,10 @@ const VMStateDescription vmstate_hid_ptr_device = {
         VMSTATE_INT32(protocol, HIDState),
         VMSTATE_UINT8(idle, HIDState),
         VMSTATE_END_OF_LIST(),
+    },
+    .subsections = (const VMStateDescription * const []) {
+        &vmstate_hid_horizontal,
+        NULL
     }
 };
 

@@ -219,8 +219,109 @@ void hvf_kick_vcpu_thread(CPUState *cpu)
     hv_vcpu_interrupt(&cpu->accel->fd, 1);
 }
 
+/* Explicit, finite research attribution only. A sampled guest OUT instruction
+ * cannot distinguish waiting to acquire BQL from time inside its device.
+ * No clocks/logging in ordinary launches; at most 32 exceptional records,
+ * one aggregate per 1024 exits and 100000 selected exits per vCPU. Do not use
+ * these runs as uninstrumented presentation/FPS evidence. No payload or guest
+ * memory read. */
+static int hvf_io_latency_port = -1;
+static unsigned hvf_io_latency_mask = UINT16_MAX;
+static __thread unsigned hvf_io_latency_records, hvf_io_latency_exits;
+static __thread char hvf_io_latency_pending[1024];
+static __thread int64_t hvf_io_exit_returned, hvf_io_resume_end;
+static __thread unsigned hvf_io_resume_records;
+static __thread char hvf_io_resume_pending[512];
+static __thread struct {
+    unsigned count;
+    int64_t started, wait, dispatch, maximum_wait, maximum_dispatch;
+    int64_t prepare, maximum_prepare;
+    unsigned wait_bins[8];
+} hvf_io_latency_block;
+
+static void hvf_io_latency_account(CPUState *cpu, uint64_t qualification,
+                                   int64_t started, int64_t locked, int64_t ended,
+                                   int64_t prepare)
+{
+    int64_t wait = locked - started, dispatch = ended - locked;
+    unsigned bin = 0;
+    for (int64_t bound = 1; bin < 7 && wait >= bound; bound <<= 1) {
+        bin++;
+    }
+    if (!hvf_io_latency_block.count) {
+        hvf_io_latency_block.started = started;
+    }
+    hvf_io_latency_block.count++;
+    hvf_io_latency_block.wait += wait;
+    hvf_io_latency_block.dispatch += dispatch;
+    hvf_io_latency_block.prepare += prepare;
+    hvf_io_latency_block.maximum_prepare = MAX(hvf_io_latency_block.maximum_prepare, prepare);
+    hvf_io_latency_block.maximum_wait = MAX(hvf_io_latency_block.maximum_wait, wait);
+    hvf_io_latency_block.maximum_dispatch = MAX(hvf_io_latency_block.maximum_dispatch, dispatch);
+    hvf_io_latency_block.wait_bins[bin]++;
+    if (hvf_io_latency_block.count == 1024 || hvf_io_latency_exits == 100000) {
+        snprintf(hvf_io_latency_pending, sizeof(hvf_io_latency_pending),
+                "VIM_HVF_IO_AGGREGATE cpu=%d port=0x%x selected=%u/100000 "
+                "calls=%u first_us=%" PRId64 " last_us=%" PRId64
+                " bql_wait_us=%" PRId64 " dispatch_us=%" PRId64
+                " max_bql_wait_us=%" PRId64 " max_dispatch_us=%" PRId64
+                " exit_prepare_us=%" PRId64 " max_exit_prepare_us=%" PRId64
+                " lock_bins_us_0_1_2-3_4-7_8-15_16-31_32-63_64plus="
+                "%u,%u,%u,%u,%u,%u,%u,%u match_mask=0x%x\n",
+                cpu->cpu_index, (unsigned)(qualification >> 16),
+                hvf_io_latency_exits, hvf_io_latency_block.count,
+                hvf_io_latency_block.started, ended,
+                hvf_io_latency_block.wait, hvf_io_latency_block.dispatch,
+                hvf_io_latency_block.maximum_wait, hvf_io_latency_block.maximum_dispatch,
+                hvf_io_latency_block.prepare, hvf_io_latency_block.maximum_prepare,
+                hvf_io_latency_block.wait_bins[0], hvf_io_latency_block.wait_bins[1],
+                hvf_io_latency_block.wait_bins[2], hvf_io_latency_block.wait_bins[3],
+                hvf_io_latency_block.wait_bins[4], hvf_io_latency_block.wait_bins[5],
+                hvf_io_latency_block.wait_bins[6], hvf_io_latency_block.wait_bins[7],
+                hvf_io_latency_mask);
+        memset(&hvf_io_latency_block, 0, sizeof(hvf_io_latency_block));
+    }
+}
+
 int hvf_arch_init(void)
 {
+    const char *port = getenv("VIM_HVF_IO_LATENCY_PORT");
+    const char *mask = getenv("VIM_HVF_IO_LATENCY_MASK");
+    if (mask && !port) {
+        error_report("VIM_HVF_IO_LATENCY_MASK requires VIM_HVF_IO_LATENCY_PORT");
+        return -EINVAL;
+    }
+    if (port) {
+        char *end;
+        errno = 0;
+        unsigned long value = strtoul(port, &end, 0);
+        if (!*port || *end || errno || value > UINT16_MAX) {
+            error_report("VIM_HVF_IO_LATENCY_PORT must name one numeric I/O port");
+            return -EINVAL;
+        }
+        hvf_io_latency_port = value;
+        /* Explicit local diagnostic only. A small aligned range also sees
+         * interrupt-status/indexed-register exits that can occur immediately
+         * after a doorbell. Exact-port timing alone cannot exclude their BQL
+         * wait. Aggregate ranges are mixed-port evidence, never per-op time.
+         * Keep the same finite budgets and untouched execution/device path. */
+        if (mask) {
+            errno = 0;
+            unsigned long value_mask = strtoul(mask, &end, 0);
+            unsigned long inverse = value_mask ^ UINT16_MAX;
+            if (!*mask || *end || errno || value_mask > UINT16_MAX ||
+                value_mask < 0xff00 || (inverse & (inverse + 1)) ||
+                (value & value_mask) != value) {
+                error_report("VIM_HVF_IO_LATENCY_MASK must select an aligned power-of-two range of at most 256 ports");
+                return -EINVAL;
+            }
+            hvf_io_latency_mask = value_mask;
+        }
+        fprintf(stderr, "VIM_HVF_IO_LATENCY armed port=0x%lx "
+                "threshold_us=20000 max_records_per_cpu=32 "
+                "aggregate_exits=1024 max_selected_exits_per_cpu=100000 "
+                "match_mask=0x%x; attribution only\n", value, hvf_io_latency_mask);
+    }
     return 0;
 }
 
@@ -765,7 +866,15 @@ static int hvf_handle_vmexit(CPUState *cpu)
     rip = rreg(cpu->accel->fd, HV_X86_RIP);
     env->eflags = rreg(cpu->accel->fd, HV_X86_RFLAGS);
 
+    bool io_timing = exit_reason == EXIT_REASON_INOUT &&
+        (int)((exit_qual >> 16) & hvf_io_latency_mask) == hvf_io_latency_port &&
+        hvf_io_latency_exits < 100000;
+    int64_t io_started = io_timing ? g_get_monotonic_time() : 0;
+    if (io_timing) {
+        hvf_io_latency_exits++;
+    }
     bql_lock();
+    int64_t io_locked = io_timing ? g_get_monotonic_time() : 0;
 
     update_apic_tpr(cpu);
     current_cpu = cpu;
@@ -994,6 +1103,28 @@ static int hvf_handle_vmexit(CPUState *cpu)
         error_report("%llx: unhandled exit %llx", rip, exit_reason);
     }
 
+    if (io_timing) {
+        int64_t io_ended = g_get_monotonic_time();
+        int64_t prepare = hvf_io_exit_returned && hvf_io_exit_returned <= io_started ?
+                          io_started - hvf_io_exit_returned : 0;
+        hvf_io_latency_account(cpu, exit_qual, io_started, io_locked, io_ended, prepare);
+        if (io_ended - io_started + prepare >= 20000 && hvf_io_latency_records < 32) {
+            hvf_io_latency_records++;
+            fprintf(stderr, "VIM_HVF_IO_LATENCY cpu=%d port=0x%x in=%u "
+                    "string=%u bytes=%u start_us=%" PRId64
+                    " bql_wait_us=%" PRId64 " dispatch_us=%" PRId64
+                    " total_us=%" PRId64 " exit_prepare_us=%" PRId64
+                    " exit_return_us=%" PRId64 " record=%u/32\n",
+                    cpu->cpu_index, (unsigned)(exit_qual >> 16),
+                    !!(exit_qual & 8), !!(exit_qual & 16),
+                    (unsigned)(exit_qual & 7) + 1, io_started,
+                    io_locked - io_started, io_ended - io_locked,
+                    io_ended - io_started, prepare, hvf_io_exit_returned, hvf_io_latency_records);
+        }
+        /* Only the next iteration in THIS execution call is a resumption
+         * bound. Never count a later HLT/event-loop idle period as GL delay. */
+        hvf_io_resume_end = ret == 0 ? io_ended : 0;
+    }
     return ret;
 }
 
@@ -1002,6 +1133,7 @@ int hvf_arch_vcpu_exec(CPUState *cpu)
     int ret = 0;
     uint32_t leaf0_a, leaf0_b, leaf0_c, leaf0_d;
     bool fast_leaf0 = getenv("PVG_HVF_FAST_CPUID0") != NULL;
+    hvf_io_resume_end = 0;
 
     /* Local experiment: Mojave libobjc uses CPUID(0) as a cache publication
      * barrier. This immutable leaf does not need the device-model lock.
@@ -1027,6 +1159,17 @@ int hvf_arch_vcpu_exec(CPUState *cpu)
         vmx_update_tpr(cpu);
 
         bql_unlock();
+        /* Publish coarse research metadata only at this EXISTING unlocked
+         * boundary. Log/file scheduling must not become other vCPUs' BQL wait.
+         * No device access or extra lock release is introduced. */
+        if (unlikely(hvf_io_latency_port >= 0 && hvf_io_latency_pending[0])) {
+            fputs(hvf_io_latency_pending, stderr);
+            hvf_io_latency_pending[0] = 0;
+        }
+        if (unlikely(hvf_io_latency_port >= 0 && hvf_io_resume_pending[0])) {
+            fputs(hvf_io_resume_pending, stderr);
+            hvf_io_resume_pending[0] = 0;
+        }
         if (!cpu_is_bsp(X86_CPU(cpu)) && cpu->halted) {
             bql_lock();
             return EXCP_HLT;
@@ -1035,8 +1178,27 @@ int hvf_arch_vcpu_exec(CPUState *cpu)
         cpu_exec_start(cpu);
 
         for (unsigned fast_exits = 0; ; fast_exits++) {
+            if (unlikely(hvf_io_resume_end)) {
+                int64_t now = g_get_monotonic_time();
+                if (now - hvf_io_resume_end >= 20000 && hvf_io_resume_records < 32) {
+                    hvf_io_resume_records++;
+                    snprintf(hvf_io_resume_pending, sizeof(hvf_io_resume_pending),
+                        "VIM_HVF_IO_RESUME cpu=%d port=0x%x end_us=%" PRId64
+                        " run_us=%" PRId64 " delay_us=%" PRId64 " record=%u/32; "
+                        "same-execution-call only, includes diagnostic-output scheduling\n",
+                        cpu->cpu_index, hvf_io_latency_port, hvf_io_resume_end,
+                        now, now - hvf_io_resume_end, hvf_io_resume_records);
+                }
+                hvf_io_resume_end = 0;
+            }
             hv_return_t r = hv_vcpu_run_until(cpu->accel->fd,
                                             HV_DEADLINE_FOREVER);
+            /* Earliest userspace boundary, BEFORE cpu_exec_end and VMCS/
+             * register/event preparation. The old diagnostic began later.
+             * Clock work remains opt-in AND bounded; no guest memory read. */
+            if (unlikely(hvf_io_latency_port >= 0 && hvf_io_latency_exits < 100000)) {
+                hvf_io_exit_returned = g_get_monotonic_time();
+            }
             assert_hvf_ok(r);
             /* Bound batching, honor kicks, and send every other exit through
              * the existing event/APIC machinery. Never bypass vectoring. */

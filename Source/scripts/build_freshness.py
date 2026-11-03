@@ -65,8 +65,8 @@ def command_version(*command):
 
 def toolchain(component):
     result = {'Xcode': command_version('xcodebuild', '-version'),
-              'SDK': command_version('xcrun', '--show-sdk-version'),
-              'SDKBuild': command_version('xcrun', '--show-sdk-build-version'),
+              'SDK': command_version('xcrun', '--sdk', 'macosx', '--show-sdk-version'),
+              'SDKBuild': command_version('xcrun', '--sdk', 'macosx', '--show-sdk-build-version'),
               'Clang': '\n'.join(line for line in command_version('xcrun', 'clang', '--version').splitlines()
                                  if not line.startswith('InstalledDir:')),
               'Python': platform.python_version(), 'BuilderArchitecture': platform.machine()}
@@ -90,7 +90,12 @@ def snapshot(source, component, qemu=None):
     if component in ('dependencies', 'runtime'):
         paths = ['scripts/' + p for p in DEPENDENCY_RECIPES]
         paths += ['vendor/qemu-dependency-sources.tar.gz', 'vendor/qemu-dependency-sources.sha256',
-                  'vendor/usbredir', 'vendor/patches']
+                  'vendor/usbredir']
+        # The dependency builder applies only libusb-*.patch (see
+        # usb_dependency_state.py). OpenCore/guest patches do not compile
+        # into GLib, SDL or QEMU; changing them must not rebuild that stack.
+        paths += sorted(p.relative_to(source).as_posix()
+                        for p in (source/'vendor/patches').glob('libusb-*.patch'))
         if component == 'runtime':
             paths += ['scripts/' + p for p in RUNTIME_RECIPES]
             paths += ['compat/PVGHostAIRRepair.m', 'compat/PVGAIRMetadata.h']

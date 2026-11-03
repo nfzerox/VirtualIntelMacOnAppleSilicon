@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <libproc.h>
 #import "guest-console-state.h"
+#import "guest-system-version.h"
 
 static NSArray *NetworkInterfaces(void) {
     struct ifaddrs *list=NULL;NSMutableDictionary *interfaces=[NSMutableDictionary new];
@@ -68,15 +69,8 @@ int main(int argc,const char *argv[]) {@autoreleasepool {
         fprintf(stderr,"Cannot read valid target SystemVersion.plist\n");return 65;
     }
     NSString *release=version[@"ProductVersion"],*build=version[@"ProductBuildVersion"];
-    NSArray *components=[release componentsSeparatedByString:@"."];
-    BOOL numeric=components.count>=2;
-    for(NSString *part in components)if(!part.length||[part rangeOfCharacterFromSet:NSCharacterSet.decimalDigitCharacterSet.invertedSet].location!=NSNotFound)numeric=NO;
-    NSString *guest=@"unsupported";
-    if(numeric) {
-        if([components[0] isEqual:@"10"]&&[components[1] isEqual:@"14"])guest=@"mojave";
-        else if([components[0] isEqual:@"10"]&&[components[1] isEqual:@"15"])guest=@"catalina";
-        else if([components[0] isEqual:@"11"])guest=@"bigsur";
-    }
+    NSString *family=VIMGuestForSystemVersion(release);
+    NSString *guest=[@[@"mojave",@"catalina",@"bigsur"] containsObject:family?:@""]?family:@"unsupported";
     NSMutableArray *pending=[NSMutableArray array];
     // .OSInstallerMessages is an installer analytics/messages plist, not a
     // pending-install checkpoint. Security updates can leave it on a normal
@@ -92,7 +86,16 @@ int main(int argc,const char *argv[]) {@autoreleasepool {
     NSString *volumeUUID=nil;[rootURL getResourceValue:&volumeUUID forKey:NSURLVolumeUUIDStringKey error:NULL];
     struct utsname kernel;BOOL haveKernel=uname(&kernel)==0;
     NSString *kernelBuild=live?SysctlString("kern.osversion"):@"";
-    BOOL candidate=![guest isEqual:@"unsupported"]&&setup&&system&&!recovery&&!pending.count;
+    BOOL installedRoot=![guest isEqual:@"unsupported"]&&system&&!recovery&&!pending.count;
+    BOOL candidate=installedRoot&&setup;
+    // Big Sur already ships its Metal PVG stack. Setup Assistant need not
+    // finish before selecting that native device, but Recovery must never be
+    // mistaken for an installed root or a completed graphics transaction.
+    NSString *nativeGPU=path(@"System/Library/Extensions/AppleParavirtGPU.kext/Contents");
+    NSDictionary *nativeInfo=[guest isEqual:@"bigsur"]?[NSDictionary dictionaryWithContentsOfFile:[nativeGPU stringByAppendingPathComponent:@"Info.plist"]]:nil;
+    BOOL nativePVG=[nativeInfo[@"CFBundleIdentifier"] isEqual:@"com.apple.driver.AppleParavirtGPU"]&&
+        [nativeInfo[@"IOKitPersonalities"][@"AppleParavirtGPUControl"][@"IOPCIMatch"] isEqual:@"0xEEEE106B"]&&
+        [fm fileExistsAtPath:[nativeGPU stringByAppendingPathComponent:@"MacOS/AppleParavirtGPU"]];
     NSInteger consoleLocked=live?VIMConsoleLockState():-1;
     NSDictionary *report=@{@"ProtocolVersion":@1,@"Guest":guest,@"ProductVersion":release,@"ProductBuildVersion":build,
         @"VolumeUUID":volumeUUID?:@"",@"BootSessionUUID":live?SysctlString("kern.bootsessionuuid"):@"",@"LiveRoot":@(live),@"KernelBuild":kernelBuild,
@@ -100,6 +103,7 @@ int main(int argc,const char *argv[]) {@autoreleasepool {
         @"ProcessMachine":haveKernel?@(kernel.machine):@"unknown",@"SetupComplete":@(setup),
         @"FinderPresent":@(system),@"DesktopRunning":@(live&&consoleLocked==0&&DesktopRunning()),@"RecoveryToolsPresent":@(recovery),@"InstallerMarkers":pending,
         @"InstalledSystemCandidate":@(candidate),@"Ready":@NO,
+        @"InstalledRootPresent":@(installedRoot),@"NativePVGAvailable":@(nativePVG),
         @"ReadinessReason":@"Authenticated guest service and verified patch transaction are required."};
     NSMutableDictionary *evidence=[report mutableCopy];
     evidence[@"OSInstallerMessagesPresent"]=@([fm fileExistsAtPath:path(@".OSInstallerMessages")]);

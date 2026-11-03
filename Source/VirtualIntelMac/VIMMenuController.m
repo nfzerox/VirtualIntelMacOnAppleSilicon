@@ -3,6 +3,7 @@
 #import "VIMMachine.h"
 #import "VIMSession.h"
 #import "AppDelegate.h"
+#import "VIMSymbolImages.h"
 
 @interface VIMMenuController ()
 @property VIMLibraryViewController *library;
@@ -87,8 +88,16 @@
     if(guest) {
         NSMenuItem *full=[self add:(self.activeWindow.styleMask&NSWindowStyleMaskFullScreen)?@"Exit Full Screen":@"Enter Full Screen" action:@selector(toggleFullScreen:) key:@"f" to:self.viewMenu target:self.activeWindow];full.keyEquivalentModifierMask=NSEventModifierFlagControl|NSEventModifierFlagCommand;
         [self.viewMenu addItem:NSMenuItem.separatorItem];
-        NSMenuItem *retina=[self.viewMenu addItemWithTitle:@"Retina Resolution" action:nil keyEquivalent:@""];retina.submenu=[NSMenu new];
-        for(NSUInteger i=0;i<3;i++) {NSMenuItem *item=[self add:@[@"More Space",@"Best for Retina display",@"Scaled"][i] action:@selector(changeRetinaMode:) key:@"" to:retina.submenu target:session];item.tag=i;item.state=[session.displayMode isEqual:@[@"space",@"retina",@"scaled"][i]]?NSControlStateValueOn:NSControlStateValueOff;}
+        NSMenuItem *retina=[self.viewMenu addItemWithTitle:session.supportsRetinaDisplay?@"Retina Resolution":@"Resolution" action:nil keyEquivalent:@""];retina.submenu=[NSMenu new];
+        for(NSUInteger i=0;i<3;i++) {
+            if(i==1&&!session.supportsRetinaDisplay)continue;
+            NSMenuItem *item=[self add:@[@"More Space",@"Best for Retina display",@"Scaled"][i] action:@selector(changeRetinaMode:) key:@"" to:retina.submenu target:session];item.tag=i;item.state=[session.displayMode isEqual:@[@"space",@"retina",@"scaled"][i]]?NSControlStateValueOn:NSControlStateValueOff;
+        }
+        NSMenuItem *filter=[self.viewMenu addItemWithTitle:@"Scaling Filter" action:nil keyEquivalent:@""];filter.submenu=[NSMenu new];
+        for(NSString *value in @[@"nearest",@"linear"]) {
+            NSMenuItem *item=[self add:[value isEqual:@"nearest"]?@"Nearest Neighbor":@"Linear" action:@selector(changeDisplayScalingFilter:) key:@"" to:filter.submenu target:session];
+            item.representedObject=value;item.state=[session.displayScalingFilter isEqual:value]?NSControlStateValueOn:NSControlStateValueOff;
+        }
         [self.viewMenu addItem:NSMenuItem.separatorItem];[self add:@"Take Screenshot…" action:@selector(takeScreenshot:) key:@"" to:self.viewMenu target:session];
     } else {
         for(NSUInteger i=0;i<2;i++){NSMenuItem *item=[self add:i?@"Compact View":@"Expanded View" action:@selector(setDensity:) key:@"" to:self.viewMenu target:self];item.tag=i;item.state=self.library.compact==(i==1)?NSControlStateValueOn:NSControlStateValueOff;}
@@ -101,6 +110,12 @@
             item.keyEquivalentModifierMask=NSEventModifierFlagControl|NSEventModifierFlagCommand;item.representedObject=names[i];item.state=[self.library.arrangement isEqual:names[i]]?NSControlStateValueOn:NSControlStateValueOff;
         }
     }
+    [self.viewMenu addItem:NSMenuItem.separatorItem];
+    NSMenuItem *toolbar=[self add:self.activeWindow.toolbar.visible?@"Hide Toolbar":@"Show Toolbar" action:@selector(toggleToolbarShown:) key:@"t" to:self.viewMenu target:self];
+    toolbar.keyEquivalentModifierMask=NSEventModifierFlagOption|NSEventModifierFlagCommand;
+}
+- (void)toggleToolbarShown:(id)sender {
+    [self.activeWindow toggleToolbarShown:sender];[self refresh];
 }
 - (void)buildGuestMenus:(VIMSession *)session {
     NSMenu *actions=self.actionsItem.submenu,*devices=self.devicesItem.submenu;[actions removeAllItems];[devices removeAllItems];
@@ -114,9 +129,12 @@
         if(@available(macOS 27.0,*))item.preferredImageVisibility=NSMenuItemImageVisibilityVisible;
 #endif
     }
+    [actions addItem:NSMenuItem.separatorItem];
+    NSMenuItem *apps=[self add:@"Download Apps…" action:@selector(downloadApps:) key:@"" to:actions target:session];
+    apps.image=VIMAppsSymbolImage();apps.enabled=session!=nil;
     [actions addItem:NSMenuItem.separatorItem];NSMenuItem *configure=[self add:@"Configure…" action:@selector(configureMachine:) key:@"" to:actions target:session];configure.image=[NSImage imageWithSystemSymbolName:@"gearshape" accessibilityDescription:nil];configure.enabled=session!=nil;
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 270000
-    if(@available(macOS 27.0,*))configure.preferredImageVisibility=NSMenuItemImageVisibilityVisible;
+    if(@available(macOS 27.0,*)){configure.preferredImageVisibility=NSMenuItemImageVisibilityVisible;apps.preferredImageVisibility=NSMenuItemImageVisibilityVisible;}
 #endif
     for(NSString *name in @[@"Network",@"Sound Output",@"Microphone",@"CD/DVD",@"USB",@"Sharing",@"Keyboard"]) {
         NSMenuItem *item=[devices addItemWithTitle:name action:nil keyEquivalent:@""];
@@ -140,6 +158,7 @@
 - (void)setDensity:(NSMenuItem *)sender {[self.library setDensityFromMenu:sender];[self contextChanged:nil];}
 - (void)arrange:(NSMenuItem *)sender {[self.library arrangeFromMenu:sender];[self contextChanged:nil];}
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if(item.action==@selector(toggleToolbarShown:)){item.title=self.activeWindow.toolbar.visible?@"Hide Toolbar":@"Show Toolbar";return self.activeWindow.toolbar!=nil;}
     if(item.action==@selector(setDensity:)||item.action==@selector(arrange:))return self.activeWindow==self.library.view.window;
     return YES;
 }

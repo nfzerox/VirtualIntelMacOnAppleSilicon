@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>FormatVersion</key>
+	<integer>1</integer>
+	<key>Guest</key>
+	<string>snowleopard</string>
+	<key>PolicyVersion</key>
+	<integer>1</integer>
+	<key>UpstreamCommit</key>
+	<string>ab8a41880c162af3f96c52e7e6fd84844e1fa146</string>
+</dict>
+</plist>

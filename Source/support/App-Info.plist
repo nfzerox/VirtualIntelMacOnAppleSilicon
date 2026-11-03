@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<!-- The original Mavericks recovery CDN is HTTP-only. Code additionally pins
+     its exact path and SHA-256. Never allow arbitrary insecure downloads. -->
+<key>NSAppTransportSecurity</key><dict><key>NSExceptionDomains</key><dict>
+<key>oscdn.apple.com</key><dict>
+<key>NSExceptionAllowsInsecureHTTPLoads</key><true/>
+<key>NSIncludesSubdomains</key><false/>
+</dict></dict></dict>
+</dict></plist>

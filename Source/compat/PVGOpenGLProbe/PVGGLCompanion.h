@@ -1,5 +1,5 @@
 /* Ownership of native PP companions between generation and native adoption.
- * A scope lives on the legacy-update wrapper's stack; no global map or
+ * A scope lives on the opengl-update wrapper's stack; no global map or
  * allocation is needed. The caller must leave every entered scope. */
 #ifndef PVG_GL_COMPANION_H
 #define PVG_GL_COMPANION_H

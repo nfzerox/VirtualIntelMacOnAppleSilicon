@@ -1,0 +1,126 @@
+--- a/Staging/OpenHfsPlus/fsw_hfsplus.h
++++ b/Staging/OpenHfsPlus/fsw_hfsplus.h
+@@ -309,6 +309,7 @@
+     struct fsw_volume g;            // Generic (parent) volume structure
+     HFSPlusVolumeHeader *vh;        // Raw HFS+ Volume Header
+     struct fsw_hfsplus_dnode *catf; // Catalog file dnode
++    struct fsw_hfsplus_dnode *extf; // Extents overflow B-tree dnode
+ };
+ 
+ #endif // _FSW_HFSPLUS_H_
+--- a/Staging/OpenHfsPlus/fsw_hfsplus.c
++++ b/Staging/OpenHfsPlus/fsw_hfsplus.c
+@@ -463,6 +463,12 @@
+     bs = fsw_u32_be_swap(v->vh->blockSize);
+     fsw_set_blocksize(v, bs, bs);
+ 
++    // Open the extent index first: the catalog can itself need overflow data.
++    status = fsw_hfsplus_btf_setup(v, kHFSExtentsFileID, &v->vh->extentsFile,
++                                   &v->extf);
++    if (status)
++        return status;
++
+     // set up catalog B-Tree file:
+     status = fsw_hfsplus_btf_setup(v, kHFSCatalogFileID, &v->vh->catalogFile,
+                                    &v->catf);
+@@ -512,6 +518,8 @@
+         fsw_free(v->vh);
+     if (v->catf)
+         fsw_dnode_release((struct fsw_dnode *)v->catf);
++    if (v->extf)
++        fsw_dnode_release((struct fsw_dnode *)v->extf);
+ }
+ 
+ static fsw_status_t
+@@ -772,14 +780,32 @@
+     }
+ 
+     return ret;
++}
++
++static int
++fsw_hfsplus_ext_cmp(HFSPlusBTKey *tk, HFSPlusBTKey *sk)
++{
++    int result;
++    // Apple TN1150: fileID, then forkType, then logical startBlock.
++    result = fsw_hfsplus_int_cmp(fsw_u32_be_swap(tk->extKey.fileID), sk->extKey.fileID);
++    if (!result)
++        result = fsw_hfsplus_int_cmp(tk->extKey.forkType, sk->extKey.forkType);
++    if (!result)
++        result = fsw_hfsplus_int_cmp(fsw_u32_be_swap(tk->extKey.startBlock), sk->extKey.startBlock);
++    return result;
+ }
+ 
+ static fsw_status_t
+ fsw_hfsplus_get_ext(struct fsw_hfsplus_volume *v, struct fsw_hfsplus_dnode *d,
+                     struct fsw_extent *e)
+ {
+-    fsw_u32             off, bc;
++    fsw_u32             off, bc, logical, rec_num;
+     HFSPlusExtentRecord *er;
++    HFSPlusExtentRecord overflow;
++    HFSPlusBTKey        *key;
++    HFSPlusExtentKey    search;
++    BTNodeDescriptor   *node;
++    fsw_status_t        status;
+     int                 i;
+ 
+     // set initial offset to provided starting logical block number:
+@@ -788,8 +814,10 @@
+     // start with dnode's initial extent record:
+     er = &d->extents;
+ 
+-    // search extent record:
+-    for (i = 0; i < kHFSPlusExtentDensity; i++) {
++    // Follow exact, monotonically advancing overflow keys, not a scan of all
++    // files. Retain the original fast path for the first eight extents.
++    for (;;) {
++      for (i = 0; i < kHFSPlusExtentDensity; i++) {
+         // get block count for current extent descriptor:
+         bc = fsw_u32_be_swap((*er)[i].blockCount);
+ 
+@@ -807,12 +835,39 @@
+ 
+         // update offset to NEXT extent descriptor:
+         off -= bc;
+-    }
++      }
+ 
+-    // FIXME: more than 8 fragments not yet supported!
+-    FSW_MSG_ASSERT((FSW_MSGSTR("FswHfsPlus: get_ext: got_here\n")));
+-
+-    return FSW_UNSUPPORTED;
++      // Do not recurse into an overflow index that cannot bootstrap itself.
++      // Its own inline extents must contain the index nodes needed here.
++      if (!v->extf || d->g.dnode_id == kHFSExtentsFileID)
++          return FSW_UNSUPPORTED;
++      logical = e->log_start - off;
++      if (!logical || (fsw_u64)logical * v->g.log_blocksize >= d->g.size)
++          return FSW_VOLUME_CORRUPTED;
++      search.keyLength = 10;
++      search.forkType = kHFSPlusDataFork;
++      search.pad = 0;
++      search.fileID = d->g.dnode_id;
++      search.startBlock = logical;
++      status = fsw_alloc(v->extf->bt_ndsz, &node);
++      if (status)
++          return status;
++      status = fsw_hfsplus_bt_search(v->extf, (HFSPlusBTKey *)&search,
++                                    fsw_hfsplus_ext_cmp, node, &rec_num);
++      if (!status) {
++          key = fsw_hfsplus_btnode_get_rec(node, v->extf->bt_ndsz, rec_num);
++          if (fsw_u16_be_swap(key->keyLength) != 10 ||
++              (fsw_u8 *)key + sizeof(HFSPlusExtentKey) + sizeof(overflow) >
++                  (fsw_u8 *)node + v->extf->bt_ndsz)
++              status = FSW_VOLUME_CORRUPTED;
++          else
++              fsw_memcpy(overflow, fsw_hfsplus_bt_rec_skip_key(key), sizeof(overflow));
++      }
++      fsw_free(node);
++      if (status)
++          return status;
++      er = &overflow;
++    }
+ }
+ 
+ static fsw_status_t

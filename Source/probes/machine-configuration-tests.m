@@ -2,6 +2,7 @@
 #import "VIMMachine.h"
 #import "VIMInstallerAssembly.h"
 #import "VIMNetworkDefaults.h"
+#import "VIMAutomaticSetup.h"
 #include <sys/file.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -15,6 +16,25 @@ static NSURL *Fixture(NSURL *root,NSString *name) {
     [@{@"FormatVersion":@1,@"Identifier":identifier,@"Name":name,@"Guest":@"mojave",@"CPUCount":@4,@"MemoryMiB":@4096,
       @"Disk":@"Disks/System.qcow2",@"NVRAM":@"Firmware/NVRAM.fd",@"Firmware":@"Firmware/CODE.fd",@"BootMedia":@"Firmware/EFI.img",@"FirmwareSource":@"application"}
         writeToURL:[URL URLByAppendingPathComponent:@"Machine.plist"] atomically:YES];return URL;
+}
+static void CheckModernSetupProfiles(NSURL *root) {
+    for(NSString *guest in @[@"mojave",@"catalina",@"bigsur"]){
+        NSCAssert([VIMAutomaticSetup supportsGuest:guest],@"Modern creation controls are supported");
+        NSURL *URL=Fixture(root,@"Automatic Setup");
+        NSMutableDictionary *config=[[NSDictionary dictionaryWithContentsOfURL:[URL URLByAppendingPathComponent:@"Machine.plist"]] mutableCopy];
+        config[@"Guest"]=guest;config[@"InstallState"]=@"installing";config[@"InstallerMedia"]=@"Installation/Installer.iso";
+        [NSFileManager.defaultManager createDirectoryAtURL:[URL URLByAppendingPathComponent:@"Installation"] withIntermediateDirectories:YES attributes:nil error:nil];
+        [@"fixture" writeToURL:[URL URLByAppendingPathComponent:@"Installation/Installer.iso"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        [config writeToURL:[URL URLByAppendingPathComponent:@"Machine.plist"] atomically:YES];
+        NSString *volume=NSUUID.UUID.UUIDString;
+        [@{@"FormatVersion":@1,@"VolumeUUID":volume,@"Filesystem":@"HFS+"} writeToURL:[URL URLByAppendingPathComponent:@"State/InstallationTarget.plist"] atomically:YES];
+        NSError *error=nil;VIMMachine *machine=[VIMMachine loadURL:URL error:&error];NSCAssert(machine,@"Modern target loads: %@",error);
+        NSDictionary *profile=@{@"FormatVersion":@1,@"Enabled":@YES,@"Username":@"newuser",@"FileSharing":@YES,@"RemoteLogin":@YES,@"AutomaticLogin":@YES,@"CredentialIdentifier":NSUUID.UUID.UUIDString};
+        NSCAssert([machine saveAutomaticSetup:profile error:&error],@"Native setup policy saves for %@: %@",guest,error);
+        NSDictionary *saved=[NSDictionary dictionaryWithContentsOfURL:[URL URLByAppendingPathComponent:@"State/AutomaticSetup.plist"]];
+        NSCAssert([saved[@"Guest"] isEqual:guest]&&[saved[@"VolumeUUID"] isEqual:volume]&&!saved[@"Password"],@"New-disk identity, no password on setup media");
+    }
+    puts("PASS: Mojave Catalina Big Sur native automatic-setup profiles, owned new-disk identity, no password in VM policy");
 }
 static void CheckUpdateRepairs(NSURL *root) {
     NSFileManager *fm=NSFileManager.defaultManager;
@@ -104,12 +124,37 @@ static void CheckUpdateRepairs(NSURL *root) {
     }
     puts("PASS: minor-update repair claims for Mojave/Catalina/Big Sur, evidence guards, old-journal preservation, relaunch deduplication");
 }
+static void CheckNativeBigSurDisplay(NSURL *root) {
+    NSURL *URL=Fixture(root,@"Native Big Sur");
+    NSURL *configuration=[URL URLByAppendingPathComponent:@"Machine.plist"];
+    NSMutableDictionary *config=[[NSDictionary dictionaryWithContentsOfURL:configuration] mutableCopy];
+    config[@"Guest"]=@"bigsur";config[@"InstallState"]=@"installing";config[@"InstallerMedia"]=@"Installation/Installer.iso";
+    [NSFileManager.defaultManager createDirectoryAtURL:[URL URLByAppendingPathComponent:@"Installation"] withIntermediateDirectories:YES attributes:nil error:nil];
+    [@"fixture" writeToURL:[URL URLByAppendingPathComponent:@"Installation/Installer.iso"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    [config writeToURL:configuration atomically:YES];
+    VIMMachine *machine=[VIMMachine loadURL:URL error:nil];NSCAssert(machine,@"Native display fixture loads");
+    NSDictionary *report=@{@"Guest":@"bigsur",@"LiveRoot":@YES,@"KernelMatchesSystem":@YES,
+        @"InstalledRootPresent":@YES,@"NativePVGAvailable":@YES,@"SetupComplete":@NO,
+        @"RecoveryToolsPresent":@NO,@"InstallerMarkers":@[],@"VolumeUUID":NSUUID.UUID.UUIDString,
+        @"BootSessionUUID":NSUUID.UUID.UUIDString,@"ProductBuildVersion":@"20G1426"};
+    for(NSString *key in @[@"Guest",@"LiveRoot",@"KernelMatchesSystem",@"InstalledRootPresent",@"NativePVGAvailable",@"SetupComplete",@"RecoveryToolsPresent",@"InstallerMarkers",@"VolumeUUID",@"BootSessionUUID"]){
+        NSMutableDictionary *wrong=[report mutableCopy];[wrong removeObjectForKey:key];
+        NSCAssert(![machine prepareNativeBigSurDisplayWithGuestReport:wrong error:nil],@"Incomplete %@ evidence refused",key);
+    }
+    NSCAssert(machine.requiresInstallerDisplay,@"New Big Sur starts with installer VGA");
+    NSCAssert([machine prepareNativeBigSurDisplayWithGuestReport:report error:nil],@"Installed native PVG admitted before Setup Assistant completes");
+    NSCAssert(!machine.requiresInstallerDisplay&&!machine.hasPublishedGuestGraphics,@"Native display does not fabricate graphics setup completion");
+    NSCAssert([machine.configuration[@"InstallState"] isEqual:@"installing"]&&machine.configuration[@"InstallerMedia"],@"Native handoff retains installation and media");
+    puts("PASS: native Big Sur display handoff before account setup, no fabricated graphics completion or installer cleanup");
+}
 int main(void) {@autoreleasepool {
     id previousKeep=[NSUserDefaults.standardUserDefaults objectForKey:@"VIMKeepInstallers"];
     [NSUserDefaults.standardUserDefaults setBool:NO forKey:@"VIMKeepInstallers"];
     NSFileManager *fm=NSFileManager.defaultManager;NSURL *root=[[fm.temporaryDirectory URLByAppendingPathComponent:[@"vim-model-" stringByAppendingString:NSUUID.UUID.UUIDString]] URLByResolvingSymlinksInPath];
     [fm createDirectoryAtURL:root withIntermediateDirectories:NO attributes:nil error:nil];
     CheckUpdateRepairs(root);
+    CheckModernSetupProfiles(root);
+    CheckNativeBigSurDisplay(root);
     NSURL *original=Fixture(root,@"Mojave");NSError *error=nil;VIMMachine *machine=[VIMMachine loadURL:original error:&error];NSCAssert(machine,@"Fixture loads: %@",error);
     NSString *defaultMAC=VIMNetworkMACAddress(machine.configuration);
     NSCAssert(VIMNetworkMACAddressIsValid(defaultMAC),@"UUID default MAC is valid");
@@ -205,7 +250,7 @@ int main(void) {@autoreleasepool {
     NSURL *download=[root URLByAppendingPathComponent:@"Downloads/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Payload.pkg"];
     [fm createDirectoryAtURL:download.URLByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];
     [@"fixture" writeToURL:download atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    [@{@"FormatVersion":@1,@"SourceURL":@"https://swcdn.apple.com/fixture.pkg",@"Complete":@YES,@"Length":@7} writeToURL:[download.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"Download.plist"] atomically:YES];
+    [@{@"FormatVersion":@1,@"SourceURL":@"https://swcdn.apple.com/content/downloads/fixture.pkg",@"Complete":@YES,@"Length":@7} writeToURL:[download.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"Download.plist"] atomically:YES];
     int downloadLock=open([download.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"Download.lock"].fileSystemRepresentation,O_CREAT|O_RDWR,0600);
     flock(downloadLock,LOCK_EX|LOCK_NB);
     [VIMInstallerAssembly retireCompletedDownloads:@{@"assistant":download}];

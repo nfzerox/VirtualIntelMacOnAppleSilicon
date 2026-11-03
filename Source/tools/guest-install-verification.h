@@ -17,7 +17,7 @@ static NSDictionary *VerifyInstalledAfterReboot(NSURL *journal) {
     Check([result[@"VolumeUUID"] isEqual:admission[@"VolumeUUID"]],@"Installation belongs to a different system volume");
     Check([transaction verifyPublished:&error],error.localizedDescription);
     BOOL mojave=[admission[@"ProductVersion"] hasPrefix:@"10.14."];
-    BOOL bigsur=[admission[@"ProductVersion"] hasPrefix:@"11."];
+    BOOL bigsur=[VIMGuestForSystemVersion(admission[@"ProductVersion"]) isEqual:@"bigsur"];
     NSString *guest=bigsur?@"bigsur":(mojave?@"mojave":@"catalina");
     Check(TransactionTargetsMatchPolicy([state[@"Entries"] valueForKey:@"RelativePath"],guest),@"Installed targets differ from release policy");
     if(bigsur)Check([result[@"Cache"] isEqual:@{@"CacheRequired":@NO,@"Policy":@"library-only"}],@"Invalid library-only installation outcome");

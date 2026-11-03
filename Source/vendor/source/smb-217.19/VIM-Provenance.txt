@@ -1,0 +1,92 @@
+Apple smb-217.19, commit 1b47f5645571a9af0e85e55af5ff68f09d310537
+https://github.com/apple-oss-distributions/smb/tree/smb-217.19
+
+Original source and file notices copied directly, without a Git submodule.
+The original project embeds smbfs1.3.7 metadata, matching the native Tiger
+8R4088 bundle version. A matching version is not itself runtime ABI proof.
+
+Purpose: narrow native Tiger Finder SMB client compatibility backport,
+preserving Darwin8 VFS, ioctl, Kerberos and filesystem semantics. Do not
+replace it wholesale with a later filesystem driver or weaken host SMB policy.
+Current changes: prefer direct-hosted TCP445 before the original TCP139
+transport; omit the NetBIOS session handshake on direct-hosted transport;
+advertise Unicode in the unsigned dialect-negotiation header without changing
+the mandatory ASCII dialect list or later VC encoding. No credential/signature
+checks are bypassed.
+
+Status: bounded transport research, not part of the app's default payload
+and not a qualified native Finder mount. The original
+source compiles all29 kernel source-phase units against the genuine10.4u SDK
+and xnu-792.22.5 private headers. The period compiler survey is reproducible
+using Source/probes/build-leopard-smb-client.py with an explicit10.4u SDK.
+The changed native i386 relocatable links with all226 imports provided by
+the actual8R4088 kernel. The native guest loader validates/loads it from a
+temporary root-owned directory without replacing a system file. The native
+smbutil failure changes from Connection refused to Function not implemented,
+consistent with reaching the still-unimplemented extended-authentication path.
+After the finite test it is unloaded and the original system kext reloaded.
+Do not call this evidence of a signed/authenticated mount or complete fix.
+
+October31 native client checkpoint (research337, not yet packaged):
+The new BSD-2-Clause vim_ntlmssp_wire/native files add cold NTLMv2/SPNEGO
+authentication inside the original password-ioctl/IOD path. Existing Finder,
+mount_smbfs, smbutil, public ioctl and VFS interfaces are unchanged. No new
+password store, authentication proxy, global host policy or runtime injection.
+The source phase now has31 units, linked for the genuine Darwin8 i386 ABI.
+
+Apple Heimdal-710.0.1 accept_sec_context/crypto and the live host's digest
+metadata explain the key-exchange requirement: a valid NTLMv2 password proof
+alone was insufficient; the SPNEGO MIC also needed the negotiated128-bit
+key-exchange path. The implementation includes transcript MIC, directional
+mech-list MIC and random exported session key, without LM/NTLMv1 fallback.
+The host accepts the correct negotiation and rejects a deliberately corrupted
+mech-list MIC. MS-NLMP synthetic vectors plus independent CommonCrypto RC4/MIC
+checks pass under address/undefined-behavior sanitizers.
+
+Native Darwin10 smb_rq_sign/verify are the reference for session-setup's
+BSRSPLY placeholder and ordinary signed-request sequence2/reply3. Only the
+bounded authentication phase permits an unsigned SMB setup response; GSS
+completion/guest rejection and any supplied server mech MIC are still checked.
+Every following signed operation verifies the actual server packet MAC.
+
+Two small native interoperability adaptations accompany authentication:
+- Darwin9 smbfs_smb_statfs: use SMB_QFS_SIZE_INFO's24-byte64-bit response
+  when NT SMBs are negotiated. The old18-byte allocation query demonstrably
+  fails with STATUS_INFO_LENGTH_MISMATCH on the modern Apple server.
+- Darwin10 smb_t2_request_int: retain negotiated Unicode and encode the named
+  TRANSACTION name accordingly. The original OEM flag yields signed
+  STATUS_NOT_SUPPORTED replies to the native RPC pipe request. Correct Unicode
+  transactions let stock Tiger smbutil list all11 modern-host shares.
+
+The research driver is loaded only from a temporary root-owned guest bundle;
+the Apple system kext remains unchanged. Native mount, stat/list, read/write,
+normal cp, and Unicode-filename round-trip pass through the running production
+app's normal network, without a custom SMB service. This is component evidence,
+not proof of a finished Finder UI flow, fresh-install packaging, minor-update
+recovery, other Tiger builds, or Leopard compatibility. Those gates stay open.
+The optional --trace builder flag emits failed-transaction numeric metadata
+only; ordinary builds omit it. No tokens, keys, paths or credentials are logged.
+
+Research342 preserves Tiger Finder's anonymous-probe/password-retry contract:
+an unsupported empty-account probe returns EAUTH before the IOD can close the
+still-unauthed negotiated transport. The ordinary named-account path retains
+full NTLMv2/SPNEGO and packet-MAC verification. Visible native Finder browsing,
+direct mount and a Unicode-named103-byte Finder-copy round trip pass. An
+intermittent post-share-selection disconnect remains under investigation;
+the full outgoing-sharing qualification gate is still open.
+
+The component is now packaged with Tiger's native controls. The production
+file-sharing helper publishes/loads a private copy from GuestTools, leaving
+Apple's original system smbfs.kext and all active mounts untouched. An already
+loaded different client requires the ordinary setup restart; the existing
+one-shot cold job then loads the private native client. No kernel-cache or
+host-security changes are used. First cold-load and repeat-repair checks pass;
+this does not qualify every Finder operation, minor update, or ARM host.
+
+Client policy2 exposes a read-only net.smb.fs.vim_client=2 resident-identity
+OID through Darwin8's original registration seam. The cold loader uses it to
+distinguish the actual backported implementation from the stock same-version
+bundle: measured native kextload returns success for "already loaded" without
+proving which implementation was loaded. No writable policy, resident poller,
+filesystem ABI or host-security change is added. Normal app policy upgrade,
+automatic restart and the resident2 marker pass in the real production guest.

@@ -1,0 +1,11 @@
+#!/bin/zsh
+# The same blocking serial protocol as pre-Metal guests, Recovery-only identity.
+set -euo pipefail
+root=${0:A:h:h}
+out=${1:?usage: build-recovery-agent NEW_OUTPUT}
+[[ ! -e $out ]] || { print -u2 'Choose a new output file.'; exit 73; }
+xcrun clang -arch x86_64 -mmacosx-version-min=10.14 -fno-objc-arc -fblocks -O2 \
+    -DVIM_RECOVERY_CONTROL=1 -Wall -Wextra -Werror -Wno-deprecated-declarations \
+    "$root/tools/opengl-guest-agent.m" -framework Foundation -framework IOKit -o "$out"
+codesign --force --sign - "$out"
+codesign --verify --strict "$out"

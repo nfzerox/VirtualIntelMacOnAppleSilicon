@@ -156,7 +156,7 @@ static const USBDescIface desc_iface_tablet = {
                 0x00,          /*  u8  country_code */
                 0x01,          /*  u8  num_descriptors */
                 USB_DT_REPORT, /*  u8  type: Report */
-                74, 0,         /*  u16 len */
+                83, 0,         /*  u16 len, including horizontal AC Pan */
             },
         },
     },
@@ -186,7 +186,7 @@ static const USBDescIface desc_iface_tablet2 = {
                 0x00,          /*  u8  country_code */
                 0x01,          /*  u8  num_descriptors */
                 USB_DT_REPORT, /*  u8  type: Report */
-                74, 0,         /*  u16 len */
+                83, 0,         /*  u16 len, including horizontal AC Pan */
             },
         },
     },
@@ -521,9 +521,16 @@ static const uint8_t qemu_tablet_hid_report_descriptor[] = {
     0x75, 0x08,		/*     Report Size (8) */
     0x95, 0x01,		/*     Report Count (1) */
     0x81, 0x06,		/*     Input (Data, Variable, Relative) */
+    0x05, 0x0c,         /*     Usage Page (Consumer) */
+    0x0a, 0x38, 0x02,   /*     Usage (AC Pan) */
+    0x95, 0x01,         /*     Report Count (1), signed 8-bit relative */
+    0x81, 0x06,         /*     Input (Data, Variable, Relative) */
     0xc0,		/*   End Collection */
     0xc0,		/* End Collection */
 };
+
+_Static_assert(sizeof(qemu_tablet_hid_report_descriptor) == 83,
+               "USB tablet report-descriptor length must match both speeds");
 
 static const uint8_t qemu_keyboard_hid_report_descriptor[] = {
     0x05, 0x01,		/* Usage Page (Generic Desktop) */

@@ -42,9 +42,9 @@ mv "$output/AppleParavirtGPUMetal.patched" "$binary"
 
 codesign --remove-signature "$binary"
 "$repo_root/scripts/build-dsce"
-"$repo_root/vendor/source/dsce/dsce" legacy-objc \
-    "$binary" "$output/AppleParavirtGPUMetal.legacy-objc"
-mv "$output/AppleParavirtGPUMetal.legacy-objc" "$binary"
+"$repo_root/vendor/source/dsce/dsce" opengl-objc \
+    "$binary" "$output/AppleParavirtGPUMetal.opengl-objc"
+mv "$output/AppleParavirtGPUMetal.opengl-objc" "$binary"
 chmod 755 "$binary"
 
 # Big Sur's Metal adds a compiler connection for LLVM ABI 0x7919. Catalina's

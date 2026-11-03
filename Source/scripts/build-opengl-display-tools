@@ -1,0 +1,17 @@
+#!/bin/bash
+# Isolated Mavericks display tools; no Mesa, guest install or host changes.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+: "${VIM_OPENGL_SDK:?Set VIM_OPENGL_SDK to MacOSX10.9.sdk}"
+build="${VIM_OPENGL_DISPLAY_BUILD:-$root/Build/PassthroughOpenGLResearch/DisplayTools}"
+mkdir -p "$build"
+flags=(-arch x86_64 -isysroot "$VIM_OPENGL_SDK" -mmacosx-version-min=10.9
+    -O2 -g -Wall -Wextra -Werror -Wno-deprecated-declarations)
+"${CC:-clang}" "${flags[@]}" -fblocks "$root/PassthroughOpenGL/opengl-display-agent.m" \
+    -framework AppKit -framework ApplicationServices -framework IOKit -framework CoreFoundation -o "$build/opengl-display-agent"
+"${CXX:-clang++}" "${flags[@]}" "$root/probes/opengl-display-resize.cpp" \
+    -I "$root/vendor/source/VMsvga2/FB" -framework ApplicationServices -framework IOKit -o "$build/opengl-display-resize"
+"${CC:-clang}" "${flags[@]}" "$root/probes/set-display-mode.c" \
+    -framework ApplicationServices -o "$build/opengl-display-modes"
+cp "$root/PassthroughOpenGL/com.virtualintelmac.opengl-display.plist" "$build/"
+printf 'Display research tools: %s\nNo system files or VM configuration were changed.\n' "$build"

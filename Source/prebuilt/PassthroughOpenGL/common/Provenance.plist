@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Project</key><string>Acidanthera OpenCorePkg</string>
+<key>Version</key><string>1.0.8 RELEASE</string>
+<key>Source</key><string>https://github.com/acidanthera/OpenCorePkg/tree/1.0.8/Platform/OpenPartitionDxe</string>
+<key>Download</key><string>https://github.com/acidanthera/OpenCorePkg/releases/download/1.0.8/OpenCore-1.0.8-RELEASE.zip</string>
+<key>ArchiveSHA256</key><string>2011e8b7216ecb2645d97ea710df965947edd406846e92050b9bc4190be6d27b</string>
+<key>OpenPartitionDxeSHA256</key><string>6aaeb09f548395a51456a713479fc4913f21ce51751bf931e9a849d9a79ef791</string>
+<key>Reason</key><string>Native Apple Partition Map discovery for original Lion, Mountain Lion and Mavericks recovery media. No runtime download.</string>
+</dict></plist>

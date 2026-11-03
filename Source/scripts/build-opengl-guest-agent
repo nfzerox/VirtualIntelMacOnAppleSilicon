@@ -1,0 +1,84 @@
+#!/bin/bash
+# Build the guest service only; never installs/loads it on the builder.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+sdk="${VIM_OPENGL_SDK:-$root/resources/sdk/MacOSX10.9.sdk}"
+cc="${VIM_OPENGL_CC:-$root/resources/xcode/XcodeMojave.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang}"
+output="${VIM_OPENGL_AGENT_BUILD:-$root/Build/OpenGLGuestAgent}"
+minimum="${VIM_OPENGL_MIN_VERSION:-10.9}"
+[[ -x "$cc" && -f "$sdk/usr/include/stdio.h" ]] || {
+    echo 'Set VIM_OPENGL_CC and VIM_OPENGL_SDK to an Intel-capable Apple compiler and the period SDK.' >&2;exit 66;
+}
+mkdir -p "$output"
+python3 "$root/scripts/build-guest-ssh.py" --sdk "$sdk" --cc "$cc" --output "$output/guest-ssh"
+"$cc" -fno-objc-arc -O2 -Wall -Wextra -Werror -Wno-deprecated-declarations -arch x86_64 -isysroot "$sdk" -mmacosx-version-min=10.7 \
+    "$root/tools/opengl-desktop-status.m" -framework Foundation -framework SystemConfiguration -framework IOKit -o "$output/opengl-desktop-status"
+"$cc" -fno-objc-arc -O2 -Wall -Wextra -Werror -Wno-deprecated-declarations -arch x86_64 -isysroot "$sdk" -mmacosx-version-min=10.7 \
+    "$root/tools/guest-host-connection.m" -framework Foundation -o "$output/guest-host-connection"
+"$cc" -fno-objc-arc -O2 -Wall -Wextra -Werror -Wno-deprecated-declarations -arch x86_64 -isysroot "$sdk" -mmacosx-version-min="$minimum" \
+    "$root/tools/guest-display.m" -framework Foundation -framework ApplicationServices -o "$output/guest-display"
+for tool in opengl-desktop-status guest-display guest-host-connection; do
+    codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/$tool"
+done
+# Compile ARC against the period runtime, then link without the newer Xcode
+# driver's automatic arclite injection (objc_readClassPair is absent on 10.9).
+# All actual object imports are supplied by the period libobjc itself.
+"$cc" -fobjc-arc -DVIM_OPENGL_GUEST=1 -O2 -Wall -Wextra -Werror -Wno-deprecated-declarations \
+    -arch x86_64 -isysroot "$sdk" -mmacosx-version-min="$minimum" -c "$root/tools/guest-clipboard.m" -o "$output/guest-clipboard.o"
+"$cc" -arch x86_64 -isysroot "$sdk" -mmacosx-version-min="$minimum" "$output/guest-clipboard.o" \
+    -framework AppKit -framework IOKit -o "$output/guest-clipboard"
+codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/guest-clipboard"
+# Explicit retain/release avoids a newer compiler's ARC backdeployment shim,
+# whose private imports may not exist in the period SDK/runtime. There are no
+# collection subscripts or post-10.7 Foundation convenience APIs in this service.
+"$cc" -fno-objc-arc -O2 -Wall -Wextra -Werror -Wno-deprecated-declarations \
+    -arch x86_64 -isysroot "$sdk" -mmacosx-version-min=10.7 \
+    "$root/tools/opengl-guest-agent.m" -framework Foundation -framework IOKit \
+    -o "$output/opengl-guest-agent"
+codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/opengl-guest-agent"
+codesign --verify --strict "$output/opengl-guest-agent"
+"$cc" -O2 -Wall -Wextra -Werror -Wno-deprecated-declarations \
+    -arch x86_64 -isysroot "$sdk" -mmacosx-version-min=10.7 \
+    "$root/tools/opengl-audio-defaults.c" -framework CoreAudio -framework CoreFoundation -framework IOKit \
+    -o "$output/opengl-audio-defaults"
+codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/opengl-audio-defaults"
+codesign --verify --strict "$output/opengl-audio-defaults"
+"$cc" -fno-objc-arc -O2 -Wall -Wextra -Werror -Wno-deprecated-declarations \
+    -arch x86_64 -isysroot "$sdk" -mmacosx-version-min=10.7 \
+    "$root/tools/opengl-create-account.m" -framework Foundation -framework OpenDirectory \
+    -framework DiskArbitration -framework IOKit -framework ServiceManagement -framework CoreServices -framework Security -framework SystemConfiguration -o "$output/opengl-create-account"
+codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/opengl-create-account"
+codesign --verify --strict "$output/opengl-create-account"
+"$cc" -fno-objc-arc -O2 -Wall -Wextra -Werror -Wno-deprecated-declarations \
+    -arch x86_64 -isysroot "$sdk" -mmacosx-version-min=10.7 \
+    "$root/tools/opengl-install-bootstrap.m" -framework Foundation -framework IOKit -framework ServiceManagement \
+    -o "$output/opengl-install-bootstrap"
+codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/opengl-install-bootstrap"
+codesign --verify --strict "$output/opengl-install-bootstrap"
+"$cc" -fno-objc-arc -O2 -Wall -Wextra -Werror -Wno-deprecated-declarations \
+    -arch x86_64 -isysroot "$sdk" -mmacosx-version-min=10.7 \
+    "$root/tools/opengl-setup-status.m" -framework Foundation -framework SystemConfiguration \
+    -framework DiskArbitration -framework IOKit -framework CoreServices -framework Security -framework ServiceManagement -o "$output/opengl-setup-status"
+codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/opengl-setup-status"
+codesign --verify --strict "$output/opengl-setup-status"
+"$cc" -O2 -Wall -Wextra -Werror -Wno-deprecated-declarations -arch x86_64 \
+    -isysroot "$sdk" -mmacosx-version-min="$minimum" "$root/probes/opengl-gl-compatibility-core.c" \
+    -framework OpenGL -framework ApplicationServices -o "$output/opengl-graphics-check"
+codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/opengl-graphics-check"
+"$cc" -O2 -Wall -Wextra -Werror -arch x86_64 -isysroot "$sdk" -mmacosx-version-min=10.7 \
+    "$root/tools/opengl-installer-launch.c" -o "$output/opengl-installer-launch"
+"$cc" -fno-objc-arc -fblocks -dynamiclib -O2 -Wall -Wextra -Werror -Wno-deprecated-declarations \
+    -arch x86_64 -isysroot "$sdk" -mmacosx-version-min="$minimum" \
+    "$root/tools/opengl-installer-automation.m" -framework AppKit \
+    -install_name @rpath/opengl-installer-automation.dylib -o "$output/opengl-installer-automation.dylib"
+for leaf in opengl-installer-launch opengl-installer-automation.dylib; do
+    codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/$leaf"
+    codesign --verify --strict "$output/$leaf"
+done
+"$cc" -fno-objc-arc -fblocks -O2 -Wall -Wextra -Werror -Wno-deprecated-declarations \
+    -arch x86_64 -isysroot "$sdk" -mmacosx-version-min="$minimum" \
+    "$root/PassthroughOpenGL/opengl-display-agent.m" -framework AppKit -framework ApplicationServices \
+    -framework IOKit -o "$output/opengl-display-agent"
+codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/opengl-display-agent"
+codesign --verify --strict "$output/opengl-display-agent"
+echo "$output/opengl-guest-agent"

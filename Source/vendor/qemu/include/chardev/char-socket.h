@@ -52,6 +52,9 @@ struct SocketChardev {
     QIOChannelSocket *sioc; /* Client master channel */
     QIONetListener *listener;
     GSource *hup_source;
+#ifdef CONFIG_DARWIN
+    int hup_kqueue;
+#endif
     QCryptoTLSCreds *tls_creds;
     char *tls_authz;
     TCPChardevState state;

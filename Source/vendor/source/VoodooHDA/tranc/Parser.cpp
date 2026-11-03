@@ -3207,11 +3207,7 @@ UInt32 VoodooHDADevice::widgetPinPatch(UInt32 config, const char *str)
 	char buf[256];
 	char *key, *rest, *bad;
 
-#ifdef TIGER
-	strncpy(buf, str, sizeof (buf));
-#else	
 	strlcpy(buf, str, sizeof (buf));
-#endif
 	rest = buf;
 	while ((key = voodoo_strsep(&rest, "="))) {
 		char *value;
@@ -3615,11 +3611,7 @@ void VoodooHDADevice::widgetParse(Widget *widget)
 		break;
 	}
 
-#ifdef TIGER
-	strncpy(widget->name, typestr, sizeof (widget->name));
-#else
 	strlcpy(widget->name, typestr, sizeof (widget->name));
-#endif
 
 	widgetConnectionParse(widget);
 
@@ -3684,13 +3676,8 @@ char *VoodooHDADevice::audioCtlMixerMaskToString(UInt32 mask, char *buf, size_t 
 	for (int i = 0, first = 1; i < SOUND_MIXER_NRDEVICES; i++) {
 		if (mask & (1 << i)) {
 			if (first == 0)
-#ifdef TIGER
-				strncat(buf, ", ", len);
-			strncat(buf, ossname[i], len);
-#else
 				strlcat(buf, ", ", len);
 			strlcat(buf, ossname[i], len);
-#endif
 			first = 0;
 		}
 	}

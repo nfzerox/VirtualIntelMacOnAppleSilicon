@@ -1,0 +1,33 @@
+#!/bin/bash
+# PassthroughOpenGL 2D companion, both guest ABIs from the vendored source.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+sdk="${VIM_OPENGL_SDK:-$root/resources/sdk/MacOSX10.9.sdk}"
+build="${VIM_PASSTHROUGH_OPENGL_BUILD:-$root/Build/PassthroughOpenGLResearch/GL}/GA"
+source="$root/vendor/source/VMsvga2"
+mkdir -p "$build"
+cc="${VIM_OPENGL_CC:-$root/resources/xcode/XcodeMojave.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang}"
+cxx="${VIM_OPENGL_CXX:-${cc}++}"
+minimum="${VIM_OPENGL_MIN_VERSION:-10.9}"
+flags=(-arch x86_64 -arch i386 -isysroot "$sdk" -mmacosx-version-min="$minimum" -Os
+    -fvisibility=hidden -DLOGGING_LEVEL=0 -DSUPPORT_CGLS=1
+    -I "$source/AC" -I "$source/vmutil" -I "$root/PassthroughOpenGL")
+"$cxx" "${flags[@]}" -std=gnu++98 -fno-exceptions -fno-rtti -nostdinc++ \
+    -isystem "$sdk/usr/include/c++/4.2.1" \
+    -isystem "$sdk/usr/include/c++/4.2.1/i686-apple-darwin10" \
+    -c "$source/GA/VMsvga2GA.cpp" -o "$build/VMsvga2GA.o"
+for unit in GA/BlitHelper vmutil/VLog vmutil/SendString; do
+    "$cc" "${flags[@]}" -c "$source/$unit.c" -o "$build/${unit##*/}.o"
+done
+# No C++ runtime is needed: the plugin uses C APIs and POD records only.
+"$cc" "${flags[@]}" -bundle "$build/VMsvga2GA.o" "$build/BlitHelper.o" \
+    "$build/VLog.o" "$build/SendString.o" -framework CoreFoundation -framework IOKit \
+    -o "$build/VMsvga2GA"
+for arch in x86_64 i386; do
+    lipo "$build/VMsvga2GA" -verify_arch "$arch"
+done
+codesign --force --sign - --digest-algorithm=sha1,sha256 "$build/VMsvga2GA"
+# Preserve the old explicit x64 research adapter filename without borrowing
+# an opaque stock i386 slice for the production plugin.
+lipo "$build/VMsvga2GA" -thin x86_64 -output "$build/VMsvga2GA.x86_64"
+printf 'Built macOS %s 2D companion: %s\nNo guest system files modified.\n' "$minimum" "$build/VMsvga2GA.x86_64"

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AudioOnly</key>
+	<false/>
+	<key>Files</key>
+	<dict>
+		<key>VMsvga2.kext/Contents/Info.plist</key>
+		<true/>
+		<key>VMsvga2.kext/Contents/MacOS/VMsvga2</key>
+		<true/>
+		<key>VMsvga2Accel.kext/Contents/Info.plist</key>
+		<true/>
+		<key>VMsvga2Accel.kext/Contents/MacOS/VMsvga2Accel</key>
+		<true/>
+	</dict>
+	<key>FormatVersion</key>
+	<integer>1</integer>
+	<key>KernelArchitecture</key>
+	<string>i386</string>
+	<key>SDKVersion</key>
+	<string>10.4</string>
+</dict>
+</plist>

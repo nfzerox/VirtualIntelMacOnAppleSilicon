@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Files</key>
+	<dict>
+		<key>Samba-COPYING.txt</key>
+		<true/>
+		<key>leopard-odsam.dylib</key>
+		<true/>
+		<key>leopard-smbd</key>
+		<true/>
+	</dict>
+	<key>FormatVersion</key>
+	<integer>1</integer>
+	<key>Guest</key>
+	<string>leopard</string>
+	<key>PolicyVersion</key>
+	<integer>1</integer>
+	<key>UpstreamCommit</key>
+	<string>8157479ed3e94c6403b024a9703162139e2e79a5</string>
+</dict>
+</plist>

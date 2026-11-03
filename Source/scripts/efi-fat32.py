@@ -1,7 +1,7 @@
 """Small build-time FAT32 editor for generated firmware copies, never mounts.
 
 Supports regular files/directories and ASCII long names. Geometry and chains
-are checked; allocation changes every FAT mirror and invalidates FSInfo hints.
+are checked; allocation changes every FAT mirror and maintains FSInfo hints.
 No original image is written by this module.
 """
 import re
@@ -49,14 +49,14 @@ class FAT32:
         for index,c in enumerate(result):
             self.link(c,result[index+1] if index+1<count else 0x0fffffff)
             off=self.offset(c);self.data[off:off+self.cluster]=bytes(self.cluster)
-        # Free-count/next-free are only hints. Mark unknown rather than retain
-        # stale values; do the same for the validated backup FSInfo sector.
+        # Maintain real hints in both FSInfo copies. The older guest checker
+        # reports even an unknown (-1) free count as requiring repair.
         fsinfo=struct.unpack_from('<H',self.data,48)[0]
         backup=struct.unpack_from('<H',self.data,50)[0]
         for sector in {fsinfo,backup+fsinfo}:
             off=sector*self.sector
             if 0<sector<self.reserved and self.data[off:off+4]==b'RRaA' and self.data[off+484:off+488]==b'rrAa':
-                struct.pack_into('<II',self.data,off+488,0xffffffff,0xffffffff)
+                struct.pack_into('<II',self.data,off+488,len(self.free),self.free[0] if self.free else 0xffffffff)
         return result
 
     def slots(self, directory):
@@ -157,6 +157,16 @@ class FAT32:
         if len(content)>0xffffffff:raise ValueError('EFI file exceeds FAT32 limit')
         blocks=self.chain(entry[2]) if entry and entry[2] else []
         needed=(len(content)+self.cluster-1)//self.cluster
+        # Replacing the newer donor's kernel with a smaller period build must
+        # shorten the FAT chain as well as the directory size. 10.8 fsck
+        # rejects the previous leftover allocation as superfluous clusters.
+        if needed<len(blocks):
+            released=blocks[needed:];blocks=blocks[:needed]
+            if blocks:self.link(blocks[-1],0x0fffffff)
+            for c in released:
+                self.link(c,0);off=self.offset(c)
+                self.data[off:off+self.cluster]=bytes(self.cluster)
+            self.free.extend(released)
         extra=self.allocate(max(0,needed-len(blocks)))
         if blocks and extra:self.link(blocks[-1],extra[0])
         blocks+=extra

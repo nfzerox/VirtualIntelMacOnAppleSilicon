@@ -26,8 +26,6 @@ while IFS= read -r target; do
     mkdir -p "$stage/payload${target:h}"
     ditto --noextattr --noacl "$payload$target" "$stage/payload$target"
 done < "$pvg_targets"
-# Manifest also makes the individual packaged files auditable without installation.
-(cd "$stage/payload"; find . -type f ! -name manifest.sha256 -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256) > "$output/FILES.sha256"
 COPYFILE_DISABLE=1 tar --exclude payload/manifest.sha256 -cJf "$output/guest-payload.tar.xz" -C "$stage" payload
 for spec in 'metal-function-reflection:metal-access-regression' 'metal-depth-smoke:metal-depth-smoke' 'metal-async-pipeline:metal-async-pipeline' 'guest-compatibility:guest-compatibility'; do
     source_name=${spec%%:*}
@@ -56,6 +54,5 @@ done
         fi
     done
 } > "$output/RELEASE.txt"
-(cd "$output"; shasum -a 256 guest-payload.tar.xz FILES.sha256 RELEASE.txt probes/* > SHA256SUMS)
 print "Release ready: $output"
 print "Packaging scratch retained for inspection: $stage"

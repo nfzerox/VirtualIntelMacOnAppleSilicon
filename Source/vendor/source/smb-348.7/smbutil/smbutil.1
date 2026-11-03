@@ -1,0 +1,78 @@
+.\" $Id: smbutil.1,v 1.6 2006/01/06 07:37:18 lindak Exp $
+.Dd February 14, 2000
+.Dt SMBUTIL 1
+.Os
+.Sh NAME
+.Nm smbutil
+.Nd "interface to the SMB requester"
+.Sh SYNOPSIS
+.Nm
+.Op Fl hv
+.Ar command
+.Op Fl Ar options
+.Op Ar args
+.Sh DESCRIPTION
+The
+.Nm
+command is used to control SMB requester and issue various commands.
+.Pp
+There are two types of options \(em global and local to the specified
+.Ar command .
+.Pp
+Global options are as follows:
+.Bl -tag -width indent
+.It Fl h
+Print a short help message.
+.It Fl v
+Verbose output.
+.El
+.Pp
+The commands and local options are:
+.Bl -tag -width indent
+.It Cm help Ar command
+Print usage information about
+.Ar command .
+.It Xo
+.Cm lookup
+.Op Fl w Ar host
+.Ar name
+.Xc
+Resolve the given
+.Ar name
+to an IP address.
+The NetBIOS name server can be directly specified via the
+.Fl w
+option.
+.It Xo
+.Cm status
+.Ar server
+.Xc
+Resolve given
+.Ar server
+(IP address or DNS name) to NetBIOS workgroup and system name.
+.It Xo
+.Cm view
+.Oo Fl Ar connection_options
+.Oc // Ns Oo Ar domain ;
+.Oc Ns Oo Ar user Ns Oo
+.Pf \: Ar password
+.Oc Ns @ Ns Oc Ar server
+.Xc
+List resources available on the specified
+.Ar server
+for the user
+.Ar user .
+.El
+.Sh FILES
+.Bl -tag -width ".Pa nsmb.conf" -compact
+.It Pa nsmb.conf
+Keeps static parameters for connections and other information.
+See
+.Pa man nsmb.conf
+for details.
+.El
+.Sh AUTHORS
+.An Boris Popov Aq bp@butya.kz ,
+.Aq bp@FreeBSD.org
+.Sh BUGS
+Please report any bugs to Apple.

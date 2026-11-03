@@ -1,0 +1,29 @@
+#!/bin/bash
+# Explicit laboratory artifacts only. NEVER load this into the host kernel.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+sdk="${VIM_OPENGL_SDK:-$root/resources/sdk/MacOSX10.9.sdk}"
+build="${VIM_MEMORY_GATE_BUILD:-$root/Build/PassthroughOpenGLResearch/MemoryAccessGate}"
+cc="${CC:-clang}"
+cxx="${CXX:-clang++}"
+[[ -d "$sdk/System/Library/Frameworks/Kernel.framework/Headers" ]] || { echo 'A period macOS 10.9 kernel SDK is required.' >&2;exit 2; }
+bundle="$build/VIMMemoryGate.kext"
+mkdir -p "$bundle/Contents/MacOS"
+flags=(-arch x86_64 -isysroot "$sdk" -mmacosx-version-min=10.9 -Os -Wall -Wextra -Werror)
+kernel=(-mkernel -fno-builtin -fno-exceptions -fno-rtti -nostdinc -DKERNEL -DKERNEL_PRIVATE -DDRIVER_PRIVATE
+    -isystem "$sdk/System/Library/Frameworks/Kernel.framework/Headers"
+    -isystem "$sdk/System/Library/Frameworks/Kernel.framework/Headers/bsd")
+"$cxx" "${flags[@]}" "${kernel[@]}" -std=gnu++98 -c "$root/probes/opengl-memory-access-gate.cpp" -o "$build/Gate.o"
+"$cc" "${flags[@]}" "${kernel[@]}" -c "$root/probes/opengl-memory-access-gate-kmod.c" -o "$build/Kmod.o"
+"$cxx" "${flags[@]}" -nostdlib -Wl,-kext -Wl,-undefined,dynamic_lookup "$build/Gate.o" "$build/Kmod.o" \
+    -L "$sdk/usr/lib" -lkmod -lcc_kext -o "$bundle/Contents/MacOS/VIMMemoryGate"
+cp "$root/probes/opengl-memory-access-gate-Info.plist" "$bundle/Contents/Info.plist"
+"$cc" "${flags[@]}" -arch i386 "$root/probes/opengl-memory-access-gate.c" -framework IOKit -framework CoreFoundation -o "$build/opengl-memory-access-gate"
+"$cc" "${flags[@]}" -arch i386 "$root/probes/opengl-memory-object-admission.c" -framework IOKit -framework CoreFoundation -o "$build/opengl-memory-object-admission"
+if [[ "${VIM_MEMORY_GATE_GPU:-0}" == 1 ]]; then
+    : "${VIM_PASSTHROUGH_OPENGL_HEADERS:?Set VIM_PASSTHROUGH_OPENGL_HEADERS to the matching generated GL codec directory}"
+    "$cc" "${flags[@]}" -arch i386 -Wno-unused-function -Wno-missing-braces -Wno-missing-field-initializers \
+        -I "$VIM_PASSTHROUGH_OPENGL_HEADERS" "$root/probes/opengl-memory-gpu-handoff.c" -framework IOKit -framework CoreFoundation \
+        -o "$build/opengl-memory-gpu-handoff"
+fi
+printf 'Scratch probe and guest-only kext: %s\nNothing loaded or installed.\n' "$build"

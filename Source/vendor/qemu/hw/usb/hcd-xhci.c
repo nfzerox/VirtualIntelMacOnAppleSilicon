@@ -245,6 +245,7 @@ typedef struct XHCITransfer {
     bool in_xfer;
     bool iso_xfer;
     bool timed_xfer;
+    bool bulk_part;
 
     unsigned int trb_count;
     XHCITRB *trbs;
@@ -280,6 +281,7 @@ struct XHCIEPContext {
     unsigned int max_psize;
     uint32_t state;
     uint32_t kick_active;
+    bool discard_bulk_td;
 
     /* streams */
     unsigned int max_pstreams;
@@ -740,7 +742,8 @@ static TRBType xhci_ring_fetch(XHCIState *xhci, XHCIRing *ring, XHCITRB *trb,
     }
 }
 
-static int xhci_ring_chain_length(XHCIState *xhci, const XHCIRing *ring)
+static int xhci_ring_chain_length(XHCIState *xhci, const XHCIRing *ring,
+                                  unsigned int bulk_mps, bool discard)
 {
     XHCITRB trb;
     int length = 0;
@@ -749,6 +752,7 @@ static int xhci_ring_chain_length(XHCIState *xhci, const XHCIRing *ring)
     /* hack to bundle together the two/three TDs that make a setup transfer */
     bool control_td_set = 0;
     uint32_t link_cnt = 0;
+    uint64_t bulk_bytes = 0;
 
     do {
         TRBType type;
@@ -790,6 +794,20 @@ static int xhci_ring_chain_length(XHCIState *xhci, const XHCIRing *ring)
 
         if (!control_td_set && !(trb.control & TRB_TR_CH)) {
             return length;
+        }
+
+        if (bulk_mps && !control_td_set) {
+            if (type == TR_NORMAL) {
+                bulk_bytes += trb.status & 0x1ffff;
+            } else if (type == TR_EVDATA && (trb.control & TRB_TR_IOC) &&
+                       (discard || (bulk_bytes && bulk_bytes % bulk_mps == 0))) {
+                /*
+                 * An intermediate Event Data TRB can release ring space before
+                 * the producer publishes the end of the TD. A packet-aligned
+                 * prefix can be serviced without injecting a short USB packet.
+                 */
+                return length;
+            }
         }
 
         /*
@@ -1456,6 +1474,7 @@ static TRBCCode xhci_set_ep_dequeue(XHCIState *xhci, unsigned int slotid,
         sctx = NULL;
         xhci_ring_init(xhci, &epctx->ring, dequeue & ~0xF);
         epctx->ring.ccs = dequeue & 1;
+        epctx->discard_bulk_td = false;
     }
 
     xhci_set_ep_state(xhci, epctx, sctx, EP_STOPPED);
@@ -1555,9 +1574,10 @@ static void xhci_xfer_report(XHCITransfer *xfer)
             break;
         }
 
-        if (!reported && ((trb->control & TRB_TR_IOC) ||
-                          (shortpkt && (trb->control & TRB_TR_ISP)) ||
-                          (xfer->status != CC_SUCCESS && left == 0))) {
+        if ((!reported || (xfer->bulk_part && TRB_TYPE(*trb) == TR_EVDATA)) &&
+            ((trb->control & TRB_TR_IOC) ||
+             (shortpkt && (trb->control & TRB_TR_ISP)) ||
+             (xfer->status != CC_SUCCESS && left == 0))) {
             event.slotid = xfer->epctx->slotid;
             event.epid = xfer->epctx->epid;
             event.length = (trb->status & 0x1ffff) - chunk;
@@ -1669,6 +1689,11 @@ static int xhci_try_complete_packet(XHCITransfer *xfer)
         xfer->running_async = 0;
         xfer->running_retry = 0;
         xfer->complete = 1;
+        if (xfer->bulk_part && xfer->packet.status == USB_RET_SUCCESS &&
+            xfer->packet.actual_length < xfer->packet.iov.size) {
+            /* Do not let the rest of this TD consume the next BOT phase. */
+            xfer->epctx->discard_bulk_td = true;
+        }
         xhci_xfer_unmap(xfer);
     }
 
@@ -1714,6 +1739,17 @@ static int xhci_fire_ctl_transfer(XHCIState *xhci, XHCITransfer *xfer)
 
     trace_usb_xhci_xfer_start(xfer, xfer->epctx->slotid,
                               xfer->epctx->epid, xfer->streamid);
+
+    /* A standalone transfer-ring No Op (xHCI 6.4.1.4) has no USB setup
+     * packet. Complete its IOC event without submitting or mapping a packet.
+     * Apple's older driver uses these as endpoint-zero completion fences. */
+    if (xfer->trb_count == 1 && TRB_TYPE(*trb_setup) == TR_NOOP) {
+        xfer->status = CC_SUCCESS;
+        xfer->packet.actual_length = 0;
+        xfer->complete = 1;
+        xhci_xfer_report(xfer);
+        return 0;
+    }
 
     /* at most one Event Data TRB allowed after STATUS */
     if (TRB_TYPE(*trb_status) == TR_EVDATA && xfer->trb_count > 2) {
@@ -1971,9 +2007,20 @@ static void xhci_kick_epctx(XHCIEPContext *epctx, unsigned int streamid)
         return;
     }
 
+    unsigned int bulk_mps = 0;
+    if (xhci->bulk_event_data && !epctx->nr_pstreams &&
+        (epctx->type == ET_BULK_IN || epctx->type == ET_BULK_OUT)) {
+        ep = xhci_epid_to_usbep(epctx);
+        bulk_mps = ep ? ep->max_packet_size : 0;
+        XHCITransfer *last = QTAILQ_LAST(&epctx->transfers);
+        if (bulk_mps && last && last->running_async) {
+            return;
+        }
+    }
     epctx->kick_active++;
     while (1) {
-        length = xhci_ring_chain_length(xhci, ring);
+        length = xhci_ring_chain_length(xhci, ring, bulk_mps,
+                                        epctx->discard_bulk_td);
         if (length <= 0) {
             if (epctx->type == ET_ISO_OUT || epctx->type == ET_ISO_IN) {
                 /* 4.10.3.1 */
@@ -2004,7 +2051,17 @@ static void xhci_kick_epctx(XHCIEPContext *epctx, unsigned int streamid)
         }
         xfer->streamid = streamid;
 
-        if (epctx->epid == 1) {
+        if (bulk_mps) {
+            XHCITRB *last = &xfer->trbs[length - 1];
+            xfer->bulk_part = TRB_TYPE(*last) == TR_EVDATA &&
+                              (last->control & TRB_TR_CH);
+        }
+        if (epctx->discard_bulk_td) {
+            /* Parse-all-event-data is not advertised. The first Event Data
+             * after a short packet was reported by the serviced prefix. */
+            epctx->discard_bulk_td = xfer->bulk_part;
+            xfer->complete = true;
+        } else if (epctx->epid == 1) {
             xhci_fire_ctl_transfer(xhci, xfer);
         } else {
             xhci_fire_transfer(xhci, xfer, epctx);
@@ -2027,6 +2084,9 @@ static void xhci_kick_epctx(XHCIEPContext *epctx, unsigned int streamid)
             DPRINTF("xhci: xfer nacked, stopping schedule\n");
             epctx->retry = xfer;
             xhci_xfer_unmap(xfer);
+            break;
+        }
+        if (bulk_mps && xfer && xfer->running_async) {
             break;
         }
         if (count++ > TRANSFER_LIMIT) {
@@ -3660,6 +3720,7 @@ const VMStateDescription vmstate_xhci = {
 };
 
 static const Property xhci_properties[] = {
+    DEFINE_PROP_BOOL("x-bulk-event-data", XHCIState, bulk_event_data, false),
     DEFINE_PROP_BIT("streams", XHCIState, flags,
                     XHCI_FLAG_ENABLE_STREAMS, true),
     DEFINE_PROP_UINT32("p2",    XHCIState, numports_2, 4),

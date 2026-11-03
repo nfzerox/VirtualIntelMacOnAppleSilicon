@@ -1,5 +1,6 @@
 #import "VIMDownload.h"
 #import "VIMInstallerCatalog.h"
+#import "VIMInstallerSource.h"
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -28,7 +29,7 @@ static NSError *DownloadError(NSString *message) {
 @end
 @implementation VIMDownload
 - (instancetype)initWithSourceURL:(NSURL *)URL directory:(NSURL *)directory error:(NSError **)error {
-    if(![URL.scheme isEqual:@"https"]||![URL.host isEqual:@"swcdn.apple.com"]||URL.user||URL.password||!directory.isFileURL) {
+    if(![VIMInstallerSource isApprovedURL:URL]||!directory.isFileURL) {
         if(error)*error=DownloadError(@"Invalid installer download location.");return nil;
     }
     if((self=[super init])) {
@@ -74,7 +75,10 @@ static NSError *DownloadError(NSString *message) {
     if([self.metadata[@"Complete"] boolValue]) {
         NSDictionary *attributes=[fm attributesOfItemAtPath:self.finishedURL.path error:NULL];
         if([attributes[NSFileType] isEqual:NSFileTypeRegular] && [attributes[NSFileSize] longLongValue]>0 &&
-            [attributes[NSFileSize] isEqual:self.metadata[@"Length"]]) { [self finish:self.finishedURL error:nil];return; }
+            [attributes[NSFileSize] isEqual:self.metadata[@"Length"]]) {
+            if([VIMInstallerSource verifyFile:self.finishedURL source:self.sourceURL error:&error])[self finish:self.finishedURL error:nil];
+            else [self finish:nil error:error];return;
+        }
         if(!finished) {
             // Preparation retired the completed payload. A crash between its
             // unlink and metadata removal must not make this URL unresumable.
@@ -103,6 +107,9 @@ static NSError *DownloadError(NSString *message) {
     NSURL *actual=[VIMInstallerCatalog downloadURLForAppleURL:self.sourceURL];
     NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:actual cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:30];
     [request setValue:@"identity" forHTTPHeaderField:@"Accept-Encoding"];
+    NSDictionary *headers=[VIMInstallerSource headersForURL:self.sourceURL error:&error];
+    if(!headers){[self finish:nil error:error];return;}
+    for(NSString *key in headers)[request setValue:headers[key] forHTTPHeaderField:key];
     if(self.received) {
         [request setValue:[NSString stringWithFormat:@"bytes=%lld-",self.received] forHTTPHeaderField:@"Range"];
         [request setValue:validator forHTTPHeaderField:@"If-Range"];
@@ -135,7 +142,8 @@ static NSError *DownloadError(NSString *message) {
     if(encoding.length && ![encoding.lowercaseString isEqual:@"identity"])valid=NO;
     if(self.total>100LL*1024*1024*1024)valid=NO;
     if(!valid) {
-        self.failure=DownloadError([NSString stringWithFormat:@"The server returned an invalid download response (HTTP %ld).",http.statusCode]);
+        self.failure=[NSError errorWithDomain:@"VirtualIntelMac.Download" code:2 userInfo:@{
+            NSLocalizedDescriptionKey:[NSString stringWithFormat:@"The server returned an invalid download response (HTTP %ld).",http.statusCode]}];
         completionHandler(NSURLSessionResponseCancel);return;
     }
     if(lseek(self.file,self.received,SEEK_SET)<0) {
@@ -168,13 +176,8 @@ static NSError *DownloadError(NSString *message) {
         dispatch_async(dispatch_get_main_queue(), ^{if(self.progress)self.progress(received,total);});
     }
 }
-- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task willPerformHTTPRedirection:(NSHTTPURLResponse *)response newRequest:(NSURLRequest *)request completionHandler:(void (^)(NSURLRequest *))completionHandler {
-    NSURL *URL=request.URL,*original=task.originalRequest.URL;
-    BOOL allowed=([URL.scheme isEqual:@"https"]&&[URL.host isEqual:@"swcdn.apple.com"]&&!URL.user&&!URL.password) ||
-        ([original.scheme isEqual:@"http"]&&[URL.scheme isEqual:original.scheme]&&[URL.host isEqual:original.host]&&[URL.port isEqual:original.port]);
-    if(!allowed)self.failure=DownloadError(@"The installer server redirected to an unapproved location.");
-    completionHandler(allowed?request:nil);
-}
+// Use NSURLSession's ordinary redirect handling. CDN redirects are not a new
+// catalog source; the original source's completed-file checks remain in force.
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
     [self completeTransferWithError:error];
 }
@@ -183,6 +186,10 @@ static NSError *DownloadError(NSString *message) {
     if(self.pausing) { [self finish:nil error:nil];return; }
     if(!error && (!self.accepted || !self.received || (self.total>=0&&self.received!=self.total)))error=DownloadError(@"The installer download did not finish completely.");
     if(!error && fsync(self.file))error=DownloadError(@"Could not flush the completed download to disk.");
+    if(!error && ![VIMInstallerSource verifyFile:self.partialURL source:self.sourceURL error:&error]) {
+        // Retain the failed bytes for diagnosis; never publish them as complete.
+        [self finish:nil error:error];return;
+    }
     if(!error) {
         if(![NSFileManager.defaultManager moveItemAtURL:self.partialURL toURL:self.finishedURL error:&error]) { [self finish:nil error:error];return; }
         self.metadata[@"Complete"]=@YES;self.metadata[@"Length"]=@(self.received);

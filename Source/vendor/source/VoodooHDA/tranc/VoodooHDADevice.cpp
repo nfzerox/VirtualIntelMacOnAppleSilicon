@@ -1595,6 +1595,13 @@ DmaMemory *VoodooHDADevice::allocateDmaMemory(mach_vm_size_t size, const char *d
 	if (!cacheOption) {
 		cacheOption = mInhibitCache ? kIOMapInhibitCache : kIOMapDefaultCache;
     }
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1060
+	/* Darwin9 initWithPhysicalMask explicitly rejects any cache-mode bits
+	 * with a nonzero physical mask (native 9J3050, also XNU1228 source).
+	 * Use coherent default-cache DMA memory while retaining the controller's
+	 * address/alignment mask. Newer kernels keep their requested cache mode. */
+	cacheOption = kIOMapDefaultCache;
+#endif
 	memDesc = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
 			kIOMemoryPhysicallyContiguous | kIODirectionInOut | cacheOption, size, physMask);
 	
@@ -1612,7 +1619,11 @@ DmaMemory *VoodooHDADevice::allocateDmaMemory(mach_vm_size_t size, const char *d
 		goto failed;
 	}
 
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1060
+	segAddr = memDesc->getPhysicalSegment64(0U, &segLength);
+#else
 	segAddr = memDesc->getPhysicalSegment(0U, &segLength, 0U);
+#endif
 	if (!segAddr) {
 		errorMsg("error: IOBufferMemoryDescriptor::getPhysicalSegment failed\n");
 		memDesc->complete();

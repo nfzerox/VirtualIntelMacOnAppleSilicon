@@ -1,6 +1,6 @@
 // Local experiment: compile with -I <qemu>/hw/display, x86_64, Metal/Foundation.
 // Includes the actual implementation so this tests its run-length transfer loop.
-#include "apple-gfx-legacy-shadow.m"
+#include "apple-gfx-opengl-shadow.m"
 #include <mach/mach_vm.h>
 #include <time.h>
 static double now(void) {

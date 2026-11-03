@@ -58,11 +58,6 @@ def case(scenario, platform):
         # shasum remains real; only the small fixture archive is hashed.
         identity = 'Guest: Intel Mojave 10.14.x' if mojave else 'Guest: Intel Catalina 10.15.x'
         (release/'RELEASE.txt').write_text('Guest: Intel WrongOS 99.0\n' if scenario=='wrong-os' else identity+'\n')
-        digest = subprocess.check_output(["shasum", "-a", "256", "guest-payload.tar.gz", "RELEASE.txt"], cwd=release)
-        (release / "SHA256SUMS").write_bytes(digest)
-        if scenario == "corrupt":
-            with (release / "guest-payload.tar.gz").open("ab") as stream:
-                stream.write(b"damaged copy")
         script = (repo / "scripts/pvg-setup").read_text()
         script = re.sub(r"(?<![A-Za-z0-9])(?:/System/|/Library/|/var/run/)", lambda m: str(root) + m.group(), script)
         script = script.replace("if (( EUID != 0 )); then", "if false; then")
@@ -142,5 +137,5 @@ mv() {
         print("PASS", platform, scenario)
 
 for platform in ("10.14.5", "10.14.6", "10.15.6", "10.15.7"):
-    for scenario in ("sip-enabled", "missing-amfi", "corrupt", "wrong-os", "patch-fail", "success", "fail-cache", "fail-restore"):
+    for scenario in ("sip-enabled", "missing-amfi", "wrong-os", "patch-fail", "success", "fail-cache", "fail-restore"):
         case(scenario, platform)

@@ -13,9 +13,10 @@ for attempt in {1..50}; do
     sleep 0.1
 done
 [[ -s "$scratch/port" ]] || { print -u2 "Mirror failed: $scratch/server.log"; exit 1; }
-xcrun clang -fobjc-arc -fmodules -Wall -mmacosx-version-min=26.0 \
-    -I "$root/VirtualIntelMac" -framework Foundation \
+xcrun clang -fobjc-arc -fmodules -Wall -mmacosx-version-min=15.0 \
+    -I "$root/VirtualIntelMac" -framework Foundation -framework Security \
     "$root/probes/installer-download-tests.m" "$root/VirtualIntelMac/VIMDownload.m" \
-    "$root/VirtualIntelMac/VIMInstallerCatalog.m" -o "$root/Build/Probes/installer-download-tests"
+    "$root/VirtualIntelMac/VIMInstallerCatalog.m" "$root/VirtualIntelMac/VIMInstallerSource.m" \
+    -o "$root/Build/Probes/installer-download-tests"
 "$root/Build/Probes/installer-download-tests" "http://127.0.0.1:$(<"$scratch/port")" "$scratch/transfer"
 print "Evidence retained in $scratch"

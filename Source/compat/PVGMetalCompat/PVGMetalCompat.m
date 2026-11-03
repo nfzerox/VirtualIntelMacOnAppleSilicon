@@ -898,11 +898,11 @@ static id pvgExecutableFunction(id device, id function) {
 
     uint16_t airMajor = *(uint16_t *)(functionData + 0x28);
     uint16_t airMinor = *(uint16_t *)(functionData + 0x2a);
-    BOOL legacyAIR = airMajor < 2 || (airMajor == 2 && airMinor <= 2);
+    BOOL openGLAIR = airMajor < 2 || (airMajor == 2 && airMinor <= 2);
     // The proven legacy metadata defect is in Core Image compute kernels.
     // Existing executable render functions have another private library-data
     // representation and must retain their original fast path.
-    if (legacyAIR && (!PVG_REPAIR_LEGACY_AIR ||
+    if (openGLAIR && (!PVG_REPAIR_LEGACY_AIR ||
                       [function functionType] != MTLFunctionTypeKernel)) {
         pvgCompilerTrace("already executable AIR");
         return function;
@@ -927,7 +927,7 @@ static id pvgExecutableFunction(id device, id function) {
         return function;
     }
 #if PVG_REPAIR_LEGACY_AIR
-    if (legacyAIR) {
+    if (openGLAIR) {
         // Native Mojave RTTI confirms two distinct library-data layouts.
         // Only WithSource owns mapped bytes/length at +0x48/+0x50.
         // WithArchive's +0x50 is a pointer, NOT a byte count (MPS uses it).
@@ -1117,7 +1117,7 @@ static id pvgExecutableFunction(id device, id function) {
 
 #if PVG_REPAIR_LEGACY_AIR
     int repairedBuffers = PVGCanonicalizeAIRBuffers(llvmImage, module, context);
-    if (repairedBuffers < 0 || (legacyAIR && repairedBuffers == 0)) {
+    if (repairedBuffers < 0 || (openGLAIR && repairedBuffers == 0)) {
         disposeModule(module);
         disposeBuffer(input);
         disposeContext(context);

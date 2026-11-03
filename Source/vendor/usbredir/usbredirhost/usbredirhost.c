@@ -118,6 +118,8 @@ struct usbredirhost {
     int verbose;
     int flags;
     unsigned int scsi_metadata_left;
+    unsigned int scsi_errors_left;
+    uint32_t uas_to_bot;
     libusb_context *ctx;
     libusb_device *dev;
     libusb_device_handle *handle;
@@ -538,6 +540,7 @@ static int usbredirhost_claim(struct usbredirhost *host, int initial_claim)
 
     /* All interfaces begin at alt setting 0 when (re)claimed */
     memset(host->alt_setting, 0, MAX_INTERFACES);
+    host->uas_to_bot = 0;
 
     host->claimed = 1;
 #if LIBUSBX_API_VERSION >= 0x01000102
@@ -592,6 +595,20 @@ static int usbredirhost_claim(struct usbredirhost *host, int initial_claim)
                 }
                 WARNING("initialized interface %d from host alternate setting %u to 0",
                         n, alternate);
+                const struct libusb_interface *intf = &host->config->interface[i];
+                const struct libusb_interface_descriptor *bot = &intf->altsetting[0];
+                if (bot->bInterfaceClass == 8 && bot->bInterfaceSubClass == 6 &&
+                    bot->bInterfaceProtocol == 0x50) {
+                    for (int j = 0; j < intf->num_altsetting; j++) {
+                        const struct libusb_interface_descriptor *old = &intf->altsetting[j];
+                        if (old->bAlternateSetting == alternate &&
+                            old->bInterfaceClass == 8 && old->bInterfaceSubClass == 6 &&
+                            old->bInterfaceProtocol == 0x62) {
+                            host->uas_to_bot |= (uint32_t)1 << i;
+                            break;
+                        }
+                    }
+                }
             }
         }
 #endif
@@ -724,6 +741,7 @@ struct usbredirhost *usbredirhost_open_full(
     host->disconnected = 1; /* No device is connected initially */
     host->flags = flags;
     host->scsi_metadata_left = (flags & usbredirhost_fl_scsi_metadata) ? 256 : 0;
+    host->scsi_errors_left = (flags & usbredirhost_fl_scsi_metadata) ? 64 : 0;
     host->parser = usbredirparser_create();
     if (!host->parser) {
         log_func(func_priv, usbredirparser_error,
@@ -850,6 +868,52 @@ static int usbredirhost_reset_device(struct usbredirhost *host)
     return 0;
 }
 
+static void usbredirhost_reset_switched_bot(struct usbredirhost *host)
+{
+    if (!host->uas_to_bot) {
+        return;
+    }
+    /* USB-IF Bulk-Only Transport 5.3.4. Darwin's captured-device reset
+     * retains configuration. Clear the transport phase left by the host
+     * UAS driver after switching its actual interface to BOT. */
+    for (int i = 0; i < host->config->bNumInterfaces; i++) {
+        if (!(host->uas_to_bot & ((uint32_t)1 << i))) {
+            continue;
+        }
+        const struct libusb_interface_descriptor *bot =
+            &host->config->interface[i].altsetting[0];
+        uint8_t in = 0, out = 0;
+        for (int j = 0; j < bot->bNumEndpoints; j++) {
+            const struct libusb_endpoint_descriptor *ep = &bot->endpoint[j];
+            if ((ep->bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) != LIBUSB_TRANSFER_TYPE_BULK) {
+                continue;
+            }
+            if (ep->bEndpointAddress & LIBUSB_ENDPOINT_IN) {
+                in = ep->bEndpointAddress;
+            } else {
+                out = ep->bEndpointAddress;
+            }
+        }
+        if (!in || !out) {
+            continue;
+        }
+        int r = libusb_control_transfer(host->handle,
+            LIBUSB_ENDPOINT_OUT | LIBUSB_REQUEST_TYPE_CLASS | LIBUSB_RECIPIENT_INTERFACE,
+            0xff, 0, bot->bInterfaceNumber, NULL, 0, 1000);
+        if (!r) {
+            r = libusb_clear_halt(host->handle, in);
+        }
+        if (!r) {
+            r = libusb_clear_halt(host->handle, out);
+        }
+        if (r) {
+            WARNING("BOT transport reset on interface %u: %s",
+                    bot->bInterfaceNumber, libusb_error_name(r));
+        }
+    }
+    host->uas_to_bot = 0;
+}
+
 USBREDIR_VISIBLE
 int usbredirhost_set_device(struct usbredirhost *host,
                              libusb_device_handle *usb_dev_handle)
@@ -886,6 +950,7 @@ int usbredirhost_set_device(struct usbredirhost *host,
         return libusb_status_or_error_to_redir_status(host, r);
     }
 
+    usbredirhost_reset_switched_bot(host);
     usbredirhost_send_device_connect(host);
 
     return usb_redir_success;
@@ -2254,13 +2319,14 @@ static void usbredirhost_control_packet(void *priv, uint64_t id,
 /* Opt-in metadata only. UAS pipe-usage descriptors, not hard-coded endpoint
    numbers, distinguish command/status IUs from file data. No CDB address,
    inquiry strings, blocks or payload dumps are recorded. */
-static void usbredirhost_trace_uas(struct usbredirhost *host, uint64_t id,
+static void usbredirhost_trace_scsi(struct usbredirhost *host, uint64_t id,
     const struct usb_redir_bulk_packet_header *packet,
-    const uint8_t *data, int length, bool completed)
+    const uint8_t *data, int length, bool completed, int requested, int native_status)
 {
     int i, j, k, pipe = 0;
     const struct libusb_interface_descriptor *intf;
-    if (!host->scsi_metadata_left || !host->config)
+    bool usb_error = completed && packet->status != usb_redir_success;
+    if ((!host->scsi_metadata_left && !(usb_error && host->scsi_errors_left)) || !host->config)
         return;
     i = usbredirhost_bInterfaceNumber_to_index(host,
         host->endpoint[EP2I(packet->endpoint)].interface);
@@ -2270,24 +2336,27 @@ static void usbredirhost_trace_uas(struct usbredirhost *host, uint64_t id,
     if (intf->bInterfaceClass == 8 && intf->bInterfaceProtocol == 0x50) {
         /* Command/status envelopes only. Never log file data, LBA, inquiry
          * strings or arbitrary bulk bytes, even when tracing is enabled. */
-        if (!completed && !(packet->endpoint & 0x80) && data && length == 31 &&
+        if (usb_error && host->scsi_errors_left) {
+            host->scsi_errors_left--;
+            INFO("BOT USB error wire=%"PRIu64" ep=%02x requested=%d actual=%d usb=%u libusb=%d",
+                 id, packet->endpoint, requested, length, packet->status, native_status);
+        } else if (host->scsi_metadata_left &&
+            !completed && !(packet->endpoint & 0x80) && data && length == 31 &&
             memcmp(data, "USBC", 4) == 0) {
             host->scsi_metadata_left--;
             INFO("BOT command wire=%"PRIu64" op=%02x direction=%s",
                  id, data[15], (data[12] & 0x80) ? "in" : "out");
-        } else if (completed && (packet->endpoint & 0x80) && data &&
+        } else if (host->scsi_metadata_left &&
+                   completed && (packet->endpoint & 0x80) && data &&
                    length == 13 && memcmp(data, "USBS", 4) == 0) {
             host->scsi_metadata_left--;
             INFO("BOT status wire=%"PRIu64" scsi=%u usb=%u",
                  id, data[12], packet->status);
-        } else if (completed && packet->status != usb_redir_success) {
-            host->scsi_metadata_left--;
-            INFO("BOT error wire=%"PRIu64" ep=%02x length=%d usb=%u",
-                 id, packet->endpoint, length, packet->status);
         }
         return;
     }
-    if (intf->bInterfaceClass != 8 || intf->bInterfaceSubClass != 6 ||
+    if (!host->scsi_metadata_left ||
+        intf->bInterfaceClass != 8 || intf->bInterfaceSubClass != 6 ||
         intf->bInterfaceProtocol != 0x62)
         return;
     for (j = 0; j < intf->bNumEndpoints; j++) {
@@ -2344,8 +2413,9 @@ static void LIBUSB_CALL usbredirhost_bulk_packet_complete(
                                                   libusb_transfer->status);
     bulk_packet.length = libusb_transfer->actual_length;
     bulk_packet.length_high = libusb_transfer->actual_length >> 16;
-    usbredirhost_trace_uas(host, transfer->id, &bulk_packet,
-                          libusb_transfer->buffer, libusb_transfer->actual_length, true);
+    usbredirhost_trace_scsi(host, transfer->id, &bulk_packet,
+                           libusb_transfer->buffer, libusb_transfer->actual_length,
+                           true, libusb_transfer->length, libusb_transfer->status);
 
     DEBUG("bulk complete ep %02X status %d len %d id %"PRIu64,
           bulk_packet.endpoint, bulk_packet.status,
@@ -2409,8 +2479,8 @@ static void usbredirhost_bulk_packet(void *priv, uint64_t id,
         return;
     }
 
-    usbredirhost_trace_uas(host, id, bulk_packet, data,
-                          (ep & LIBUSB_ENDPOINT_IN) ? len : data_len, false);
+    usbredirhost_trace_scsi(host, id, bulk_packet, data,
+                           (ep & LIBUSB_ENDPOINT_IN) ? len : data_len, false, 0, 0);
 
     if (ep & LIBUSB_ENDPOINT_IN) {
         data = malloc(len);

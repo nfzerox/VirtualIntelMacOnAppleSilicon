@@ -166,6 +166,7 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
 @property BOOL libraryLoaded;
 @property BOOL presentedEmptyCreation;
 @property BOOL wantsLibraryWindow;
+@property BOOL libraryRequestedExplicitly;
 @property NSSize automaticContentSize;
 @end
 
@@ -315,7 +316,7 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
 - (void)controlTextDidChange:(NSNotification *)notification {[self applyFilter];}
 - (void)newMac:(id)sender {[VIMNewMachineWindow showWithInstaller:nil guest:nil];}
 - (void)refresh:(id)sender {[self reloadLibrary];}
-- (void)showLibrary {self.wantsLibraryWindow=YES;[self reloadLibrary];}
+- (void)showLibrary {self.wantsLibraryWindow=YES;self.libraryRequestedExplicitly=YES;[self reloadLibrary];}
 - (NSString *)catalogKey {return [@"VIMLibraryKnown-" stringByAppendingString:VIMLibraryLocation.currentURL.path];}
 - (NSString *)orderKey {return [@"VIMLibraryOrder-" stringByAppendingString:VIMLibraryLocation.currentURL.path];}
 - (void)registerPackageURL:(NSURL *)URL {
@@ -388,7 +389,15 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
         for(NSString *path in paths) {
             NSURL *URL=[NSURL fileURLWithPath:path];NSError *failure=nil;VIMMachine *machine=[VIMMachine loadURL:URL error:&failure];
             if(machine) {
-                [machine applyPendingChanges:nil];
+                // A normal library scan is read-only. Taking every stopped
+                // VM's session lock here races the reboot handoff's next
+                // launch. Only queued edits or the old UUID/name migration
+                // need maintenance; ordinary named packages need neither.
+                BOOL oldName=machine.configuration[@"Name"]&&
+                    [[NSUUID alloc] initWithUUIDString:machine.URL.lastPathComponent.stringByDeletingPathExtension];
+                if(oldName||[NSFileManager.defaultManager fileExistsAtPath:
+                    [machine.URL URLByAppendingPathComponent:@"State/PendingConfiguration.plist"].path])
+                    [machine applyPendingChanges:nil];
                 [machines addObject:machine];NSString *identifier=machine.configuration[@"Identifier"]?:path;[identifiers addObject:identifier];
                 updated[machine.URL.path]=@{@"Name":machine.name,@"Guest":machine.guest,@"Identifier":identifier};
             } else {
@@ -464,7 +473,15 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
     if(!self.libraryLoaded||!self.view.window)return;
     if(self.machines.count) {
         self.presentedEmptyCreation=NO;
-        if(self.wantsLibraryWindow){self.wantsLibraryWindow=NO;[self.view.window makeKeyAndOrderFront:nil];}
+        if(self.wantsLibraryWindow){
+            BOOL anotherWindow=NO;
+            for(NSWindow *window in NSApp.windows)if(window!=self.view.window&&window.visible&&window.level==NSNormalWindowLevel)anotherWindow=YES;
+            // Background library scanning must not cover a creation/progress
+            // window opened by a launch argument. An explicit Library action
+            // still brings it forward, even while another window is open.
+            if(self.libraryRequestedExplicitly||!anotherWindow)[self.view.window makeKeyAndOrderFront:nil];
+            self.wantsLibraryWindow=NO;self.libraryRequestedExplicitly=NO;
+        }
     } else {
         [self.view.window orderOut:nil];
         if(!self.presentedEmptyCreation){self.presentedEmptyCreation=YES;[VIMNewMachineWindow showWithInstaller:nil guest:nil];}
@@ -502,7 +519,11 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
     NSTextField *specifications=[VIMLibraryLabel labelWithString:resources?:@"Unavailable"];
     specifications.font=[NSFont systemFontOfSize:self.compact?11:12];specifications.textColor=NSColor.secondaryLabelColor;
     specifications.lineBreakMode=NSLineBreakByTruncatingTail;specifications.toolTip=resources;cell.specifications=specifications;
-    NSString *action=unavailable?@"Locate":(running?@"Show":(machine.requiresInstallerDisplay?@"Continue Setup":@"Start"));
+    // OpenGL desktops keep the SVGA display adapter after setup. Adapter
+    // selection is not evidence that those installed Macs still need setup.
+    BOOL continuingSetup=!unavailable&&(machine.preMetalGuest?
+        ![machine.configuration[@"InstallState"]?:@"installed" isEqual:@"installed"]:machine.requiresInstallerDisplay);
+    NSString *action=unavailable?@"Locate":(running?@"Show":(continuingSetup?@"Continue Setup":@"Start"));
     VIMPlayButton *start=[VIMPlayButton new];start.target=self;start.action=@selector(rowStart:);start.controlDiameter=self.compact?40:58;start.glyphScale=1.35;start.tag=row;start.contentTintColor=NSColor.labelColor;
     start.accessibilityLabel=[NSString stringWithFormat:@"%@ %@",action,machine.name];start.toolTip=start.accessibilityLabel;cell.primary=start;
     NSButton *configure=[NSButton buttonWithImage:VIMLibrarySymbol(@"gearshape",20) target:self action:@selector(rowConfigure:)];

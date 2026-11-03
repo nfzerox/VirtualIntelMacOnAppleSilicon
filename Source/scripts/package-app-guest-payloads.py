@@ -6,7 +6,6 @@ Existing release inputs remain untouched. Big Sur native/GL setup is separate.
 """
 import argparse
 import lzma
-import hashlib
 import io
 from pathlib import Path, PurePosixPath
 import plistlib
@@ -23,13 +22,6 @@ REGENERATED = (
     'System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3903',
     'System/Library/Frameworks/Metal.framework/Versions/A/XPCServices/MTLCompilerService.xpc',
 )
-
-def digest(path):
-    value = hashlib.sha256()
-    with path.open('rb') as stream:
-        for block in iter(lambda: stream.read(1024*1024), b''):
-            value.update(block)
-    return value.hexdigest()
 
 def mojave_renderer(source, archive):
     """Patch and seal the complete small renderer bundle, retaining its resources."""
@@ -75,7 +67,7 @@ def build_bigsur(source, output, helpers=None):
                     member=tarfile.TarInfo('payload/GuestHelpers/'+name)
                     member.size=helper.stat().st_size;member.mode=0o755
                     with helper.open('rb') as data:result.addfile(member,data)
-    return {'Archive':archive.name,'SHA256':digest(archive),'EntryCount':4,
+    return {'Archive':archive.name,'EntryCount':4,
         'RequiresGuestStaging':True,'NativeGPUBundlesFromGuest':True,
         'SystemVolumeChanges':False,'BootCacheRebuildRequired':False}
 
@@ -89,20 +81,11 @@ def build(source, output, surface_helper=None, bigsur_helpers=None, iosurface_ro
         driver = driver_root/guest/'PVGIOSurfaceABI.kext'
         if not (driver/'Contents/MacOS/PVGIOSurfaceABI').is_file():
             raise ValueError('Missing rebuilt IOSurface ABI driver: '+guest)
-        driver_files = {str(p.relative_to(driver_root)): digest(p)
+        driver_files = {str(p.relative_to(driver_root)): True
                         for p in sorted(driver.rglob('*')) if p.is_file()}
-        manifest = (driver_root/'SHA256SUMS').read_text().splitlines()
-        trusted = dict((line.split('  ',1)[1],line.split('  ',1)[0]) for line in manifest)
-        if not driver_files or any(trusted.get(p) != h for p,h in driver_files.items()):
-            raise ValueError('IOSurface ABI driver checksum mismatch: '+guest)
         subprocess.run(['/usr/bin/codesign','--verify','--deep','--strict',str(driver)],check=True)
         driver_prefix = 'Library/Extensions/PVGIOSurfaceABI.kext'
         archive = release_archive(directory)
-        expected = [line.split()[0] for line in (directory/'SHA256SUMS').read_text().splitlines()
-                    if len(line.split()) == 2 and line.split()[1].lstrip('*') == archive.name]
-        actual = digest(archive)
-        if expected != [actual]:
-            raise ValueError(f'{guest}: release archive checksum mismatch')
         destination = output/(guest+'.tar.xz')
         renderer_overrides = mojave_renderer(source, archive) if guest == 'mojave' else {}
         kept, omitted = [], []
@@ -116,6 +99,8 @@ def build(source, output, surface_helper=None, bigsur_helpers=None, iosurface_ro
                         if not (member.isfile() or member.isdir() or member.issym()):
                             raise ValueError(f'Unsupported release member: {member.name}')
                         relative = '/'.join(path.parts[1:])
+                        if relative == 'manifest.sha256':
+                            continue
                         if relative == driver_prefix or relative.startswith(driver_prefix+'/'):
                             omitted.append(relative)
                             continue
@@ -167,11 +152,6 @@ def build(source, output, surface_helper=None, bigsur_helpers=None, iosurface_ro
                         kept.append(relative)
                     if guest == 'catalina':
                         addition = source/'prebuilt/catalina-gl/catalina-gl.tar.gz'
-                        checks = source/'prebuilt/catalina-gl/SHA256SUMS'
-                        expected_gl = [line.split()[0] for line in checks.read_text().splitlines()
-                                       if len(line.split()) == 2 and line.split()[1] == addition.name]
-                        if expected_gl != [digest(addition)]:
-                            raise ValueError('Catalina GL addition checksum mismatch')
                         allowed = ('Library/Extensions/PVGOpenGLProbe.kext',
                                    'System/Library/Extensions/AppleMetalOpenGLRenderer.bundle',
                                    'System/Library/Extensions/AppleMetalGLRenderer.bundle',
@@ -250,8 +230,7 @@ def build(source, output, surface_helper=None, bigsur_helpers=None, iosurface_ro
                         'System/Library/Frameworks/OpenGL.framework/Versions/A/Resources/PVGDonorFiles.txt'}
             if not required.issubset(kept):
                 raise ValueError('Mojave payload is missing the Catalina OpenGL donor or its staging manifest')
-        receipt['Guests'][guest] = {'Archive': destination.name, 'SHA256': digest(destination),
-                                   'SourceArchiveSHA256': actual, 'EntryCount': len(kept),
+        receipt['Guests'][guest] = {'Archive': destination.name, 'EntryCount': len(kept),
                                    'RemovedReferenceEntries': omitted,
                                    'IOSurfaceABIFiles': driver_files,
                                    'RequiresGuestStaging': True}

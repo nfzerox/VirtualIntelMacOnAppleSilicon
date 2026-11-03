@@ -72,7 +72,7 @@ static BOOL HasDependency(NSData *data,const char *wanted) {
     Require(at==end&&matches<=1,@"Ambiguous dependency commands");return matches==1;
 }
 int main(int argc,const char **argv){@autoreleasepool {@try {
-    Require(argc==2&&(!strcmp(argv[1],"--check")||!strcmp(argv[1],"--apply")),@"Usage: repair-legacy-mojave-helper --check|--apply");
+    Require(argc==2&&(!strcmp(argv[1],"--check")||!strcmp(argv[1],"--apply")),@"Usage: repair-opengl-mojave-helper --check|--apply");
     BOOL apply=!strcmp(argv[1],"--apply");
     NSDictionary *version=[NSDictionary dictionaryWithContentsOfFile:@"/System/Library/CoreServices/SystemVersion.plist"];
     Require([version[@"ProductVersion"] hasPrefix:@"10.14."]&&[KernelBuild() isEqual:version[@"ProductBuildVersion"]],@"Run only in an installed matching Mojave guest, never on the host");
@@ -97,7 +97,7 @@ int main(int argc,const char **argv){@autoreleasepool {@try {
         for(NSString *parent in @[@"/usr",@"/usr/lib",@"/private/var/db"]) {
             struct stat st;Require(!lstat(parent.fileSystemRepresentation,&st)&&S_ISDIR(st.st_mode)&&st.st_uid==0&&!(st.st_mode&0022),@"Unsafe system parent directory");
         }
-        char directory[]="/private/var/db/VirtualIntelMac.LegacySurface.XXXXXX";
+        char directory[]="/private/var/db/VirtualIntelMac.OpenGLSurface.XXXXXX";
         Require(mkdtemp(directory)!=NULL,@"Cannot create private repair staging");
         NSURL *base=[NSURL fileURLWithPath:@(directory)],*payload=[base URLByAppendingPathComponent:@"Payload"];
         NSURL *replacement=[payload URLByAppendingPathComponent:@"usr/lib/PVGGLIOKit.dylib"],*journal=[base URLByAppendingPathComponent:@"Transaction.plist"];
@@ -109,7 +109,7 @@ int main(int argc,const char **argv){@autoreleasepool {@try {
         // Never replace an existing library, even if it appeared during staging.
         Require(lstat(target.fileSystemRepresentation,&targetInfo)!=0&&errno==ENOENT,@"Destination appeared; nothing published");
         VIMFileTransaction *transaction=[VIMFileTransaction createAtURL:journal root:[NSURL fileURLWithPath:@"/"] payload:payload
-            targets:@[@"usr/lib/PVGGLIOKit.dylib"] metadata:@{@"Operation":@"legacy-surface-helper-alias",@"ProductBuildVersion":version[@"ProductBuildVersion"]} error:&error];
+            targets:@[@"usr/lib/PVGGLIOKit.dylib"] metadata:@{@"Operation":@"opengl-surface-helper-alias",@"ProductBuildVersion":version[@"ProductBuildVersion"]} error:&error];
         Require(transaction!=nil,error.localizedDescription);
         Require([transaction.state[@"Entries"] count]==1&&
             [transaction.state[@"Entries"][0][@"OriginalPresent"] isEqual:@NO],@"Destination appeared while planning; nothing published");

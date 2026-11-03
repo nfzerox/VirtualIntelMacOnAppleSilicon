@@ -43,6 +43,7 @@ struct ISASerialState {
     uint32_t index;
     uint32_t iobase;
     uint32_t isairq;
+    bool acpi_irq_edge;
     SerialState state;
 };
 
@@ -92,8 +93,15 @@ static void serial_isa_build_aml(AcpiDevAmlIf *adev, Aml *scope)
 
     crs = aml_resource_template();
     aml_append(crs, aml_io(AML_DECODE16, isa->iobase, isa->iobase, 0x00, 0x08));
-    aml_append(crs, aml_irq(isa->isairq, AML_LEVEL, AML_ACTIVE_LOW,
-                            AML_SHARED));
+    /* Some period ISA drivers assume the original PC edge-triggered UART
+     * contract even when their ACPI layer programs the supplied descriptor.
+     * Keep the upstream shared-level profile by default; a machine choosing
+     * dedicated IRQ3/4 can explicitly publish the edge/high/exclusive form.
+     * This changes discovery metadata, not FIFO or interrupt-ack semantics. */
+    aml_append(crs, aml_irq(isa->isairq,
+                           isa->acpi_irq_edge ? AML_EDGE : AML_LEVEL,
+                           isa->acpi_irq_edge ? AML_ACTIVE_HIGH : AML_ACTIVE_LOW,
+                           isa->acpi_irq_edge ? AML_EXCLUSIVE : AML_SHARED));
 
     dev = aml_device("COM%d", isa->index + 1);
     aml_append(dev, aml_name_decl("_HID", aml_eisaid("PNP0501")));
@@ -118,6 +126,7 @@ static const Property serial_isa_properties[] = {
     DEFINE_PROP_UINT32("index",  ISASerialState, index,   -1),
     DEFINE_PROP_UINT32("iobase",  ISASerialState, iobase,  -1),
     DEFINE_PROP_UINT32("irq",    ISASerialState, isairq,  -1),
+    DEFINE_PROP_BOOL("acpi-irq-edge", ISASerialState, acpi_irq_edge, false),
 };
 
 static void serial_isa_class_initfn(ObjectClass *klass, const void *data)

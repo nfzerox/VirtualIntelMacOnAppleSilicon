@@ -733,7 +733,7 @@ static Aml *build_q35_routing_table(const char *str)
     return pkg;
 }
 
-static void build_q35_pci0_int(Aml *table)
+static void build_q35_pci0_int(Aml *table, bool native_only_pirq_f)
 {
     Aml *method;
     Aml *sb_scope = aml_scope("_SB");
@@ -741,9 +741,40 @@ static void build_q35_pci0_int(Aml *table)
 
     /* Zero => PIC mode, One => APIC Mode */
     aml_append(table, aml_name_decl("PICF", aml_int(0)));
-    method = aml_method("_PIC", 1, AML_NOTSERIALIZED);
+    if (native_only_pirq_f) {
+        aml_append(table, aml_name_decl("VPFS", aml_int(0)));
+        aml_append(table, aml_name_decl("VPFV", aml_int(0)));
+    }
+    method = aml_method("_PIC", 1, native_only_pirq_f ?
+                        AML_SERIALIZED : AML_NOTSERIALIZED);
     {
         aml_append(method, aml_store(aml_arg(0), aml_name("PICF")));
+        if (native_only_pirq_f) {
+            /* Local Q35/Mavericks compatibility experiment, not a GL
+             * scheduling exception. Graphics/EHCI use GSI21; SATA still
+             * needs its OTHER PIRQ's legacy route. Never mask all PICs.
+             * Only take ownership of a route we actually changed, and
+             * restore it on _PIC(0) only if nobody changed it meanwhile. */
+            Aml *route = aml_name("\\_SB.PRQF");
+            Aml *apic = aml_if(aml_equal(aml_arg(0), aml_int(1)));
+            Aml *enabled = aml_if(aml_equal(
+                aml_and(route, aml_int(0x80), NULL), aml_int(0)));
+            aml_append(enabled, aml_store(route, aml_name("VPFS")));
+            aml_append(enabled, aml_store(aml_int(1), aml_name("VPFV")));
+            aml_append(enabled, aml_or(route, aml_int(0x80), route));
+            aml_append(apic, enabled);
+            aml_append(method, apic);
+
+            Aml *pic = aml_if(aml_equal(aml_arg(0), aml_int(0)));
+            Aml *owned = aml_if(aml_name("VPFV"));
+            Aml *unchanged = aml_if(aml_equal(route,
+                aml_or(aml_name("VPFS"), aml_int(0x80), NULL)));
+            aml_append(unchanged, aml_store(aml_name("VPFS"), route));
+            aml_append(owned, unchanged);
+            aml_append(owned, aml_store(aml_int(0), aml_name("VPFV")));
+            aml_append(pic, owned);
+            aml_append(method, pic);
+        }
     }
     aml_append(table, method);
 
@@ -942,7 +973,10 @@ build_dsdt(GArray *table_data, BIOSLinker *linker,
         if (pm->pcihp_bridge_en) {
             build_acpi_pci_hotplug(dsdt, AML_SYSTEM_IO, pm->pcihp_io_base);
         }
-        build_q35_pci0_int(dsdt);
+        Object *lpc = object_resolve_type_unambiguous(TYPE_ICH9_LPC_DEVICE,
+                                                     NULL);
+        build_q35_pci0_int(dsdt, object_property_get_bool(lpc,
+                            "x-apic-pirq-f-native-only", &error_abort));
     }
 
     if (misc->has_hpet) {

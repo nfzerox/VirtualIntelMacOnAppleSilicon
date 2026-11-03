@@ -164,7 +164,8 @@ static void usb_xhci_pci_realize(struct PCIDevice *dev, Error **errp)
     }
     pci_register_bar(dev, 0,
                      PCI_BASE_ADDRESS_SPACE_MEMORY |
-                     PCI_BASE_ADDRESS_MEM_TYPE_64,
+                     (s->bar_32bit ? PCI_BASE_ADDRESS_MEM_TYPE_32 :
+                                     PCI_BASE_ADDRESS_MEM_TYPE_64),
                      &s->xhci.mem);
 
     if (pci_bus_is_express(pci_get_bus(dev))) {
@@ -239,6 +240,7 @@ static const Property xhci_pci_properties[] = {
     DEFINE_PROP_ON_OFF_AUTO("msix", XHCIPciState, msix, ON_OFF_AUTO_AUTO),
     DEFINE_PROP_BOOL("conditional-intr-mapping", XHCIPciState,
                      conditional_intr_mapping, false),
+    DEFINE_PROP_BOOL("x-bar-32bit", XHCIPciState, bar_32bit, false),
 };
 
 static void xhci_class_init(ObjectClass *klass, const void *data)

@@ -1,0 +1,67 @@
+#!/bin/bash
+# Compile Leopard's cold control/account services and unprivileged fixtures.
+# This is not a complete guest-support package or authorization to install it.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+: "${VIM_LEOPARD_SDK:?Set VIM_LEOPARD_SDK to the actual MacOSX10.5.sdk}"
+: "${VIM_OPENGL_AGENT_BUILD:?Set VIM_OPENGL_AGENT_BUILD to a derived output directory}"
+cc="${VIM_OPENGL_CC:-$root/resources/xcode/XcodeMojave.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang}"
+output="$VIM_OPENGL_AGENT_BUILD"
+mkdir -p "$output"
+flags=(-O2 -arch x86_64 -isysroot "$VIM_LEOPARD_SDK" -mmacosx-version-min=10.5 -fno-objc-arc
+    -Wall -Wextra -Werror -Wno-deprecated-declarations)
+"$cc" "${flags[@]}" -Wno-error -Wno-deprecated-objc-isa-usage -c "$root/vendor/source/JSONKit/JSONKit.m" -o "$output/JSONKit.o"
+"$cc" "${flags[@]}" -c "$root/tools/opengl-period-foundation.m" -o "$output/PeriodFoundation.o"
+"$cc" "${flags[@]}" -c "$root/tools/opengl-leopard-directory.m" -o "$output/Directory.o"
+"$cc" "${flags[@]}" -include "$root/tools/opengl-period-foundation.h" "$root/tools/opengl-create-account.m" \
+    "$output/JSONKit.o" "$output/PeriodFoundation.o" "$output/Directory.o" \
+    -framework Foundation -framework DirectoryService -framework IOKit -framework DiskArbitration -framework SystemConfiguration \
+    -framework CoreServices -framework Security -o "$output/opengl-create-account"
+codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/opengl-create-account"
+codesign --verify --strict "$output/opengl-create-account"
+for pair in 'tools/opengl-guest-agent.m opengl-guest-agent' 'probes/opengl-period-agent-control.m period-agent-control' \
+    'tools/opengl-desktop-status.m opengl-desktop-status' \
+    'tools/guest-display.m guest-display' 'tools/guest-host-connection.m guest-host-connection' \
+    'tools/opengl-install-bootstrap.m opengl-install-bootstrap' 'tools/opengl-setup-status.m opengl-setup-status' \
+    'tools/opengl-file-sharing.m opengl-file-sharing'; do
+    unit="${pair% *}";name="${pair##* }"
+    "$cc" "${flags[@]}" -include "$root/tools/opengl-period-foundation.h" "$root/$unit" \
+        "$output/JSONKit.o" "$output/PeriodFoundation.o" -framework Foundation -framework IOKit -framework SystemConfiguration \
+        -framework ApplicationServices -framework DiskArbitration -framework CoreServices -framework Security -o "$output/$name"
+    codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/$name"
+    codesign --verify --strict "$output/$name"
+    if nm -u "$output/$name" | grep -E '(_dispatch_|_Block_|_NSConcrete.*Block)' ; then
+        echo 'Leopard control must not import libdispatch or the Blocks runtime.' >&2;exit 1
+    fi
+done
+"$cc" "${flags[@]}" -DVIM_OPENGL_GUEST=1 -include "$root/tools/opengl-period-foundation.h" \
+    "$root/tools/guest-clipboard.m" "$output/JSONKit.o" "$output/PeriodFoundation.o" \
+    -framework AppKit -framework IOKit -o "$output/guest-clipboard"
+codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/guest-clipboard"
+codesign --verify --strict "$output/guest-clipboard"
+if nm -u "$output/guest-clipboard" | grep -E '(_dispatch_|_Block_|_NSConcrete.*Block)' ; then
+    echo 'Leopard clipboard must use native threads, not GCD or Blocks.' >&2;exit 1
+fi
+"$cc" "${flags[@]}" "$root/tools/opengl-audio-defaults.c" -framework CoreAudio \
+    -framework CoreFoundation -framework IOKit -o "$output/opengl-audio-defaults"
+"$cc" "${flags[@]}" "$root/tools/opengl-installer-launch.c" -o "$output/opengl-installer-launch"
+"$cc" "${flags[@]}" -DkCGLPFASupportsAutomaticGraphicsSwitching=101 \
+    "$root/probes/opengl-gl-compatibility-core.c" -framework OpenGL -framework ApplicationServices -o "$output/opengl-graphics-check"
+for name in opengl-audio-defaults opengl-installer-launch opengl-graphics-check; do
+    codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/$name"
+    codesign --verify --strict "$output/$name"
+done
+"$cc" "${flags[@]}" -arch i386 -dynamiclib -include "$root/tools/opengl-period-foundation.h" \
+    "$root/tools/opengl-installer-automation.m" -framework AppKit -framework DiskArbitration \
+    -install_name @rpath/opengl-installer-automation.dylib -o "$output/opengl-installer-automation.dylib"
+codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/opengl-installer-automation.dylib"
+codesign --verify --strict "$output/opengl-installer-automation.dylib"
+if nm -u "$output/opengl-installer-automation.dylib" | grep -E '(_dispatch_|_Block_|_NSConcrete.*Block|_objc_(get|set)AssociatedObject)' ; then
+    echo 'Leopard installer adapter must not import later runtime APIs.' >&2;exit 1
+fi
+"$cc" "${flags[@]}" "$root/PassthroughOpenGL/opengl-display-agent.m" -o "$output/opengl-display-agent"
+codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/opengl-display-agent"
+codesign --verify --strict "$output/opengl-display-agent"
+python3 "$root/scripts/build-leopard-samba.py" --output "$output/LeopardSMB"
+python3 "$root/scripts/build-tiger-smb-client.py" --guest leopard --output "$output/LeopardSMBClient"
+echo "$output"

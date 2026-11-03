@@ -1,0 +1,7 @@
+JSONKit 1.4, commit 82157634ca0ca5b6a4a67a194dd11f15d9b72835
+https://github.com/johnezang/JSONKit
+
+JSONKit.h and JSONKit.m copied unmodified, without a nested Git repository.
+BSD license chosen; complete license text is retained at the top of each file.
+Only compiled into Snow Leopard's cold guest-control tools because the native
+10.6 Foundation has no NSJSONSerialization. Not used by host or GL hot paths.

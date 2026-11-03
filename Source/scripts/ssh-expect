@@ -25,6 +25,22 @@ if {[info exists env(PVG_SSH_CONNECT_TIMEOUT)]} {
     }
 }
 set ssh_options [list -o StrictHostKeyChecking=accept-new -o "ConnectTimeout=$connect_timeout"]
+if {[info exists env(PVG_SSH_PORT)]} {
+    set port $env(PVG_SSH_PORT)
+    if {![string is integer -strict $port] || $port < 1 || $port > 65535} {
+        puts stderr "PVG_SSH_PORT must be 1..65535"
+        exit 64
+    }
+    lappend ssh_options -p $port
+}
+if {[info exists env(PVG_SSH_PERIOD_COMPAT)] && $env(PVG_SSH_PERIOD_COMPAT) eq "1"} {
+    lappend ssh_options -o HostKeyAlgorithms=+ssh-rsa -o KexAlgorithms=+diffie-hellman-group1-sha1
+}
+if {[info exists env(PVG_SSH_HOST_KEY_ALIAS)] && $env(PVG_SSH_HOST_KEY_ALIAS) ne ""} {
+    # One physical reference may boot several OS disks with distinct keys.
+    # Keep their trust records separate rather than deleting another OS's key.
+    lappend ssh_options -o "HostKeyAlias=$env(PVG_SSH_HOST_KEY_ALIAS)"
+}
 if {[info exists env(PVG_SSH_CONTROL_PATH)]} {
     lappend ssh_options -o ControlMaster=auto -o ControlPersist=300 \
         -o "ControlPath=$env(PVG_SSH_CONTROL_PATH)"

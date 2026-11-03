@@ -8,6 +8,8 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <servers/bootstrap.h>
+#include "../PassthroughOpenGL/display-surface-message.h"
 typedef struct { uint32_t magic, operation; uint64_t sequence;
     uint32_t width,height,stride,reserved; } Message;
 static void check(BOOL value, const char *message) {
@@ -146,12 +148,91 @@ int main(void) { @autoreleasepool {
             });
             check(dispatch_semaphore_wait(captured,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0,"GPU capture finishes");
         }
+        dispatch_semaphore_t gpuSurfaceDone=dispatch_semaphore_create(0);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSDictionary *properties=@{(id)kIOSurfaceWidth:@640,(id)kIOSurfaceHeight:@480,
+                (id)kIOSurfaceBytesPerElement:@4,(id)kIOSurfaceBytesPerRow:@2560,
+                (id)kIOSurfacePixelFormat:@(0x42475241)};
+            IOSurfaceRef surface=IOSurfaceCreate((__bridge CFDictionaryRef)properties);
+            check(surface!=NULL,"allocate GPU-source test surface");
+            check(IOSurfaceLock(surface,0,NULL)==0,"lock test source");
+            uint32_t *base=IOSurfaceGetBaseAddress(surface);
+            for(unsigned y=0;y<480;++y)for(unsigned x=0;x<640;++x)
+                base[y*(IOSurfaceGetBytesPerRow(surface)/4)+x]=0xff21ab65;
+            check(IOSurfaceUnlock(surface,0,NULL)==0,"publish test source");
+            view.displaySleeping=NO;
+            NSString *service=[connection enableSurfaceTransportForRendererPID:getpid() error:NULL];
+            check(service!=nil,"create app surface listener");
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+                mach_port_t endpoint=0,reply=0;
+                check(!bootstrap_look_up(bootstrap_port,(char *)service.UTF8String,&endpoint),"find app surface listener");
+                check(!mach_port_allocate(mach_task_self(),MACH_PORT_RIGHT_RECEIVE,&reply),"create release receiver");
+                check(!VIMSurfaceFrameSend(endpoint,reply,surface,1,1,0,640,480,5000),"send GPU surface to app");
+                CFRelease(surface);
+                uint32_t released=VIMSurfaceFailed;
+                check(!VIMSurfaceReleaseReceive(reply,1,1,0,&released,5000) && released==VIMSurfaceGPUCompleted,
+                    "app releases source only after GPU completion");
+                mach_port_destroy(mach_task_self(),reply);mach_port_deallocate(mach_task_self(),endpoint);
+                dispatch_async(dispatch_get_main_queue(),^{
+                [view capturePNG:^(NSData *png){
+                    NSBitmapImageRep *image=[[NSBitmapImageRep alloc] initWithData:png];
+                    NSUInteger samples[5]={0};[image getPixel:samples atX:320 y:240];
+                    NSUInteger first=(image.bitmapFormat&NSBitmapFormatAlphaFirst)?1:0;
+                    check(image.pixelsWide==640 && image.pixelsHigh==480 &&
+                        samples[first]==0x21 && samples[first+1]==0xab && samples[first+2]==0x65,
+                        "GPU surface Metal output pixels");
+                    dispatch_semaphore_signal(gpuSurfaceDone);
+                }];
+                });
+            });
+        });
+        check(dispatch_semaphore_wait(gpuSurfaceDone,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0,
+            "GPU surface completion");
+        for(unsigned fallback=0;fallback<2;++fallback){
+            if(fallback)dispatch_sync(dispatch_get_main_queue(),^{[connection disableSurfaceTransport];});
+            for(unsigned i=0;i<640*480;++i)((uint32_t *)pixels)[i]=0xff556677;
+            Message event={.magic=0x56494d31,.operation=8,.sequence=8+fallback,
+                .width=640,.height=480,.stride=2560,.reserved=2};
+            check(write(channel,&event,sizeof(event))==sizeof(event),"send fallback arbitration frame");
+            Message ack={0};size_t received=0;
+            while(received<sizeof(ack)){ssize_t n=read(channel,(char *)&ack+received,sizeof(ack)-received);
+                check(n>0,"fallback arbitration ACK");received+=n;}
+            check(ack.sequence==event.sequence && ack.operation==3,"fallback ordered release");
+            dispatch_semaphore_t verified=dispatch_semaphore_create(0);
+            dispatch_async(dispatch_get_main_queue(),^{
+                [view capturePNG:^(NSData *png){
+                    NSBitmapImageRep *image=[[NSBitmapImageRep alloc] initWithData:png];
+                    NSUInteger samples[5]={0};[image getPixel:samples atX:320 y:240];
+                    NSUInteger first=(image.bitmapFormat&NSBitmapFormatAlphaFirst)?1:0;
+                    check(image!=nil && samples[first]==(fallback?0x55:0x21) &&
+                        samples[first+1]==(fallback?0x66:0xab) && samples[first+2]==(fallback?0x77:0x65),
+                        "GPU excludes CPU frames until explicit fallback");
+                    dispatch_semaphore_signal(verified);
+                }];
+            });
+            check(!dispatch_semaphore_wait(verified,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC)),"arbitration pixels");
+        }
+        dispatch_semaphore_t exited=dispatch_semaphore_create(0);
+        dispatch_async(dispatch_get_main_queue(),^{
+            NSTask *renderer=[NSTask new];renderer.executableURL=[NSURL fileURLWithPath:@"/bin/sleep"];
+            renderer.arguments=@[@"30"];
+            check([renderer launchAndReturnError:NULL],"launch disposable renderer-lifetime test");
+            check([connection enableSurfaceTransportForRendererPID:renderer.processIdentifier error:NULL]!=nil,
+                "observe renderer lifetime");
+            [renderer terminate];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(),^{
+                check([connection valueForKey:@"surfaceListener"]==nil &&
+                    ![[connection valueForKey:@"surfaceActive"] boolValue],"renderer exit restores CPU eligibility");
+                dispatch_semaphore_signal(exited);
+            });
+        });
+        check(!dispatch_semaphore_wait(exited,dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC)),"renderer exit handling");
         dispatch_sync(dispatch_get_main_queue(), ^{
             [connection stop];[view discardFrameStorage];
             check([[view frameDiagnostics][@"FrameStorageBytes"] unsignedIntegerValue]==0,"stopped view releases its shared frame mapping");
         });
         munmap(pixels,length);close(channel);
-        puts("PASS: shared descriptor, resize, scaled/Retina cursors, fresh Metal pixels, independent display power, old power epoch and in-flight retirement, ordered GPU-completion ACKs, clean stop");
+        puts("PASS: shared descriptor, resize, scaled/Retina cursors, fresh Metal pixels, independent display power, old power epoch and in-flight retirement, ordered GPU-completion ACKs, direct IOSurface pixels/lifetime, clean stop");
         exit(0);
     });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,15*NSEC_PER_SEC),dispatch_get_main_queue(), ^{

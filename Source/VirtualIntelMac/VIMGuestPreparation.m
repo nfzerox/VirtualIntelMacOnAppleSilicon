@@ -103,17 +103,6 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
         self.completion(nil,PreparationError(@"Preparation requires a matching installed Mojave, Catalina or Big Sur system with verified volume identity. Initial setup also requires a usable desktop."));return;
     }
     NSURL *payloads=[self.runtime URLByAppendingPathComponent:@"GuestPayloads"];
-    NSDictionary *manifest=[NSDictionary dictionaryWithContentsOfURL:[payloads URLByAppendingPathComponent:@"Payloads.plist"]];
-    NSDictionary *record=[manifest[@"Guests"] isKindOfClass:NSDictionary.class]?manifest[@"Guests"][guest]:nil;
-    if(![record isKindOfClass:NSDictionary.class])record=nil;
-    NSString *archiveName=record[@"Archive"],*hash=record[@"SHA256"];
-    BOOL xz=[archiveName isEqual:[guest stringByAppendingString:@".tar.xz"]];
-    self.archiveFilename=xz?@"payload.tar.xz":@"payload.tar.gz";
-    NSCharacterSet *invalid=[[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet];
-    if(![manifest[@"FormatVersion"] isEqual:@1]||(!xz&&![archiveName isEqual:[guest stringByAppendingString:@".tar.gz"]])||
-       ![hash isKindOfClass:NSString.class]||hash.length!=64||[hash rangeOfCharacterFromSet:invalid].location!=NSNotFound) {
-        self.completion(nil,PreparationError(@"The bundled guest payload manifest is missing or invalid."));return;
-    }
     NSFileManager *fm=NSFileManager.defaultManager;NSError *error=nil;
     if(![fm createDirectoryAtURL:self.journal.URLByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:&error]){self.completion(nil,error);return;}
     if([fm fileExistsAtPath:self.journal.path]) {
@@ -124,15 +113,12 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
         }
     }
     self.state=[@{@"FormatVersion":@1,@"Attempt":NSUUID.UUID.UUIDString,@"HeadlessUpdateRepair":@(self.headlessRepair),@"InitialGuestReport":report,
-                   @"ExpectedArchiveSHA256":hash,@"Installed":@NO} mutableCopy];
+                   @"Installed":@NO} mutableCopy];
     if(![self phase:@"transferring" message:@"Making guest setup files available…"])return;
     self.transferStarted=NSProcessInfo.processInfo.systemUptime;
     NSURL *tools=[self.runtime URLByAppendingPathComponent:@"GuestTools"];
     NSURL *media=[payloads URLByAppendingPathComponent:[guest stringByAppendingString:@".iso"]];
-    NSURL *supportManifest=[payloads URLByAppendingPathComponent:[guest stringByAppendingString:@"-support.plist"]];
-    NSDictionary *support=[NSDictionary dictionaryWithContentsOfURL:supportManifest];
-    if(![support[@"FormatVersion"] isEqual:@1]||![support[@"Guest"] isEqual:guest]||
-       ![support[@"Files"][self.archiveFilename][@"SHA256"] isEqual:hash]||![fm fileExistsAtPath:media.path]) {
+    if(![fm fileExistsAtPath:media.path]) {
         [self finish:nil error:PreparationError(@"This app’s guest support disc is incomplete. Reinstall the app and try again.")];return;
     }
     [self.control execute:@"blockdev-change-medium" arguments:@{@"id":@"setup-support-device",@"filename":media.path,@"format":@"raw",@"read-only-mode":@"read-only"}
@@ -140,7 +126,7 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
         if(insertError){[self finish:nil error:insertError];return;}
         self.supportInserted=YES;
         [self.agent stageInstallationFiles:@{@"guest-macho":[tools URLByAppendingPathComponent:@"guest-macho"],
-            @"guest-progress":[tools URLByAppendingPathComponent:@"guest-progress"],@"SupportIcon.png":[tools URLByAppendingPathComponent:[guest stringByAppendingString:@"-support-icon.png"]],@"support-manifest.plist":supportManifest}
+            @"guest-progress":[tools URLByAppendingPathComponent:@"guest-progress"],@"SupportIcon.png":[tools URLByAppendingPathComponent:[guest stringByAppendingString:@"-support-icon.png"]]}
             progress:nil completion:^(NSDictionary *bootstrap,NSError *bootstrapError) {
         if(bootstrapError){[self finish:nil error:bootstrapError];return;}
         NSString *directory=bootstrap[@"Directory"];
@@ -151,7 +137,7 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
         self.progress(@"Copying and verifying guest setup files…");
         [progressUI updateMode:@"working" fraction:.05 message:@"Copying and verifying guest support files…" completion:nil];
         [self.agent runExecutable:[directory stringByAppendingPathComponent:@"guest-macho"]
-            arguments:@[@"stage-media",[directory stringByAppendingPathComponent:@"support-manifest.plist"],directory] timeout:0
+            arguments:@[@"stage-media",guest,directory] timeout:0
             completion:^(NSDictionary *copied,NSError *failure) {
         NSDictionary *transfer=CommandJSON(copied);
         if(failure){if(failure.userInfo[@"GuestStagingDirectory"])self.state[@"GuestStagingDirectory"]=failure.userInfo[@"GuestStagingDirectory"];[self finish:nil error:failure];return;}
@@ -161,8 +147,10 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
         }
         self.state[@"Transfer"]=transfer;self.state[@"GuestStagingDirectory"]=transfer[@"Directory"];
         self.state[@"TransferSeconds"]=@(NSProcessInfo.processInfo.systemUptime-self.transferStarted);
-        BOOL match=NO;for(NSDictionary *file in transfer[@"Files"])if([file[@"Name"] isEqual:self.archiveFilename]&&[file[@"SHA256"] isEqual:hash])match=YES;
-        if(!match||![transfer[@"SHA256Verified"] isEqual:@YES]){[self finish:nil error:PreparationError(@"Transferred archive does not match the bundled manifest. Nothing was installed.")];return;}
+        self.archiveFilename=transfer[@"Archive"];
+        BOOL archive=[@[@"payload.tar.xz",@"payload.tar.gz"] containsObject:self.archiveFilename?:@""];
+        BOOL match=NO;for(NSDictionary *file in transfer[@"Files"])if(archive&&[file[@"Name"] isEqual:self.archiveFilename]&&[file[@"Size"] longLongValue]>0)match=YES;
+        if(!match||![transfer[@"FilesStaged"] isEqual:@YES]){[self finish:nil error:PreparationError(@"The guest support copy is incomplete. Nothing was installed.")];return;}
         NSString *device=transfer[@"MediaDevice"];
         NSRegularExpression *disk=[NSRegularExpression regularExpressionWithPattern:@"^/dev/disk[0-9]+(s[0-9]+)*$" options:0 error:NULL];
         if(![device isKindOfClass:NSString.class]||[disk numberOfMatchesInString:device options:0 range:NSMakeRange(0,device.length)]!=1) {

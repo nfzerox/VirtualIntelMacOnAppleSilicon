@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Architecture</key>
+	<string>i386</string>
+	<key>Files</key>
+	<dict>
+		<key>LeopardSMBClient-Info.plist</key>
+		<true/>
+		<key>SMB-COPYRIGHT.txt</key>
+		<true/>
+		<key>SMB-VIM-LICENSE.txt</key>
+		<true/>
+		<key>leopard-smbfs</key>
+		<true/>
+	</dict>
+	<key>FormatVersion</key>
+	<integer>1</integer>
+	<key>Guest</key>
+	<string>leopard</string>
+	<key>MinimumOS</key>
+	<string>10.5</string>
+	<key>PolicyVersion</key>
+	<integer>2</integer>
+	<key>RequiresGuestDeveloperTools</key>
+	<false/>
+	<key>UpstreamCommit</key>
+	<string>91f35b3eb0b2445137005c97a04da6482e0c2a11</string>
+</dict>
+</plist>

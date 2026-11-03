@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""Create a separate Mavericks research EFI with VMsvga2 surface providers.
+
+Does not overwrite the original EFI, modify a guest disk, or enable a GLD.
+Requires mtools. Select the result and vmware adapter only while VM is stopped.
+"""
+import argparse
+import pathlib
+import plistlib
+import shutil
+import subprocess
+import tempfile
+
+p=argparse.ArgumentParser(description=__doc__)
+p.add_argument("original",type=pathlib.Path)
+p.add_argument("output",type=pathlib.Path)
+p.add_argument("--kexts",required=True,type=pathlib.Path)
+p.add_argument("--passthrough-opengl-gli-compositor",action="store_true",
+    help="Research only: enable Quartz composition for the paired PassthroughOpenGLI engine (must already be installed)")
+p.add_argument("--gpu-presentation",action="store_true",
+    help="Research only: native display family; requires paired GPU-family GLI and host display service")
+a=p.parse_args()
+if a.gpu_presentation and not a.passthrough_opengl_gli_compositor:
+    p.error("--gpu-presentation requires --passthrough-opengl-gli-compositor")
+if a.output.exists():
+    p.error("output already exists; preserve previous experiments")
+config=plistlib.loads(subprocess.check_output(["mtype","-i",str(a.original),"::EFI/OC/config.plist"]))
+entries=config["Kernel"]["Add"]
+for entry in entries:
+    if entry["BundlePath"].startswith(("VMsvga2", "VMwareGfx")):
+        entry["Enabled"]=False
+for name in ("VMsvga2","VMsvga2Accel"):
+    bundle=a.kexts/(name+".kext")
+    info=plistlib.loads((bundle/"Contents/Info.plist").read_bytes())
+    if info["CFBundleExecutable"]!=name or not (bundle/"Contents/MacOS"/name).is_file():
+        p.error("incomplete kernel bundle: "+str(bundle))
+    entries.append(dict(Arch="x86_64",BundlePath=bundle.name,Comment="Mavericks surface research only",
+        Enabled=True,ExecutablePath="Contents/MacOS/"+name,PlistPath="Contents/Info.plist",
+        MinKernel="13.0.0",MaxKernel="13.99.99"))
+shutil.copyfile(a.original,a.output)
+try:
+    with tempfile.TemporaryDirectory(prefix="vim-opengl-efi-") as scratch:
+        plist=pathlib.Path(scratch)/"config.plist"
+        plist.write_bytes(plistlib.dumps(config))
+        for name in ("VMsvga2.kext","VMsvga2Accel.kext"):
+            bundle=a.kexts/name
+            if a.passthrough_opengl_gli_compositor and name=="VMsvga2Accel.kext":
+                staged=pathlib.Path(scratch)/name
+                shutil.copytree(bundle,staged)
+                info_path=staged/"Contents/Info.plist"
+                info=plistlib.loads(info_path.read_bytes())
+                for personality in info["IOKitPersonalities"].values():
+                    # CoreGraphics CGXMappedDisplayStart reads bit 0 for QE.
+                    # Do not enable VMware's unrelated native SVGA3D clients.
+                    personality["AccelCaps"]=5 if a.gpu_presentation else 1
+                    personality.pop("VIMMesaCompositor",None) # Retired research personality spelling.
+                    personality["VIMDirectGLCompositor"]=True
+                    if a.gpu_presentation:personality["VIMDirectGLGPUPresentation"]=True
+                    else:personality.pop("VIMDirectGLGPUPresentation",None)
+                info_path.write_bytes(plistlib.dumps(info))
+                bundle=staged
+            # The input may itself be a prior research EFI. Replace files in
+            # our NEW image only; never prompt/skip and leave an older driver.
+            subprocess.run(["mcopy","-o","-s","-i",str(a.output),str(bundle),"::EFI/OC/Kexts/"],check=True)
+        subprocess.run(["mcopy","-o","-i",str(a.output),str(plist),"::EFI/OC/config.plist"],check=True)
+    verified=plistlib.loads(subprocess.check_output(["mtype","-i",str(a.output),"::EFI/OC/config.plist"]))
+    assert verified==config
+except BaseException:
+    # Preserve failed output for diagnosis; it is never silently selected.
+    print("EFI staging failed. Original preserved; do not select the output.")
+    raise
+print("Staged framebuffer/surface kexts only. Original EFI and guest disk unchanged.")
+if a.passthrough_opengl_gli_compositor:
+    print("PassthroughOpenGLI compositor capability enabled for this research EFI only; not a claim of validation.")

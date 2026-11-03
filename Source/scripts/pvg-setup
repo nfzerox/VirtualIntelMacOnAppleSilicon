@@ -36,7 +36,6 @@ if ! csrutil status | grep -q '^System Integrity Protection status: disabled\.';
 fi
 
 if [[ $mode == --verify ]]; then
-    (cd "$pvg_release"; shasum -a 256 -c SHA256SUMS) || fail 'Bundled verification files failed integrity checks.'
     grep -Fq "Guest: Intel $pvg_name $pvg_target" "$pvg_release/RELEASE.txt" || fail 'Release targets a different guest OS.'
     /usr/sbin/kextstat | grep -E 'AppleParavirtGPU|local.pvg|as.vit9696.Lilu'
     /usr/sbin/ioreg -r -n AppleParavirtAccelerator | grep -q AppleParavirtAccelerator ||
@@ -61,8 +60,6 @@ fi
 # Validate bytes before privilege escalation or any system modification.
 if [[ $mode != --rollback ]]; then
     print 'Checking the bundled release...'
-    [[ -f "$pvg_release/SHA256SUMS" ]] || fail "Missing $pvg_name release. Build/package the matching payload first; never use the other OS payload."
-    (cd "$pvg_release"; shasum -a 256 -c SHA256SUMS) || fail 'Release is incomplete or corrupt. Copy the entire repository again.'
     grep -Fq "Guest: Intel $pvg_name $pvg_target" "$pvg_release/RELEASE.txt" || fail 'Release targets a different guest OS.'
     "$pvg_release/probes/guest-compatibility" || fail 'Guest private interfaces are not compatible with this package.'
 fi

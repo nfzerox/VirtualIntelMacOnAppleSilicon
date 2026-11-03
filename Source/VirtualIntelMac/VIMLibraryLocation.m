@@ -28,7 +28,7 @@ static id RelocatedValue(id value,NSDictionary<NSString *,NSString *> *moves) {
     }
     return value;
 }
-static BOOL PrepareRoot(NSURL *root,NSURL *legacy,NSError **error) {
+static BOOL PrepareRoot(NSURL *root,NSURL *previousRoot,NSError **error) {
     if(Layout2(root))return YES;
     NSFileManager *fm=NSFileManager.defaultManager;
     if(![fm createDirectoryAtURL:root withIntermediateDirectories:YES attributes:nil error:error])return NO;
@@ -49,14 +49,14 @@ static BOOL PrepareRoot(NSURL *root,NSURL *legacy,NSError **error) {
     NSURL *machines=[root URLByAppendingPathComponent:@"Machines" isDirectory:YES];
     NSURL *journal=[root URLByAppendingPathComponent:@".LibraryLayoutMigration.plist"];
     NSDictionary *record=[NSDictionary dictionaryWithContentsOfURL:journal];
-    if(record&&(![record[@"FormatVersion"] isEqual:@1]||![record[@"Legacy"] isEqual:legacy.path]||![record[@"Moves"] isKindOfClass:NSDictionary.class]))
+    if(record&&(![record[@"FormatVersion"] isEqual:@1]||![record[@"Legacy"] isEqual:previousRoot.path]||![record[@"Moves"] isKindOfClass:NSDictionary.class]))
         return finish(LocationError(error,1,@"The library’s layout record is unreadable. Its files have not been removed."));
     NSMutableDictionary *moves=record?[[record objectForKey:@"Moves"] mutableCopy]:[NSMutableDictionary new];
     if(!moves)return finish(LocationError(error,1,@"The library’s layout record is unreadable. Its files have not been removed."));
     if(!record) {
-        for(NSURL *item in [fm contentsOfDirectoryAtURL:legacy includingPropertiesForKeys:nil options:0 error:nil]?:@[])
+        for(NSURL *item in [fm contentsOfDirectoryAtURL:previousRoot includingPropertiesForKeys:nil options:0 error:nil]?:@[])
             if([item.pathExtension isEqual:@"vintelmac"]&&![item.URLByDeletingLastPathComponent.path isEqual:machines.path])moves[item.path]=[machines URLByAppendingPathComponent:item.lastPathComponent].path;
-        NSURL *downloads=[legacy URLByAppendingPathComponent:@"Downloads"],*preparation=[downloads URLByAppendingPathComponent:@"Preparation"];
+        NSURL *downloads=[previousRoot URLByAppendingPathComponent:@"Downloads"],*preparation=[downloads URLByAppendingPathComponent:@"Preparation"];
         if([fm fileExistsAtPath:preparation.path])moves[preparation.path]=[root URLByAppendingPathComponent:@"Installers"].path;
         if(![downloads.path isEqual:[root URLByAppendingPathComponent:@"Downloads"].path]&&[fm fileExistsAtPath:downloads.path])moves[downloads.path]=[root URLByAppendingPathComponent:@"Downloads"].path;
     }
@@ -67,7 +67,7 @@ static BOOL PrepareRoot(NSURL *root,NSURL *legacy,NSError **error) {
     NSMutableSet *packages=[NSMutableSet new];
     for(NSString *old in order) {
         NSString *new=moves[old];
-        if(![old isAbsolutePath]||![new isAbsolutePath]||![old hasPrefix:[legacy.path stringByAppendingString:@"/"]]||![new hasPrefix:[root.path stringByAppendingString:@"/"]])
+        if(![old isAbsolutePath]||![new isAbsolutePath]||![old hasPrefix:[previousRoot.path stringByAppendingString:@"/"]]||![new hasPrefix:[root.path stringByAppendingString:@"/"]])
             return finish(LocationError(error,1,@"The library’s layout record contains an unexpected location."));
         BOOL original=[fm fileExistsAtPath:old],destination=[fm fileExistsAtPath:new];
         if(original&&destination)return finish(LocationError(error,1,@"Two library items have the same name. Nothing will be overwritten. Rename the duplicate and try again."));
@@ -86,7 +86,7 @@ static BOOL PrepareRoot(NSURL *root,NSURL *legacy,NSError **error) {
             if(fd<0||fstat(fd,&info)||!S_ISREG(info.st_mode)||info.st_nlink!=1||flock(fd,LOCK_EX|LOCK_NB)){if(fd>=0)close(fd);return finish(LocationError(error,EBUSY,@"Wait for this Mac’s settings to finish saving, then try again."));}
             [locks addObject:@(fd)];
     }
-    if(!WriteLocationPlist(@{@"FormatVersion":@1,@"Legacy":legacy.path,@"Moves":moves},journal,error))return finish(NO);
+    if(!WriteLocationPlist(@{@"FormatVersion":@1,@"Legacy":previousRoot.path,@"Moves":moves},journal,error))return finish(NO);
     if(![fm createDirectoryAtURL:machines withIntermediateDirectories:YES attributes:nil error:error])return finish(NO);
     for(NSString *old in order)if([fm fileExistsAtPath:old]&&![fm moveItemAtPath:old toPath:moves[old] error:error])return finish(NO);
     for(NSString *folder in @[@"Downloads",@"Installers"])
@@ -113,9 +113,9 @@ static BOOL PrepareRoot(NSURL *root,NSURL *legacy,NSError **error) {
         id value=[defaults objectForKey:key];id updated=RelocatedValue(value,moves);
         NSString *newKey=key;
         for(NSString *prefix in @[@"VIMLibraryKnown-",@"VIMLibraryOrder-",@"VIMLibraryArrange-"])
-            if([key isEqual:[prefix stringByAppendingString:legacy.path]])newKey=[prefix stringByAppendingString:root.path];
+            if([key isEqual:[prefix stringByAppendingString:previousRoot.path]])newKey=[prefix stringByAppendingString:root.path];
         if([key hasPrefix:@"VIMGuestUsername-"])newKey=[@"VIMGuestUsername-" stringByAppendingString:RelocatedValue([key substringFromIndex:17],moves)];
-        if([key isEqual:@"VIMCreationJob"]&&[updated isKindOfClass:NSDictionary.class]&&[updated[@"Library"] isEqual:legacy.path]){updated=[updated mutableCopy];updated[@"Library"]=root.path;}
+        if([key isEqual:@"VIMCreationJob"]&&[updated isKindOfClass:NSDictionary.class]&&[updated[@"Library"] isEqual:previousRoot.path]){updated=[updated mutableCopy];updated[@"Library"]=root.path;}
         if(![key isEqual:newKey])[defaults removeObjectForKey:key];
         if(![key isEqual:newKey]||![value isEqual:updated])[defaults setObject:updated forKey:newKey];
     }
@@ -176,9 +176,9 @@ static BOOL PrepareRoot(NSURL *root,NSURL *legacy,NSError **error) {
             [NSUserDefaults.standardUserDefaults removeObjectForKey:iconVersion];
     }
     NSString *configured=[NSUserDefaults.standardUserDefaults stringForKey:@"VIMLibraryPath"];
-    NSURL *legacy=configured.length&&configured.isAbsolutePath?[NSURL fileURLWithPath:configured isDirectory:YES]:[self.defaultURL URLByAppendingPathComponent:@"Machines" isDirectory:YES];
+    NSURL *previousRoot=configured.length&&configured.isAbsolutePath?[NSURL fileURLWithPath:configured isDirectory:YES]:[self.defaultURL URLByAppendingPathComponent:@"Machines" isDirectory:YES];
     NSURL *root=self.rootURL;
-    if(!PrepareRoot(root,legacy,error))return NO;
+    if(!PrepareRoot(root,previousRoot,error))return NO;
     NSUserDefaults *defaults=NSUserDefaults.standardUserDefaults;
     // Preserve the catalog and manual ordering from the Machines-keyed build.
     // Merge known rows: older root-keyed records can still describe renamed VMs.

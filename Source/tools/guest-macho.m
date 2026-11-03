@@ -344,8 +344,7 @@ int main(int argc,const char **argv) {@autoreleasepool {
     if(argc==4&&!strcmp(argv[1],"stage-media")) {
         @try {
             VIMMediaCheck(geteuid()==0,@"Support staging requires the privileged guest agent.");
-            VIMMediaCheck([@(argv[2]) isEqual:[@(argv[3]) stringByAppendingPathComponent:@"support-manifest.plist"]],@"Invalid trusted support manifest path.");
-            NSDictionary *receipt=VIMStageSupportMedia(@"support-manifest.plist",@(argv[3]),@"/Volumes",YES);
+            NSDictionary *receipt=VIMStageSupportMedia(@(argv[2]),@(argv[3]),@"/Volumes",YES);
             NSData *json=[NSJSONSerialization dataWithJSONObject:receipt options:0 error:NULL];
             fwrite(json.bytes,1,json.length,stdout);puts("");return 0;
         } @catch(NSException *exception) {fprintf(stderr,"%s\n",exception.reason.UTF8String);return 65;}

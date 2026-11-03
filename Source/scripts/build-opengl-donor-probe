@@ -24,7 +24,7 @@ fi
 # those inside its immutable shared cache; expand it for an on-disk bundle.
 codesign --remove-signature "$binary"
 if [[ $target != 11 ]]; then
-    "$repo/research/dsce/dsce" legacy-objc "$binary" "$binary.legacy"
+    "$repo/research/dsce/dsce" opengl-objc "$binary" "$binary.legacy"
     mv "$binary.legacy" "$binary"
 fi
 # All supported guests use the same adapter, including texture-view swizzle

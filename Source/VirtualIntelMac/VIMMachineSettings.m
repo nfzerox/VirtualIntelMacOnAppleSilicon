@@ -2,6 +2,7 @@
 #import "VIMSettingsIcon.h"
 #import "VIMMachine.h"
 #import "VIMSession.h"
+#import "VIMImageSlots.h"
 #import "VIMNetworkDefaults.h"
 #import "VIMSMBService.h"
 #import "VIMHostAudio.h"
@@ -139,6 +140,7 @@ static void VIMAlignFormBaselines(NSView *view) {
     if((self=[super initWithWindow:window])) {
         self.machine=machine;self.section=@"Hardware";self.hostFiles=YES;window.releasedWhenClosed=NO;window.delegate=self;window.windowController=self;
         window.backgroundColor=NSColor.windowBackgroundColor;
+        window.autorecalculatesKeyViewLoop=YES;
         window.collectionBehavior=NSWindowCollectionBehaviorFullScreenNone;
         self.guestUsername=[NSUserDefaults.standardUserDefaults stringForKey:[@"VIMGuestUsername-" stringByAppendingString:machine.URL.path]]?:@"";
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(sessionStateChanged:) name:@"VIMLibraryChanged" object:nil];
@@ -156,7 +158,10 @@ static void VIMAlignFormBaselines(NSView *view) {
 - (void)dealloc {[NSNotificationCenter.defaultCenter removeObserver:self];}
 - (void)sessionStateChanged:(NSNotification *)notification {
     VIMMachine *fresh=[VIMMachine loadURL:self.machine.URL error:nil];if(fresh)self.machine=fresh;
-    if(!self.window.firstResponder||![self.window.firstResponder isKindOfClass:NSTextView.class])[self render];
+    if(!self.window.firstResponder||![self.window.firstResponder isKindOfClass:NSTextView.class]){
+        self.guestUsername=[NSUserDefaults.standardUserDefaults stringForKey:[@"VIMGuestUsername-" stringByAppendingString:self.machine.URL.path]]?:@"";
+        [self render];
+    }
 }
 - (void)packageRelocated:(NSNotification *)note {
     if(![note.userInfo[@"Identifier"] isEqual:self.machine.configuration[@"Identifier"]])return;
@@ -221,9 +226,12 @@ static void VIMAlignFormBaselines(NSView *view) {
     return [NSButton buttonWithTitle:title target:self action:action];
 }
 - (NSView *)general {
-    NSString *system=@{@"mojave":@"macOS Mojave",@"catalina":@"macOS Catalina",@"bigsur":@"macOS Big Sur"}[self.machine.guest]?:@"macOS";
+    NSString *system=@{@"tiger":@"Mac OS X Tiger 10.4",@"leopard":@"Mac OS X Leopard 10.5",@"snowleopard":@"Mac OS X Snow Leopard 10.6",@"lion":@"Mac OS X Lion 10.7",@"mountainlion":@"OS X Mountain Lion 10.8",@"mavericks":@"OS X Mavericks 10.9",@"yosemite":@"OS X Yosemite 10.10",@"elcapitan":@"OS X El Capitan 10.11",@"sierra":@"macOS Sierra 10.12",@"highsierra":@"macOS High Sierra 10.13",@"mojave":@"macOS Mojave 10.14",@"catalina":@"macOS Catalina 10.15",@"bigsur":@"macOS Big Sur 11"}[self.machine.guest]?:@"Mac OS";
     NSTextField *name=[self field:@"Name" value:self.machine.pendingName?:self.machine.name];
-    NSImageView *mark=[NSImageView imageViewWithImage:[NSImage imageNamed:[self.machine.guest stringByAppendingString:@"ProductIcon"]]?:NSApp.applicationIconImage];
+    NSImage *identityImage=[NSImage imageNamed:[self.machine.guest stringByAppendingString:@"Roundel"]]?:
+        [NSImage imageNamed:[self.machine.guest stringByAppendingString:@"ProductIcon"]]?:
+        [NSImage imageNamed:[self.machine.guest stringByAppendingString:@"Icon"]]?:NSApp.applicationIconImage;
+    NSImageView *mark=[NSImageView imageViewWithImage:identityImage];
     mark.imageScaling=NSImageScaleProportionallyUpOrDown;
     [mark.widthAnchor constraintEqualToConstant:24].active=YES;[mark.heightAnchor constraintEqualToConstant:24].active=YES;
     NSTextField *os=[NSTextField labelWithString:system];
@@ -301,11 +309,13 @@ static void VIMAlignFormBaselines(NSView *view) {
         NSArray *descriptions=@[@"Graphics at full Retina resolution. Text and interface are small.",@"",@"Graphics scaled to full size."];
         NSButton *firstOption=nil;
         for(NSUInteger i=0;i<modes.count;i++) {
+            if(i==1&&!VIMGuestSupportsRetinaDisplay(c))continue;
             NSButton *option=[NSButton radioButtonWithTitle:titles[i] target:self action:@selector(retinaChanged:)];option.tag=i;
             if(!firstOption)firstOption=option;
             option.state=[VIMDisplayMode(c) isEqual:modes[i]];
             if(![descriptions[i] length]){[views addObject:option];continue;}
-            NSTextField *description=VIMText(descriptions[i],NO);
+            NSString *copy=i==0&&!VIMGuestSupportsRetinaDisplay(c)?@"Graphics at full display resolution. Text and interface are small.":descriptions[i];
+            NSTextField *description=VIMText(copy,NO);
             NSView *pair=[NSView new];
             for(NSView *view in @[option,description]){view.translatesAutoresizingMaskIntoConstraints=NO;[pair addSubview:view];}
             [NSLayoutConstraint activateConstraints:@[[option.topAnchor constraintEqualToAnchor:pair.topAnchor],
@@ -325,7 +335,13 @@ static void VIMAlignFormBaselines(NSView *view) {
             [options.trailingAnchor constraintEqualToAnchor:form.trailingAnchor],
             [options.topAnchor constraintEqualToAnchor:form.topAnchor],
             [options.bottomAnchor constraintEqualToAnchor:form.bottomAnchor]]];
-        return VIMColumn(@[form,VIMText(@"Changes take effect the next time this Mac starts.",NO)]);
+        NSPopUpButton *filter=[NSPopUpButton new];
+        [filter addItemsWithTitles:@[@"Nearest Neighbor",@"Linear"]];
+        [filter selectItemAtIndex:[VIMDisplayScalingFilter(c) isEqual:@"nearest"]?0:1];
+        filter.target=self;filter.action=@selector(scalingFilterChanged:);
+        NSGridView *sampling=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:@"Scaling Filter:"],filter]]];
+        sampling.columnSpacing=12;[sampling columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
+        return VIMColumn(@[form,sampling,VIMText(@"Resolution changes take effect the next time this Mac starts. The scaling filter applies immediately.",NO)]);
     }
     if(self.hardwareIndex==4) {
         NSPopUpButton *output=[self audioPopup:NO],*input=[self audioPopup:YES];
@@ -365,16 +381,26 @@ static void VIMAlignFormBaselines(NSView *view) {
         return VIMColumn(@[grid,VIMText(@"Click inside this Mac to use its mouse and Mac keyboard. Press Control–Option to release them.",NO)]);
     }
     if(self.hardwareIndex==6) {
-        NSString *path=[VIMSession connectedOpticalMediaForMachine:self.machine];
-        NSPopUpButton *source=[NSPopUpButton new];source.target=self;source.action=@selector(opticalChanged:);
-        [source addItemWithTitle:path.length?path.lastPathComponent:@"No Disc"];source.selectedItem.tag=0;
-        source.selectedItem.image=[NSImage imageWithSystemSymbolName:@"opticaldisc" accessibilityDescription:nil];
-        [source.menu addItem:NSMenuItem.separatorItem];
-        if(path.length){[source addItemWithTitle:@"Disconnect"];source.lastItem.tag=2;}
-        else {[source addItemWithTitle:@"Choose Image…"];source.lastItem.tag=1;}
-        [source.widthAnchor constraintEqualToConstant:280].active=YES;
-        NSGridView *grid=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:@"Source:"],source]]];grid.columnSpacing=12;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
-        return VIMColumn(@[grid,VIMText(@"Choose an ISO, CDR or supported unencrypted DMG. Images are read-only. Disconnect the current image before choosing another.",NO)]);
+        NSArray *images=[VIMSession connectedImagesForMachine:self.machine];NSMutableArray *rows=[NSMutableArray new];
+        NSUInteger driveNumber=0;
+        for(NSDictionary *image in images) {
+            NSUInteger slot=[image[@"Slot"] unsignedIntegerValue];NSString *path=image[@"Path"];
+            NSPopUpButton *source=[NSPopUpButton new];source.target=self;source.action=@selector(opticalChanged:);source.tag=(NSInteger)slot;
+            [source addItemWithTitle:path.lastPathComponent];source.selectedItem.tag=0;
+            source.selectedItem.image=[NSImage imageWithSystemSymbolName:@"opticaldisc" accessibilityDescription:nil];
+            [source.menu addItem:NSMenuItem.separatorItem];[source addItemWithTitle:@"Disconnect"];source.lastItem.tag=2;
+            [source.widthAnchor constraintEqualToConstant:280].active=YES;
+            [rows addObject:@[[NSTextField labelWithString:[NSString stringWithFormat:@"Drive %lu:",(unsigned long)++driveNumber]],source]];
+        }
+        if(!images.count) {
+            NSPopUpButton *source=[NSPopUpButton new];source.target=self;source.action=@selector(opticalChanged:);source.tag=0;
+            [source addItemWithTitle:@"No Disc"];[source.menu addItem:NSMenuItem.separatorItem];
+            [source addItemWithTitle:@"Choose Image…"];source.lastItem.tag=1;
+            [source.widthAnchor constraintEqualToConstant:280].active=YES;
+            [rows addObject:@[[NSTextField labelWithString:@"Source:"],source]];
+        } else if(images.count<VIMImageSlotCount)[rows addObject:@[NSGridCell.emptyContentView,[self button:@"Connect Image…" action:@selector(chooseDisc:)]]];
+        NSGridView *grid=[NSGridView gridViewWithViews:rows];grid.columnSpacing=12;grid.rowSpacing=14;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
+        return VIMColumn(@[grid,VIMText(@"Connect ISO, CDR or supported unencrypted DMG images. Disconnect a drive’s current image before replacing it.",NO)]);
     }
     NSString *file=[self.machine.configuration[@"Disk"] lastPathComponent]?:@"System.qcow2";
     NSPopUpButton *source=[NSPopUpButton new];[source addItemWithTitle:file];[source.widthAnchor constraintEqualToConstant:250].active=YES;
@@ -384,18 +410,26 @@ static void VIMAlignFormBaselines(NSView *view) {
 - (NSView *)sharingContentForHost:(BOOL)host {
     BOOL files=self.hardwareIndex==0;
     NSDictionary *network=[VIMSession networkDetailsForMachine:self.machine];BOOL shared=[network[@"Mode"] isEqual:@"shared"];
-    NSString *hostSettings=NSProcessInfo.processInfo.operatingSystemVersion.majorVersion>=13?@"System Settings → General → Sharing":@"System Preferences → Sharing";
+    NSInteger hostVersion=NSProcessInfo.processInfo.operatingSystemVersion.majorVersion;
+    NSString *hostSettings=hostVersion>=13?@"System Settings → General → Sharing":@"System Preferences → Sharing";
     if(host) {
+        BOOL windowsFileSharing=files&&
+            [@[@"tiger",@"leopard",@"snowleopard"] containsObject:self.machine.guest];
+        NSString *sharingInstructions=windowsFileSharing?
+            @"1. On this Mac, go to System Settings → General → Sharing. Click the info button next to File Sharing and turn it on. Click Options, turn on SMB sharing, then select your account under Windows File Sharing and enter its password.":
+            [NSString stringWithFormat:@"1. On this Mac, open %@ and enable %@.",hostSettings,files?@"File Sharing":@"Remote Login"];
         NSString *username=[NSUserName() stringByReplacingOccurrencesOfString:@"'" withString:@"'\\''"];
         NSString *hostIP=network[@"HostAddress"];
         NSString *address=hostIP.length?(files?[@"smb://" stringByAppendingString:hostIP]:[NSString stringWithFormat:@"ssh -l '%@' %@",username,hostIP]):@"";
+        if(!files&&self.machine.preMetalGuest&&hostIP.length)
+            address=[NSString stringWithFormat:@"'/Library/Application Support/Virtual Intel Mac/GuestTools/guest-ssh' -l '%@' %@",username,hostIP];
         NSButton *copy=[self button:files?@"Copy Address":@"Copy Command" action:@selector(copyConnection:)];copy.identifier=address;
         copy.enabled=address.length>0;
         NSURLComponents *connection=[NSURLComponents new];connection.scheme=files?@"smb":@"ssh";connection.host=hostIP;if(!files)connection.user=NSUserName();
         NSButton *open=[self button:files?@"Open in Finder":@"Open in Terminal" action:@selector(openGuestConnection:)];open.identifier=address.length?connection.URL.absoluteString:@"";open.enabled=[network[@"Connected"] boolValue]&&address.length;
         NSStackView *actions=[NSStackView stackViewWithViews:@[open,copy]];actions.spacing=12;
         return VIMColumn(@[VIMText(files?@"Open this Mac’s files inside the virtual Mac":@"Connect to this Mac from the virtual Mac",YES),
-            VIMText([NSString stringWithFormat:@"1. On this Mac, open %@ and enable %@.",hostSettings,files?@"File Sharing":@"Remote Login"],NO),
+            VIMText(sharingInstructions,NO),
             [self button:@"Open Sharing Settings" action:@selector(openSharing:)],
             VIMText(files?@"2. In the virtual Mac’s Finder, choose Go → Connect to Server and enter:":@"2. In the virtual Mac’s Terminal, run:",NO),
             VIMText(address.length?address:@"Start the virtual Mac and connect its network to discover this Mac’s address.",NO),actions,VIMText(@"Use this Mac’s account and password, not the virtual Mac’s.",NO)]);
@@ -409,11 +443,19 @@ static void VIMAlignFormBaselines(NSView *view) {
         [NSString stringWithFormat:@"ssh -p %@ -l '%@' 127.0.0.1",port,self.guestUsername];
     NSString *guestIP=[network[@"GuestAddresses"] firstObject];
     if(!shared)address=guestIP.length?(files?[@"smb://" stringByAppendingString:guestIP]:[NSString stringWithFormat:@"ssh -l '%@' %@",self.guestUsername,guestIP]):@"";
+    if(!files&&self.machine.preMetalGuest&&address.length){
+        NSString *user=[self.guestUsername stringByReplacingOccurrencesOfString:@"'" withString:@"'\\''"];
+        // Stock 13F34 advertises AES-GCM but its sshd aborts when using it.
+        // Keep period crypto options and the known-host identity VM-scoped;
+        // never weaken the user's global SSH configuration.
+        address=[NSString stringWithFormat:@"ssh -o HostKeyAlgorithms=+ssh-rsa -c aes128-ctr -o HostKeyAlias=vim-%@ -p %@ -l '%@' '%@'",
+            [self.machine.configuration[@"Identifier"] lowercaseString],shared?port:@22,user,shared?@"127.0.0.1":guestIP];
+    }
     NSButton *copy=[self button:files?@"Copy Address":@"Copy Command" action:@selector(copyConnection:)];copy.identifier=address;
     copy.enabled=address.length&&(files||self.guestUsername.length>0);
     NSURLComponents *connection=[NSURLComponents new];connection.scheme=files?@"smb":@"ssh";connection.host=@"127.0.0.1";connection.port=port;if(!files)connection.user=self.guestUsername;
     if(!shared){connection.host=guestIP;connection.port=nil;}
-    NSButton *open=[self button:files?@"Open in Finder":@"Open in Terminal" action:@selector(openConnection:)];open.identifier=files?address:(address.length?connection.URL.absoluteString:@"");open.enabled=[network[@"Connected"] boolValue]&&(!shared||enabled.state==NSControlStateValueOn)&&address.length&&(files||self.guestUsername.length>0);
+    NSButton *open=[self button:files?@"Open in Finder":@"Open in Terminal" action:@selector(openConnection:)];open.identifier=files||self.machine.preMetalGuest?address:(address.length?connection.URL.absoluteString:@"");open.enabled=[network[@"Connected"] boolValue]&&(!shared||enabled.state==NSControlStateValueOn)&&address.length&&(files||self.guestUsername.length>0);
     NSStackView *actions=[NSStackView stackViewWithViews:@[open,copy]];actions.spacing=12;
     NSMutableArray *views=[NSMutableArray arrayWithArray:@[VIMText(files?@"Open the virtual Mac’s files on this Mac":@"Connect to the virtual Mac with SSH",YES),
         VIMText(files?@"1. In the virtual Mac, open System Preferences → Sharing and turn on File Sharing. In Options, enable SMB for your account.":@"1. In the virtual Mac, open System Preferences → Sharing and turn on Remote Login.",NO)]];
@@ -554,7 +596,8 @@ static void VIMAlignFormBaselines(NSView *view) {
 }
 - (void)opticalChanged:(NSPopUpButton *)sender {
     NSInteger action=sender.selectedItem.tag;[sender selectItemAtIndex:0];
-    if(action==1)[self chooseDisc:sender];else if(action==2)[self ejectDisc:sender];
+    if(action==1)[VIMSession chooseImageForMachine:self.machine slot:(NSUInteger)sender.tag window:self.window];
+    else if(action==2)[VIMSession ejectImageForMachine:self.machine slot:(NSUInteger)sender.tag window:self.window];
 }
 - (NSButton *)guestSettingsButton:(NSString *)title pane:(NSString *)pane {
     NSButton *button=[self button:title action:@selector(openGuestSettings:)];button.identifier=pane;
@@ -745,13 +788,19 @@ static void VIMAlignFormBaselines(NSView *view) {
     [self commitSettings:@{@"MemoryMiB":@(mib)}];
 }
 - (void)retinaChanged:(NSButton *)sender {if([self commitSettings:@{@"DisplayMode":@[@"space",@"retina",@"scaled"][sender.tag],@"RetinaEnabled":@(sender.tag!=2)}])[self render];}
+- (void)scalingFilterChanged:(NSPopUpButton *)sender {
+    if([self commitSettings:@{@"DisplayScalingFilter":sender.indexOfSelectedItem==0?@"nearest":@"linear"}])
+        [VIMSession displayScalingPreferencesChangedForMachine:self.machine];
+}
 - (void)restoreDefaults:(id)sender {
     if(self.hardwareIndex==3) {
         if(![self commitSettings:@{@"MACAddress":@"",@"BridgeInterface":@""}])return;
         [VIMSession changeNetworkMode:@"shared" connected:YES machine:self.machine window:self.window completion:^(NSError *error){if(error)VIMPresentError(error,self.window);[self render];}];return;
     }
-    NSDictionary *settings=self.hardwareIndex==0?@{@"CPUCount":@(MIN(4,NSProcessInfo.processInfo.processorCount)),@"MemoryMiB":@4096}:(self.hardwareIndex==1?@{@"DisplayMode":@"retina",@"RetinaEnabled":@YES}:(self.hardwareIndex==3?@{@"NetworkConnected":@YES,@"MACAddress":@""}:@{@"AudioEnabled":@YES,@"AudioInputDevice":@"default",@"AudioOutputDevice":@"default"}));
+    BOOL retina=VIMGuestSupportsRetinaDisplay(self.machine.editableConfiguration);
+    NSDictionary *settings=self.hardwareIndex==0?@{@"CPUCount":@(MIN(4,NSProcessInfo.processInfo.processorCount)),@"MemoryMiB":@4096}:(self.hardwareIndex==1?@{@"DisplayMode":retina?@"retina":@"scaled",@"RetinaEnabled":@(retina),@"DisplayScalingFilter":retina?@"linear":@"nearest"}:(self.hardwareIndex==3?@{@"NetworkConnected":@YES,@"MACAddress":@""}:@{@"AudioEnabled":@YES,@"AudioInputDevice":@"default",@"AudioOutputDevice":@"default"}));
     if([self commitSettings:settings]) {
+        if(self.hardwareIndex==1)[VIMSession displayScalingPreferencesChangedForMachine:self.machine];
         if(self.hardwareIndex==3)[VIMSession setNetworkConnected:YES machine:self.machine completion:^(NSError *error){if(error)VIMPresentError(error,self.window);}];
         [self render];
     }
@@ -772,23 +821,27 @@ static void VIMAlignFormBaselines(NSView *view) {
 - (void)ejectDisc:(id)sender {[VIMSession ejectOpticalMediaForMachine:self.machine window:self.window];}
 - (void)copyConnection:(NSButton *)sender {[NSPasteboard.generalPasteboard clearContents];[NSPasteboard.generalPasteboard setString:sender.identifier forType:NSPasteboardTypeString];}
 - (void)openConnection:(NSButton *)sender {
+    if(self.hardwareIndex==1&&self.machine.preMetalGuest){
+        // Terminal's native profile document opens the interactive connection
+        // without AppleEvents permission or global ssh_config edits. There is
+        // no credential or generated shell script in this document.
+        NSURL *directory=[[NSFileManager.defaultManager URLsForDirectory:NSCachesDirectory inDomains:NSUserDomainMask].firstObject URLByAppendingPathComponent:@"com.mac.virtualintelmac/Connections" isDirectory:YES];
+        NSURL *profile=[directory URLByAppendingPathComponent:[self.machine.configuration[@"Identifier"] stringByAppendingPathExtension:@"terminal"]];NSError *failure=nil;
+        NSDictionary *settings=@{@"type":@"Window Settings",@"name":self.machine.name,@"CommandString":sender.identifier,@"RunCommandAsShell":@NO,@"ProfileCurrentVersion":@2.08};
+        if(![NSFileManager.defaultManager createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:&failure]||![settings writeToURL:profile error:&failure]||![NSWorkspace.sharedWorkspace openURL:profile])
+            VIMPresentError(failure?:[NSError errorWithDomain:@"VirtualIntelMac.RemoteLogin" code:1 userInfo:@{NSLocalizedDescriptionKey:@"Terminal couldn’t open this connection. Use Copy Command and paste it into Terminal."}],self.window);
+        return;
+    }
+    // Finder connects over the VM's network, not the guest-control socket.
+    // Let Finder report SMB errors even if guest tools are busy or unavailable.
     NSURL *url=[NSURL URLWithString:sender.identifier];
-    if(![url.scheme isEqual:@"smb"]){[NSWorkspace.sharedWorkspace openURL:url];return;}
-    sender.enabled=NO;
-    [VIMSession checkGuestFileSharing:self.machine completion:^(NSError *error){
-        sender.enabled=YES;
-        if(!error){[NSWorkspace.sharedWorkspace openURL:url];return;}
-        if(![error.domain isEqual:@"VirtualIntelMac.FileSharingDisabled"]){VIMPresentError(error,self.window);return;}
-        NSAlert *alert=[NSAlert alertWithError:error];
-        [alert.buttons.firstObject setTitle:@"Open Sharing Settings"];
-        [alert addButtonWithTitle:@"Cancel"];
-        VIMPresentAlert(alert,self.window,^(NSModalResponse answer){
-            if(answer==NSAlertFirstButtonReturn)[VIMSession openGuestPreferences:@"sharing" machine:self.machine completion:^(NSError *failure){if(failure)VIMPresentError(failure,self.window);}];
-        });
-    }];
+    if(url)[NSWorkspace.sharedWorkspace openURL:url];
 }
 - (void)openGuestConnection:(NSButton *)sender {
-    [VIMSession openHostConnection:[NSURL URLWithString:sender.identifier] inMachine:self.machine completion:^(NSError *error){if(error)VIMPresentError(error,self.window);}];
+    NSString *title=sender.title;sender.enabled=NO;sender.title=@"Opening…";
+    [VIMSession openHostConnection:[NSURL URLWithString:sender.identifier] inMachine:self.machine completion:^(NSError *error){
+        sender.title=title;sender.enabled=YES;if(error)VIMPresentError(error,self.window);
+    }];
 }
 - (void)openSharing:(id)sender {[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preferences.sharing"]];}
 - (void)microphone:(id)sender {
@@ -848,11 +901,12 @@ static void VIMAlignFormBaselines(NSView *view) {
 }
 + (void)showForMachine:(VIMMachine *)machine window:(NSWindow *)window completion:(void (^)(void))completion {
     static NSMutableDictionary<NSString *,VIMConfigurationWindow *> *windows;
-    if(!windows)windows=[NSMutableDictionary dictionary];NSString *key=machine.configuration[@"Identifier"]?:machine.URL.URLByResolvingSymlinksInPath.path;
+    if(!windows)windows=[NSMutableDictionary dictionary];NSString *key=[[[NSUUID alloc] initWithUUIDString:machine.configuration[@"Identifier"]] UUIDString]?:machine.URL.URLByResolvingSymlinksInPath.path;
     VIMConfigurationWindow *controller=windows[key];
     if(!controller){controller=[[VIMConfigurationWindow alloc] initWithMachine:machine];windows[key]=controller;}
     else if(!controller.window.visible){controller.machine=machine;controller.invalidField=NO;[controller render];}
     controller.completion=completion;
+    if(controller.window.miniaturized)[controller.window deminiaturize:nil];
     [controller showWindow:nil];[controller.window makeKeyAndOrderFront:nil];
 }
 @end

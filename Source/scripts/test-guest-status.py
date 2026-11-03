@@ -25,9 +25,20 @@ with tempfile.TemporaryDirectory(prefix='vim-status-test-') as directory:
         return result
     check('10.14.6','mojave',False)
     (system/'Finder.app').mkdir()
+    before_setup=check('11.7.10','bigsur',False)
+    assert before_setup['InstalledRootPresent'] is True and before_setup['NativePVGAvailable'] is False
+    native=root/'System/Library/Extensions/AppleParavirtGPU.kext/Contents'
+    (native/'MacOS').mkdir(parents=True)
+    (native/'MacOS/AppleParavirtGPU').touch()
+    (native/'Info.plist').write_bytes(plistlib.dumps({
+        'CFBundleIdentifier':'com.apple.driver.AppleParavirtGPU',
+        'IOKitPersonalities':{'AppleParavirtGPUControl':{'IOPCIMatch':'0xEEEE106B'}}}))
+    before_setup=check('11.7.10','bigsur',False)
+    assert before_setup['NativePVGAvailable'] is True and before_setup['SetupComplete'] is False
+    assert check('10.15.7','catalina',False)['NativePVGAvailable'] is False
     setup.touch()
     for version, guest in [('10.14.1','mojave'),('10.14.99','mojave'),
-                           ('10.15.0','catalina'),('10.15.99','catalina'),('11.7.10','bigsur')]:
+                           ('10.15.0','catalina'),('10.15.99','catalina'),('11.7.10','bigsur'),('10.16','bigsur'),('10.16.99','bigsur')]:
         check(version,guest,True)
     check('10.13.6','unsupported',False)
     check('27.0','unsupported',False)
@@ -39,11 +50,13 @@ with tempfile.TemporaryDirectory(prefix='vim-status-test-') as directory:
         assert result['OSInstallerMessagesPresent'] is True and result['InstallerMarkers']==[], result
     marker=root/'macOS Install Data'
     marker.mkdir()
-    assert check('11.7.10','bigsur',False)['InstallerMarkers']==['macOS Install Data']
+    pending=check('11.7.10','bigsur',False)
+    assert pending['InstallerMarkers']==['macOS Install Data'] and pending['InstalledRootPresent'] is False
     marker.rmdir()
     recovery=root/'System/Installation/CDIS/macOS Utilities.app'
     recovery.mkdir(parents=True)
-    assert check('11.7.10','bigsur',False)['RecoveryToolsPresent'] is True
+    recovery_report=check('11.7.10','bigsur',False)
+    assert recovery_report['RecoveryToolsPresent'] is True and recovery_report['InstalledRootPresent'] is False
     (system/'SystemVersion.plist').write_bytes(b'not a plist')
     assert subprocess.run([binary,'--root',root],capture_output=True).returncode==65
 assert subprocess.run([binary,'--root','relative'],capture_output=True).returncode==64

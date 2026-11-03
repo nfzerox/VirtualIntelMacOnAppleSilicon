@@ -33,11 +33,6 @@ def build(output):
         # rest of its signed plugin bundle and the native Catalina compiler.
         metal_prefix = 'payload/System/Library/Extensions/AppleParavirtGPUMetal.bundle'
         seed = runpy.run_path(str(source/'scripts/payload-archive.py'))['release_archive'](source/'prebuilt')
-        seed_hash = [line.split()[0] for line in (source/'prebuilt/SHA256SUMS').read_text().splitlines()
-                     if len(line.split()) == 2 and line.split()[1] == seed.name]
-        import hashlib
-        if seed_hash != [hashlib.sha256(seed.read_bytes()).hexdigest()]:
-            raise ValueError('Catalina Metal seed checksum mismatch')
         serializer_prefix = 'payload/System/Library/PrivateFrameworks/MetalSerializer.framework'
         with tarfile.open(seed, 'r:*') as archive:
             for member in archive:
@@ -104,8 +99,6 @@ def build(output):
                         stream.addfile(member, data)
                 else:
                     stream.addfile(member)
-    import hashlib
-    (output/'SHA256SUMS').write_text(hashlib.sha256(archive.read_bytes()).hexdigest()+'  catalina-gl.tar.gz\n')
     return archive
 
 

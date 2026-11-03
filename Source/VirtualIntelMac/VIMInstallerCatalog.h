@@ -5,6 +5,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) NSUInteger revision;
 + (nullable instancetype)catalogWithData:(NSData *)data error:(NSError **)error;
 + (nullable instancetype)currentCatalogWithError:(NSError **)error;
++ (nullable NSDictionary *)fileForGuest:(NSString *)guest role:(NSString *)role;
++ (nullable NSDictionary *)fileForURL:(NSURL *)URL;
 /// Remote data can select approved assembly recipes, never executable commands.
 + (void)refreshWithCompletion:(void (^)(VIMInstallerCatalog *_Nullable catalog, NSError *_Nullable error))completion;
 /// Debug override retains the exact Apple URL path on a loopback HTTP server.

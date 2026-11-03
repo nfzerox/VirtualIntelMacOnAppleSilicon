@@ -3,7 +3,7 @@
 // a genuine user copy made while the qualification was in progress.
 #import <AppKit/AppKit.h>
 #include <unistd.h>
-static NSString *python,*script,*directory,*guestTool,*account;
+static NSString *python,*script,*directory,*guestTool,*account,*finderPID;
 static NSInteger ownedHostChange=-1;
 static NSDictionary *Request(NSArray *arguments) {
     NSTask *task=[NSTask new];task.executableURL=[NSURL fileURLWithPath:python];
@@ -25,7 +25,12 @@ static NSDictionary *Guest(NSString *operation,NSString *text) {
         operation=[operation stringByAppendingString:@"64"];
         text=[[text dataUsingEncoding:NSUTF8StringEncoding] base64EncodedStringWithOptions:0];
     }
-    NSDictionary *result=Request(@[@"/bin/launchctl",@"asuser",account,@"/usr/bin/sudo",@"-n",@"-u",[@"#" stringByAppendingString:account],guestTool,operation,text]);
+    // The period branch uses the same closed-stdin sudo mode as production;
+    // Leopard's native sudo has no -n switch.
+    NSMutableArray *arguments=[@[@"/bin/launchctl",finderPID?@"bsexec":@"asuser",finderPID?:account,@"/usr/bin/sudo",finderPID?@"-S":@"-n",@"-u",[@"#" stringByAppendingString:account]] mutableCopy];
+    if(finderPID)[arguments addObjectsFromArray:@[@"/usr/bin/env",@"-i",@"PATH=/usr/bin:/bin:/usr/sbin:/sbin"]];
+    [arguments addObjectsFromArray:@[guestTool,operation,text]];
+    NSDictionary *result=Request(arguments);
     if(![result[@"ExitCode"] isEqual:@0])@throw @"Guest pasteboard adapter failed";return result;
 }
 static NSArray *CopyItems(void) {
@@ -159,8 +164,9 @@ int main(int argc,const char **argv){@autoreleasepool {
         python=@(argv[1]);script=@(argv[2]);setvbuf(stdout,NULL,_IOLBF,0);
         return QualifyTwoGuests(@[@[@(argv[3]),@(argv[4]),@(argv[5])],@[@(argv[6]),@(argv[7]),@(argv[8])]]);
     }
-    if(argc!=6){fprintf(stderr,"clipboard-live PYTHON APP_COMMAND_SCRIPT DIAGNOSTIC_DIRECTORY GUEST_PROBE_PATH CONSOLE_UID [SECOND_DIRECTORY SECOND_GUEST_PROBE SECOND_UID]\n");return 64;}
+    if(argc!=6&&argc!=7){fprintf(stderr,"clipboard-live PYTHON APP_COMMAND_SCRIPT DIAGNOSTIC_DIRECTORY GUEST_PROBE_PATH CONSOLE_UID [FINDER_PID | SECOND_DIRECTORY SECOND_GUEST_PROBE SECOND_UID]\n");return 64;}
     python=@(argv[1]);script=@(argv[2]);directory=@(argv[3]);guestTool=@(argv[4]);account=@(argv[5]);
+    if(argc==7){char *end=NULL;long pid=strtol(argv[6],&end,10);if(!*argv[6]||*end||pid<=1||pid>INT_MAX)return 64;finderPID=@(argv[6]);}
     setvbuf(stdout,NULL,_IOLBF,0);
     NSString *prefix=[@"VIMClipboardTest-" stringByAppendingString:NSUUID.UUID.UUIDString];
     NSArray *backup=nil;BOOL guestSaved=NO,originalEnabled=YES,success=NO,changed=NO;

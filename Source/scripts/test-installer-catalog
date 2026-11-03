@@ -2,8 +2,14 @@
 set -euo pipefail
 root=${0:A:h:h}
 mkdir -p "$root/Build/Probes"
-xcrun clang -fobjc-arc -fmodules -Wall -mmacosx-version-min=26.0 \
-    -I "$root/VirtualIntelMac" -framework Foundation \
+bundle="$root/Build/Probes/InstallerCatalogTests.app"
+mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
+cp "$root/VirtualIntelMac/InstallerCatalog.plist" "$bundle/Contents/Resources/InstallerCatalog.plist"
+plutil -create xml1 "$bundle/Contents/Info.plist"
+plutil -insert CFBundleExecutable -string InstallerCatalogTests "$bundle/Contents/Info.plist"
+plutil -insert CFBundleIdentifier -string com.mac.virtualintelmac.catalog-tests "$bundle/Contents/Info.plist"
+xcrun clang -fobjc-arc -fmodules -Wall -mmacosx-version-min=15.0 \
+    -I "$root/VirtualIntelMac" -framework Foundation -framework Security \
     "$root/probes/installer-catalog-tests.m" "$root/VirtualIntelMac/VIMInstallerCatalog.m" \
-    -o "$root/Build/Probes/installer-catalog-tests"
-exec "$root/Build/Probes/installer-catalog-tests" "$root/VirtualIntelMac/InstallerCatalog.plist"
+    "$root/VirtualIntelMac/VIMInstallerSource.m" -o "$bundle/Contents/MacOS/InstallerCatalogTests"
+exec "$bundle/Contents/MacOS/InstallerCatalogTests" "$root/VirtualIntelMac/InstallerCatalog.plist"

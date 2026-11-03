@@ -8,5 +8,9 @@ xcrun clang -fobjc-arc -fmodules -mmacosx-version-min=11.0 -arch arm64 -arch x86
   "$source_dir/VirtualIntelMac/VIMFirmwareBoot.m" "$source_dir/VirtualIntelMac/VIMLibraryLocation.m" \
   "$source_dir/VirtualIntelMac/VIMAlerts.m" \
   "$source_dir/VirtualIntelMac/VIMNetworkDefaults.m" \
-  -framework Cocoa -o "$source_dir/Build/Probes/machine-configuration-tests"
+  "$source_dir/VirtualIntelMac/VIMAutomaticSetup.m" \
+  "$source_dir/VirtualIntelMac/VIMInstallerCatalog.m" \
+  "$source_dir/VirtualIntelMac/VIMInstallerSource.m" \
+  "$source_dir/VirtualIntelMac/VIMHFSInstallerDisk.c" \
+  -framework Cocoa -framework Security -o "$source_dir/Build/Probes/machine-configuration-tests"
 "$source_dir/Build/Probes/machine-configuration-tests"

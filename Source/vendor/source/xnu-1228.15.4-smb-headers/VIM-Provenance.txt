@@ -1,0 +1,8 @@
+Apple xnu-1228.15.4, commit 083332250d12f1d698a5c3282a18fee46847ec92
+https://github.com/apple-oss-distributions/xnu/tree/xnu-1228.15.4
+
+Only the212 original headers actually used in the native smb-348.7 source
+build are copied here, from period compiler dependency output. Original
+notices and APPLE_LICENSE are preserved. No generated architecture layouts,
+compatibility stubs or newer kernel interfaces are substituted. Public and
+generated architecture/MIG headers continue to come from the genuine10.5 SDK.

@@ -880,6 +880,19 @@ static inline int64_t cpu_get_host_ticks(void)
     return val;
 }
 
+#elif defined(__APPLE__) && defined(__aarch64__)
+
+static inline int64_t cpu_get_host_ticks(void)
+{
+    /* Darwin's CLOCK_MONOTONIC is microsecond-quantized on ARM.  Keep ticks
+     * in nanoseconds, but retain the hardware clock's sub-microsecond
+     * precision for guest TSC calibration and short scheduler intervals.
+     * UPTIME_RAW is monotonic, does not follow wall-clock corrections, and
+     * excludes host sleep, like the cycle counters used on other hosts.
+     */
+    return clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+}
+
 #elif defined(__hppa__)
 
 static inline int64_t cpu_get_host_ticks(void)

@@ -1,0 +1,438 @@
+#!/bin/bash
+# Independent desktop-GL forwarding research. No Mesa build or installation.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+sdk="${VIM_OPENGL_SDK:-$root/resources/sdk/MacOSX10.9.sdk}"
+build="${VIM_PASSTHROUGH_OPENGL_BUILD:-$root/Build/PassthroughOpenGLResearch/GL}"
+if [[ "${VIM_BACKING_GATHER_INITIALIZE_EXPERIMENT:-0}" == 1 && "${VIM_BACKING_SCATTER_EXPERIMENT:-0}" != 1 ]]; then
+    echo 'CPU-current initialization requires VIM_BACKING_SCATTER_EXPERIMENT=1.' >&2
+    exit 2
+fi
+if [[ "${VIM_BACKING_COALESCING_EXPERIMENT:-0}" == 1 && "${VIM_BACKING_SCATTER_EXPERIMENT:-0}" != 1 ]]; then
+    echo 'CPU materialization coalescing requires VIM_BACKING_SCATTER_EXPERIMENT=1.' >&2
+    exit 2
+fi
+if [[ "${VIM_BACKING_SCATTER_EXPERIMENT:-0}" == 1 && "${VIM_BACKING_CANONICAL_FUTURE_EXPERIMENT:-0}" != 1 ]]; then
+    echo 'Scatter ownership requires VIM_BACKING_CANONICAL_FUTURE_EXPERIMENT=1 and its prerequisites.' >&2
+    exit 2
+fi
+if [[ "${VIM_BACKING_WRITER_EXPERIMENT:-0}" == 1 && "${VIM_BACKING_FUTURE_EXPERIMENT:-0}" != 1 ]]; then
+    echo 'GPU writer continuation requires VIM_BACKING_FUTURE_EXPERIMENT=1 and its ownership prerequisites.' >&2
+    exit 2
+fi
+if [[ "${VIM_BACKING_FUTURE_EXPERIMENT:-0}" == 1 && "${VIM_BACKING_ASYNC_EXPERIMENT:-0}" != 1 ]]; then
+    echo 'Future backing requires VIM_BACKING_ASYNC_EXPERIMENT=1 and scoped ownership.' >&2
+    exit 2
+fi
+if [[ "${VIM_BACKING_CANONICAL_EXPERIMENT:-0}" == 1 && "${VIM_BACKING_RENDER_SCOPE_EXPERIMENT:-0}" != 1 ]]; then
+    echo 'Canonical backing requires VIM_BACKING_RENDER_SCOPE_EXPERIMENT=1.' >&2
+    exit 2
+fi
+if [[ "${VIM_BACKING_ASYNC_EXPERIMENT:-0}" == 1 && "${VIM_BACKING_RENDER_SCOPE_EXPERIMENT:-0}" != 1 ]]; then
+    echo 'Asynchronous backing requires VIM_BACKING_RENDER_SCOPE_EXPERIMENT=1.' >&2
+    exit 2
+fi
+if [[ "${VIM_BACKING_CANONICAL_FUTURE_EXPERIMENT:-0}" == 1 && ( "${VIM_BACKING_CANONICAL_EXPERIMENT:-0}" != 1 || "${VIM_BACKING_WRITER_EXPERIMENT:-0}" != 1 ) ]]; then
+    echo 'Combined canonical/future qualification requires canonical storage and retained GPU writers.' >&2
+    exit 2
+fi
+if [[ "${VIM_BACKING_ASYNC_EXPERIMENT:-0}" == 1 && "${VIM_BACKING_CANONICAL_EXPERIMENT:-0}" == 1 && "${VIM_BACKING_CANONICAL_FUTURE_EXPERIMENT:-0}" != 1 ]]; then
+    echo 'Qualify asynchronous and canonical backing separately; do not combine unqualified experiments.' >&2
+    exit 2
+fi
+mkdir -p "$build"
+bash "$root/scripts/build-opengl-ga"
+python3 "$root/scripts/generate-passthrough-opengl.py" "$sdk" "$build"
+python3 "$root/scripts/generate-opengl-gli.py" "$build/passthrough-opengl-gli-map.json" "$build/passthrough-opengl-gli-generated.inc"
+# Keep symbols/frame chains for native traces without shipping the research
+# hot paths at clang's default -O0 (particularly costly under TCG).
+flags=(-O2 -g -fno-omit-frame-pointer -Wall -Wextra -Werror -Wno-deprecated-declarations -Wno-misleading-indentation -Wno-unused-function)
+clang++ -std=gnu++98 "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+    "$root/probes/opengl-backing-access.cpp" -o "$build/opengl-backing-access"
+clang++ -std=gnu++98 "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+    "$root/probes/opengl-writer-chain.cpp" -o "$build/opengl-writer-chain"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+    "$root/probes/opengl-completion-wait.c" -framework OpenGL -o "$build/opengl-completion-wait"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+    "$root/probes/opengl-completion-retirement.c" -framework OpenGL -o "$build/opengl-completion-retirement"
+clang "${flags[@]}" -fobjc-arc -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+    "$root/probes/metal-command-clock.m" -framework Foundation -framework Metal -framework QuartzCore \
+    -o "$build/metal-command-clock"
+# Explicit research capture only; normal executors contain no journal code.
+if [[ "${VIM_DISPLAY_JOURNAL:-0}" == 1 ]]; then flags+=(-DVIM_DISPLAY_JOURNAL=1); fi
+# Unqualified held-step latency candidate; never part of a normal research build.
+if [[ "${VIM_GLI_CONNECTION_REUSE_EXPERIMENT:-0}" == 1 ]]; then flags+=(-DVIM_GLI_CONNECTION_REUSE_EXPERIMENT=1); fi
+guest=(-arch x86_64 -isysroot "$sdk" -mmacosx-version-min=10.9)
+clang "${flags[@]}" "${guest[@]}" -Wno-missing-braces -I "$build" -fvisibility=hidden -Wl,-exported_symbol,_main \
+    "$root/probes/opengl-direct-boundary-cost.c" -framework IOKit -framework CoreFoundation \
+    -o "$build/opengl-direct-boundary-cost"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+    "$root/probes/opengl-direct-memory-stream.c" -o "$build/opengl-direct-memory-stream"
+clang "${flags[@]}" "${guest[@]}" -I "$build" \
+    "$root/probes/opengl-direct-exchange-trap.c" -framework IOKit -framework CoreFoundation \
+    -o "$build/opengl-direct-exchange-trap"
+clang "${flags[@]}" "${guest[@]}" -I "$build" \
+    "$root/probes/opengl-direct-command-copy.c" -framework IOKit -framework CoreFoundation \
+    -o "$build/opengl-direct-command-copy"
+clang "${flags[@]}" "${guest[@]}" -I "$build" \
+    "$root/probes/opengl-direct-command-profile.c" -framework IOKit -framework CoreFoundation \
+    -o "$build/opengl-direct-command-profile"
+clang "${flags[@]}" "${guest[@]}" -Wno-missing-braces -I "$build" \
+    "$root/probes/opengl-direct-snapshot-policy.c" -framework IOKit -framework CoreFoundation \
+    -o "$build/opengl-direct-snapshot-policy"
+clang "${flags[@]}" "${guest[@]}" -I "$build" \
+    "$root/probes/opengl-direct-backing-stats.c" -framework IOKit -framework CoreFoundation \
+    -o "$build/opengl-direct-backing-stats"
+clang "${flags[@]}" "${guest[@]}" -I "$build" \
+    "$root/probes/opengl-direct-full-read-wire.c" -framework IOKit -framework CoreFoundation \
+    -o "$build/opengl-direct-full-read-wire"
+clang "${flags[@]}" "${guest[@]}" -I "$build" \
+    "$root/probes/opengl-direct-shared-family-wire.c" -framework IOKit -framework CoreFoundation \
+    -o "$build/opengl-direct-shared-family-wire"
+clang "${flags[@]}" "${guest[@]}" "$root/PassthroughOpenGL/passthrough-opengl-relay.c" -o "$build/vim-passthrough-opengl-relay"
+# Universal host executor even when built on just one host architecture.
+host_flags=("${flags[@]}")
+# Aggregate-only, explicitly armed research timing; ordinary builds contain
+# neither its control endpoint nor per-command instrumentation.
+if [[ "${VIM_PASSTHROUGH_OPENGL_COMMAND_PROFILE:-0}" == 1 ]]; then host_flags+=(-DVIM_PASSTHROUGH_OPENGL_COMMAND_PROFILE=1); fi
+# Explicit ownership/rendering qualification, not yet a normal GLI path.
+if [[ "${VIM_BACKING_RENDER_SCOPE_EXPERIMENT:-0}" == 1 ]]; then
+    host_flags+=(-DVIM_VRAM_RENDER_TARGET_EXPERIMENT=1)
+    if [[ "${VIM_BACKING_CANONICAL_EXPERIMENT:-0}" == 1 ]]; then
+        host_flags+=(-DVIM_BACKING_CANONICAL_EXPERIMENT=1)
+        if [[ "${VIM_BACKING_CANONICAL_FUTURE_EXPERIMENT:-0}" == 1 ]]; then
+            host_flags+=(-DVIM_BACKING_CANONICAL_FUTURE_EXPERIMENT=1)
+            if [[ "${VIM_BACKING_SCATTER_EXPERIMENT:-0}" == 1 ]]; then
+                host_flags+=(-DVIM_BACKING_SCATTER_EXPERIMENT=1)
+                if [[ "${VIM_BACKING_COALESCING_EXPERIMENT:-0}" == 1 ]]; then
+                    host_flags+=(-DVIM_BACKING_COALESCING_EXPERIMENT=1)
+                fi
+                if [[ "${VIM_BACKING_GATHER_INITIALIZE_EXPERIMENT:-0}" == 1 ]]; then
+                    host_flags+=(-DVIM_BACKING_GATHER_INITIALIZE_EXPERIMENT=1)
+                fi
+            fi
+        fi
+    fi
+    if [[ "${VIM_BACKING_ASYNC_EXPERIMENT:-0}" == 1 ]]; then
+        host_flags+=(-DVIM_BACKING_ASYNC_EXPERIMENT=1)
+        if [[ "${VIM_BACKING_FUTURE_EXPERIMENT:-0}" == 1 ]]; then
+            host_flags+=(-DVIM_BACKING_FUTURE_EXPERIMENT=1)
+            if [[ "${VIM_BACKING_WRITER_EXPERIMENT:-0}" == 1 ]]; then
+                host_flags+=(-DVIM_BACKING_WRITER_EXPERIMENT=1)
+            fi
+        fi
+    fi
+fi
+clang "${host_flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+    -I "$build" "$root/PassthroughOpenGL/passthrough-opengl-host.c" -framework OpenGL -framework IOSurface -framework CoreFoundation -lbsm -o "$build/passthrough-opengl-host"
+clang "${host_flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+    -fvisibility=hidden -DVIM_PASSTHROUGH_OPENGL_INPROCESS=1 -dynamiclib -I "$build" \
+    "$root/PassthroughOpenGL/passthrough-opengl-host.c" -framework OpenGL -framework IOSurface \
+    -framework CoreFoundation -lbsm -Wl,-install_name,@rpath/libVIMPassthroughOpenGLHost.dylib \
+    -o "$build/libVIMPassthroughOpenGLHost.dylib"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+    "$root/probes/opengl-direct-inline-stream.c" -framework OpenGL -o "$build/opengl-direct-inline-stream"
+clang "${flags[@]}" -Wno-missing-braces -Wno-missing-field-initializers \
+    -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+    "$root/probes/opengl-direct-command-profile-wire.c" -framework OpenGL -framework IOSurface \
+    -framework CoreFoundation -lbsm -o "$build/opengl-direct-command-profile-wire"
+# Explicit hidden wrappers are essential: native GL dlsym calls inside the
+# executor must not resolve back to the qualification executable's GL client.
+for probe in opengl-direct-inprocess opengl-direct-sync-publication opengl-direct-iosurface-float opengl-direct-common-state-wire opengl-direct-program-locations opengl-direct-shared-family-wire opengl-direct-iosurface-writes-wire opengl-direct-native-recovery-wire opengl-direct-client-profile opengl-direct-array-allocation opengl-compressed-draw-buffers; do
+    clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+        -fvisibility=hidden -DVIM_PASSTHROUGH_OPENGL_INPROCESS_CLIENT=1 -I "$build" \
+        "$root/probes/$probe.c" -framework IOKit -framework CoreFoundation \
+        -Wl,-exported_symbol,_main -o "$build/$probe-inprocess"
+done
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+    -fvisibility=hidden -DVIM_PASSTHROUGH_OPENGL_INPROCESS_CLIENT=1 -I "$build" \
+    "$root/probes/opengl-direct-compact-scalars.c" -framework IOKit -framework CoreFoundation \
+    -Wl,-exported_symbol,_main -o "$build/opengl-direct-compact-scalars-inprocess"
+clang "${flags[@]}" "${guest[@]}" -I "$build" \
+    "$root/probes/opengl-direct-compact-scalars.c" -framework IOKit -framework CoreFoundation \
+    -o "$build/opengl-direct-compact-scalars"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+    "$root/probes/opengl-direct-compact-wire.c" -framework OpenGL -framework IOSurface \
+    -framework CoreFoundation -lbsm -o "$build/opengl-direct-compact-wire"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+    -fvisibility=hidden -DVIM_PASSTHROUGH_OPENGL_INPROCESS_CLIENT=1 -DVIM_UNIFORM_DIRECT=1 -I "$build" \
+    "$root/probes/opengl-gl-uniform-query.c" -framework IOKit -framework CoreFoundation \
+    -Wl,-exported_symbol,_main -o "$build/passthrough-opengl-uniform-query-inprocess"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+    "$root/probes/opengl-direct-common-state-wire.c" -framework IOKit -framework CoreFoundation -o "$build/opengl-direct-common-state-wire-host"
+clang "${flags[@]}" "${guest[@]}" -I "$build" \
+    "$root/probes/opengl-direct-common-state-wire.c" -framework IOKit -framework CoreFoundation -o "$build/opengl-direct-common-state-wire"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+    "$root/probes/opengl-direct-program-locations.c" -framework IOKit -framework CoreFoundation -o "$build/opengl-direct-program-locations-host"
+clang "${flags[@]}" "${guest[@]}" -I "$build" \
+    "$root/probes/opengl-direct-program-locations.c" -framework IOKit -framework CoreFoundation -o "$build/opengl-direct-program-locations"
+clang "${flags[@]}" "${guest[@]}" -DVIM_LOCATION_NATIVE=1 \
+    "$root/probes/opengl-direct-program-locations.c" -framework OpenGL -o "$build/opengl-direct-program-locations-native109"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+    "$root/probes/opengl-direct-tight-upload-wire.c" -framework IOKit -framework CoreFoundation -o "$build/opengl-direct-tight-upload-wire-host"
+clang "${flags[@]}" "${guest[@]}" -I "$build" \
+    "$root/probes/opengl-direct-tight-upload-wire.c" -framework IOKit -framework CoreFoundation -o "$build/opengl-direct-tight-upload-wire"
+for probe in opengl-direct-storage-reuse opengl-direct-surface-registration opengl-direct-snapshot-import opengl-direct-snapshot-seal opengl-direct-surface-regions opengl-direct-surface-copy opengl-direct-sealed-regions opengl-direct-cross-context-regions opengl-direct-display-buffers opengl-direct-display-sender opengl-direct-display-service opengl-direct-vram-drawable opengl-direct-vram-render-target opengl-direct-iosurface-texture opengl-direct-flipped-alias opengl-direct-alias-rebind opengl-direct-array-enables; do
+    clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+        "$root/probes/$probe.c" -framework OpenGL -framework IOSurface -framework CoreFoundation -lbsm -o "$build/$probe"
+done
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+    "$root/probes/opengl-direct-backing-retirement.c" -framework OpenGL -framework IOSurface \
+    -framework CoreFoundation -lbsm -o "$build/opengl-direct-backing-retirement"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+    "$root/probes/opengl-direct-backing-scope-wire.c" -framework OpenGL -framework IOSurface \
+    -framework CoreFoundation -lbsm -o "$build/opengl-direct-backing-scope-wire"
+if [[ "${VIM_BACKING_CANONICAL_EXPERIMENT:-0}" == 1 ]]; then
+    clang "${flags[@]}" -DVIM_BACKING_CANONICAL_EXPERIMENT=1 -arch arm64 -arch x86_64 \
+        -mmacosx-version-min=11.0 -I "$build" "$root/probes/opengl-direct-backing-scope-wire.c" \
+        -framework OpenGL -framework IOSurface -framework CoreFoundation -lbsm \
+        -o "$build/opengl-direct-backing-scope-wire-canonical"
+fi
+if [[ "${VIM_BACKING_ASYNC_EXPERIMENT:-0}" == 1 ]]; then
+    clang "${flags[@]}" -DVIM_BACKING_ASYNC_EXPERIMENT=1 -arch arm64 -arch x86_64 \
+        -mmacosx-version-min=11.0 -I "$build" "$root/probes/opengl-direct-backing-scope-wire.c" \
+        -framework OpenGL -framework IOSurface -framework CoreFoundation -lbsm \
+        -o "$build/opengl-direct-backing-scope-wire-async"
+fi
+if [[ "${VIM_BACKING_FUTURE_EXPERIMENT:-0}" == 1 ]]; then
+    clang "${flags[@]}" -DVIM_BACKING_ASYNC_EXPERIMENT=1 -DVIM_BACKING_FUTURE_EXPERIMENT=1 \
+        -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+        "$root/probes/opengl-direct-backing-scope-wire.c" -framework OpenGL -framework IOSurface \
+        -framework CoreFoundation -lbsm -o "$build/opengl-direct-backing-scope-wire-future"
+fi
+if [[ "${VIM_BACKING_WRITER_EXPERIMENT:-0}" == 1 ]]; then
+    clang "${flags[@]}" -DVIM_BACKING_ASYNC_EXPERIMENT=1 -DVIM_BACKING_FUTURE_EXPERIMENT=1 \
+        -DVIM_BACKING_WRITER_EXPERIMENT=1 -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+        "$root/probes/opengl-direct-backing-scope-wire.c" -framework OpenGL -framework IOSurface \
+        -framework CoreFoundation -lbsm -o "$build/opengl-direct-backing-scope-wire-writer"
+fi
+if [[ "${VIM_BACKING_CANONICAL_FUTURE_EXPERIMENT:-0}" == 1 ]]; then
+    # Exercise the ACTUAL combined configuration, not two separately passing
+    # fixtures. No guest install or enablement follows from this build.
+    clang "${host_flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+        -I "$build" "$root/probes/opengl-direct-backing-scope-wire.c" \
+        -framework OpenGL -framework IOSurface -framework CoreFoundation -lbsm \
+        -o "$build/opengl-direct-backing-scope-wire-canonical-future"
+fi
+if [[ "${VIM_BACKING_SCATTER_EXPERIMENT:-0}" == 1 ]]; then
+    clang "${host_flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+        -I "$build" "$root/probes/opengl-direct-backing-scatter.c" \
+        -framework OpenGL -framework IOSurface -framework CoreFoundation -lbsm \
+        -o "$build/opengl-direct-backing-scatter"
+    clang "${host_flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+        -I "$build" "$root/probes/opengl-direct-backing-scatter-benchmark.c" \
+        -framework OpenGL -framework IOSurface -framework CoreFoundation -lbsm \
+        -o "$build/opengl-direct-backing-scatter-benchmark"
+fi
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+    "$root/probes/opengl-metal-vram-publication.m" -framework OpenGL -framework IOSurface \
+    -framework CoreFoundation -framework Foundation -framework Metal -lbsm -o "$build/opengl-metal-vram-publication"
+for probe in opengl-host-client-storage opengl-host-shared-client-storage; do
+    clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+        "$root/probes/$probe.c" -framework OpenGL -o "$build/$probe"
+done
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+    -DVIM_SHARED_MAPPING_BYTES=134217728 -DVIM_SHARED_USE_MMAP=1 -DVIM_SHARED_SINGLE_PIXEL=1 \
+    "$root/probes/opengl-host-shared-client-storage.c" -framework OpenGL -o "$build/opengl-host-shared-client-storage-sparse"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+    -DVIM_SHARED_RENDER_TARGET=1 "$root/probes/opengl-host-shared-client-storage.c" \
+    -framework OpenGL -o "$build/opengl-host-shared-render-target"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+    -DVIM_SHARED_RENDER_TARGET=2 "$root/probes/opengl-host-shared-client-storage.c" \
+    -framework OpenGL -o "$build/opengl-host-exact-shared-render-target"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+    "$root/probes/opengl-qemu-shared-vram.c" -framework OpenGL -lbsm -o "$build/opengl-qemu-shared-vram"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+    "$root/PassthroughOpenGL/passthrough-opengl-client.c" "$root/probes/opengl-passthrough-opengl-region-wire.c" \
+    -framework IOKit -framework CoreFoundation -o "$build/opengl-passthrough-opengl-region-wire-host"
+clang "${flags[@]}" "${guest[@]}" -I "$build" \
+    "$root/PassthroughOpenGL/passthrough-opengl-client.c" "$root/probes/opengl-passthrough-opengl-region-wire.c" \
+    -framework IOKit -framework CoreFoundation -o "$build/opengl-passthrough-opengl-region-wire"
+for probe in opengl-direct-surface-copy-wire; do
+    clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+        "$root/PassthroughOpenGL/passthrough-opengl-client.c" "$root/probes/$probe.c" \
+        -framework IOKit -framework CoreFoundation -o "$build/$probe-host"
+    clang "${flags[@]}" "${guest[@]}" -I "$build" \
+        "$root/PassthroughOpenGL/passthrough-opengl-client.c" "$root/probes/$probe.c" \
+        -framework IOKit -framework CoreFoundation -o "$build/$probe"
+done
+# Optional same-code executor for the physical accelerated Mavericks oracle.
+# Diagnostic only: use a loopback SSH forward, never expose the wire server.
+if [[ "${VIM_PASSTHROUGH_OPENGL_REFERENCE_HOST:-0}" == 1 ]]; then
+    clang "${flags[@]}" -UVIM_DISPLAY_JOURNAL "${guest[@]}" -I "$build" \
+        "$root/PassthroughOpenGL/passthrough-opengl-host.c" -framework OpenGL -framework IOSurface \
+        -framework CoreFoundation -lbsm -o "$build/passthrough-opengl-host-native109"
+fi
+clang "${flags[@]}" "${guest[@]}" -dynamiclib "$root/PassthroughOpenGL/passthrough-opengl-client.c" -I "$build" \
+    -Wl,-install_name,@rpath/libVIMPassthroughOpenGL.dylib -framework IOKit -framework CoreFoundation -o "$build/libVIMPassthroughOpenGL.dylib"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-vram-stats.c" -L "$build" -lVIMPassthroughOpenGL \
+    -Wl,-rpath,@executable_path -o "$build/opengl-vram-stats"
+install_name_tool -change @rpath/libVIMPassthroughOpenGL.dylib @executable_path/libVIMPassthroughOpenGL.dylib "$build/opengl-vram-stats"
+clang "${flags[@]}" "${guest[@]}" -DVIM_PASSTHROUGH_OPENGL_BACKEND=1 -dynamiclib \
+    "$root/PassthroughOpenGL/direct-cgl.c" -I "$build" \
+    -Wl,-reexport_library,"$build/libVIMPassthroughOpenGL.dylib" -Wl,-install_name,@rpath/libVIMCGL.dylib \
+    -Wl,-rpath,@loader_path -framework IOSurface -framework CoreFoundation -o "$build/libVIMCGL.dylib"
+install_name_tool -change @rpath/libVIMPassthroughOpenGL.dylib @loader_path/libVIMPassthroughOpenGL.dylib "$build/libVIMCGL.dylib"
+gli_flags=("${flags[@]}")
+clang "${gli_flags[@]}" "${guest[@]}" -DVIM_PASSTHROUGH_OPENGL_BACKEND=1 -dynamiclib -fvisibility=hidden \
+    "$root/PassthroughOpenGL/passthrough-opengl-gli.c" -I "$build" "$build/libVIMPassthroughOpenGL.dylib" \
+    -Wl,-install_name,@rpath/libVIMGLI.dylib -Wl,-exported_symbols_list,"$root/PassthroughOpenGL/gli.exports" \
+    -Wl,-rpath,@loader_path -framework IOSurface -framework CoreFoundation -framework CoreGraphics -framework IOKit \
+    -o "$build/libVIMGLI.dylib"
+install_name_tool -change @rpath/libVIMPassthroughOpenGL.dylib @loader_path/libVIMPassthroughOpenGL.dylib "$build/libVIMGLI.dylib"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-interface.c" -L "$build" -lVIMCGL \
+    -Wl,-rpath,@executable_path -framework IOSurface -framework CoreFoundation -o "$build/opengl-passthrough-opengl-probe"
+install_name_tool -change @rpath/libVIMCGL.dylib @executable_path/libVIMCGL.dylib "$build/opengl-passthrough-opengl-probe"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-arrays.c" -L "$build" -lVIMCGL \
+    -Wl,-rpath,@executable_path -o "$build/opengl-passthrough-opengl-arrays"
+install_name_tool -change @rpath/libVIMCGL.dylib @executable_path/libVIMCGL.dylib "$build/opengl-passthrough-opengl-arrays"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-direct-drawable-lifetime.c" -L "$build" -lVIMCGL \
+    -Wl,-rpath,@executable_path -o "$build/opengl-direct-drawable-lifetime"
+install_name_tool -change @rpath/libVIMCGL.dylib @executable_path/libVIMCGL.dylib "$build/opengl-direct-drawable-lifetime"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-direct-damage.c" -L "$build" -lVIMCGL -lVIMPassthroughOpenGL \
+    -Wl,-rpath,@executable_path -o "$build/opengl-direct-damage"
+install_name_tool -change @rpath/libVIMCGL.dylib @executable_path/libVIMCGL.dylib "$build/opengl-direct-damage"
+install_name_tool -change @rpath/libVIMPassthroughOpenGL.dylib @executable_path/libVIMPassthroughOpenGL.dylib "$build/opengl-direct-damage"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-textures.c" -L "$build" -lVIMCGL \
+    -Wl,-rpath,@executable_path -o "$build/opengl-passthrough-opengl-textures"
+install_name_tool -change @rpath/libVIMCGL.dylib @executable_path/libVIMCGL.dylib "$build/opengl-passthrough-opengl-textures"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-window.m" -framework Cocoa -framework OpenGL -o "$build/opengl-passthrough-opengl-window"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-call-lists.c" -framework OpenGL -o "$build/passthrough-opengl-call-lists"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-query-replies.c" -framework OpenGL -o "$build/passthrough-opengl-query-replies"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-client-vertex-stack.c" -framework OpenGL -o "$build/passthrough-opengl-client-vertex-stack"
+clang "${flags[@]}" "${guest[@]}" -I "$build" "$root/probes/opengl-gl-backing-loan.m" \
+    -framework Cocoa -framework OpenGL -framework IOKit -o "$build/passthrough-opengl-backing-loan"
+clang "${flags[@]}" "${guest[@]}" -I "$build" "$root/probes/opengl-direct-backing-owner.c" \
+    -framework IOKit -framework CoreFoundation -o "$build/opengl-direct-backing-owner"
+clang "${flags[@]}" "${guest[@]}" -I "$build" "$root/probes/opengl-direct-draw-capture.c" \
+    -framework IOKit -framework CoreFoundation -o "$build/opengl-direct-draw-capture"
+clang "${flags[@]}" "${guest[@]}" -dynamiclib "$root/probes/opengl-ws-backing-fixture.c" \
+    -framework IOKit -framework CoreFoundation -o "$build/opengl-ws-backing-fixture.dylib"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+    -fvisibility=hidden -DVIM_PASSTHROUGH_OPENGL_INPROCESS_CLIENT=1 -DVIM_VERTEX_STACK_DIRECT=1 -I "$build" \
+    "$root/probes/opengl-gl-client-vertex-stack.c" -framework IOKit -framework CoreFoundation \
+    -Wl,-exported_symbol,_main -o "$build/passthrough-opengl-client-vertex-stack-inprocess"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+    -fvisibility=hidden -DVIM_PASSTHROUGH_OPENGL_INPROCESS_CLIENT=1 -DVIM_QUERY_REPLIES_DIRECT=1 -I "$build" \
+    "$root/probes/opengl-gl-query-replies.c" -framework IOKit -framework CoreFoundation \
+    -Wl,-exported_symbol,_main -o "$build/passthrough-opengl-query-replies-inprocess"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+    -fvisibility=hidden -DVIM_PASSTHROUGH_OPENGL_INPROCESS_CLIENT=1 -DVIM_CALL_LISTS_DIRECT=1 -I "$build" \
+    "$root/probes/opengl-gl-call-lists.c" -framework IOKit -framework CoreFoundation \
+    -Wl,-exported_symbol,_main -o "$build/passthrough-opengl-call-lists-inprocess"
+clang "${flags[@]}" "${guest[@]}" -DVIM_GL_WINDOW_CORE=1 "$root/probes/opengl-gl-window.m" -framework Cocoa -framework OpenGL -o "$build/opengl-core-gl-window"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-native-attachment.m" -framework Cocoa -framework OpenGL -o "$build/passthrough-opengl-native-attachment"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-current-import.m" -framework Cocoa -framework OpenGL -o "$build/passthrough-opengl-current-import"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-cgs-ripple.m" -framework Cocoa -o "$build/opengl-cgs-ripple"
+clang "${flags[@]}" "${guest[@]}" -fblocks "$root/probes/opengl-effect-record.m" \
+    -framework Foundation -framework AVFoundation -framework ApplicationServices -framework CoreVideo -framework CoreMedia \
+    -framework IOSurface -o "$build/opengl-effect-record"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-texture1d.c" -framework OpenGL -o "$build/passthrough-opengl-texture1d"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-texture3d.c" -framework OpenGL -o "$build/passthrough-opengl-texture3d"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-pixel-store-float.c" -framework OpenGL -o "$build/passthrough-opengl-pixel-store-float"
+for image_height in 1 5; do
+    clang "${flags[@]}" "${guest[@]}" -DVIM_TEST_IMAGE_HEIGHT="$image_height" \
+        "$root/probes/opengl-gl-texture3d.c" -framework OpenGL -o "$build/passthrough-opengl-texture3d-height-$image_height"
+done
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+    "$root/probes/opengl-direct-pixel-span.c" -o "$build/opengl-direct-pixel-span"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-window-destination.m" -framework Cocoa -framework OpenGL -o "$build/passthrough-opengl-window-destination"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-private-integer.c" -framework OpenGL -o "$build/passthrough-opengl-private-integer"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-native-surface-info.m" -framework Cocoa -framework OpenGL -framework IOKit -o "$build/opengl-native-surface-info"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-primary-cpu-contract.m" -framework Cocoa -framework OpenGL -o "$build/opengl-primary-cpu-contract"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-ca-window.m" -framework Cocoa -framework QuartzCore -o "$build/opengl-ca-window"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-native-window-sharing.m" -framework Cocoa -framework OpenGL -framework IOKit -o "$build/passthrough-opengl-native-window-sharing"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-shared-current-import.m" -framework Cocoa -framework OpenGL -o "$build/passthrough-opengl-shared-current-import"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-surface-state.m" -framework Cocoa -framework OpenGL -framework IOKit -o "$build/passthrough-opengl-surface-state"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-passthrough-opengl-vram-read.m" -framework Cocoa -framework OpenGL -framework IOKit -o "$build/opengl-passthrough-opengl-vram-read"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-native-2d-fill.m" -framework Cocoa -framework OpenGL -framework IOKit -o "$build/opengl-native-2d-fill"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-native-framebuffer-copy.m" -framework Cocoa -framework OpenGL -framework IOKit -o "$build/opengl-native-framebuffer-copy"
+mkdir -p "$build/PassthroughOpenGL Proof.app/Contents/MacOS"
+cp "$build/opengl-passthrough-opengl-window" "$build/PassthroughOpenGL Proof.app/Contents/MacOS/LegacyGLWindow"
+cp "$root/probes/opengl-gl-window-Info.plist" "$build/PassthroughOpenGL Proof.app/Contents/Info.plist"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-buffering.c" -framework OpenGL -o "$build/opengl-passthrough-opengl-buffering"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-display-state.c" -framework ApplicationServices -o "$build/opengl-display-state"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/set-display-mode.c" -framework ApplicationServices -o "$build/opengl-display-modes"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-surface-clip.c" -framework IOKit -framework CoreFoundation -o "$build/opengl-surface-clip"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-surface-clip-contract.c" -framework ApplicationServices -framework IOKit -o "$build/opengl-surface-clip-contract"
+clang++ "${flags[@]}" "${guest[@]}" -std=gnu++98 "$root/probes/opengl-surface-clip-conversion.cpp" -o "$build/opengl-surface-clip-conversion"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-renderer-info.c" -framework OpenGL -o "$build/passthrough-opengl-renderer-info"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-core-profile.c" -framework OpenGL -o "$build/opengl-core-profile"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-instancing.c" -framework OpenGL -o "$build/passthrough-opengl-instancing"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-buffers.c" -framework OpenGL -o "$build/passthrough-opengl-buffers"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-pbo.c" -framework OpenGL -o "$build/passthrough-opengl-pbo"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+    "$root/probes/opengl-gl-pbo.c" -framework OpenGL -o "$build/passthrough-opengl-pbo-host"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-recovery-format.c" -framework OpenGL -o "$build/passthrough-opengl-recovery-format"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-native-format-scores.c" -framework OpenGL -o "$build/opengl-native-format-scores"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-lighting.c" -framework OpenGL -o "$build/passthrough-opengl-lighting"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-surface-parameters.c" -framework OpenGL -o "$build/passthrough-opengl-surface-parameters"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-recovery-objects.c" \
+    -framework OpenGL -framework IOSurface -framework CoreFoundation -o "$build/passthrough-opengl-recovery-objects"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-uniform-query.c" \
+    -framework OpenGL -o "$build/passthrough-opengl-uniform-query"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-image-store.c" -framework OpenGL -o "$build/passthrough-opengl-image-store"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-ci-effect.m" -framework Cocoa -framework QuartzCore -framework OpenGL -o "$build/opengl-ci-effect"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-labels.c" -framework OpenGL -o "$build/passthrough-opengl-native-labels"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-labels.c" -L "$build" -lVIMCGL \
+    -Wl,-rpath,@executable_path -o "$build/opengl-passthrough-opengl-labels"
+install_name_tool -change @rpath/libVIMCGL.dylib @executable_path/libVIMCGL.dylib "$build/opengl-passthrough-opengl-labels"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-surface-live.c" -framework OpenGL \
+    -framework IOSurface -framework CoreFoundation -o "$build/passthrough-opengl-native-surface-live"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-gl-surface-live.c" -L "$build" -lVIMCGL \
+    -Wl,-rpath,@executable_path -framework IOSurface -framework CoreFoundation -o "$build/opengl-passthrough-opengl-surface-live"
+install_name_tool -change @rpath/libVIMCGL.dylib @executable_path/libVIMCGL.dylib "$build/opengl-passthrough-opengl-surface-live"
+# Identical bounded backend benchmark on native host versus emulated guest.
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-passthrough-opengl-performance.c" -L "$build" -lVIMPassthroughOpenGL \
+    -Wl,-rpath,@executable_path -o "$build/opengl-passthrough-opengl-performance"
+install_name_tool -change @rpath/libVIMPassthroughOpenGL.dylib @executable_path/libVIMPassthroughOpenGL.dylib "$build/opengl-passthrough-opengl-performance"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+    "$root/PassthroughOpenGL/passthrough-opengl-client.c" "$root/probes/opengl-passthrough-opengl-performance.c" \
+    -framework IOKit -framework CoreFoundation -o "$build/opengl-passthrough-opengl-performance-host"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-passthrough-opengl-snapshot.c" -L "$build" -lVIMPassthroughOpenGL \
+    -Wl,-rpath,@executable_path -o "$build/opengl-passthrough-opengl-snapshot"
+install_name_tool -change @rpath/libVIMPassthroughOpenGL.dylib @executable_path/libVIMPassthroughOpenGL.dylib "$build/opengl-passthrough-opengl-snapshot"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+    "$root/PassthroughOpenGL/passthrough-opengl-client.c" "$root/probes/opengl-passthrough-opengl-snapshot.c" \
+    -framework IOKit -framework CoreFoundation -o "$build/opengl-passthrough-opengl-snapshot-host"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-passthrough-opengl-retained-surface.c" -L "$build" -lVIMPassthroughOpenGL \
+    -Wl,-rpath,@executable_path -o "$build/opengl-passthrough-opengl-retained-surface"
+install_name_tool -change @rpath/libVIMPassthroughOpenGL.dylib @executable_path/libVIMPassthroughOpenGL.dylib "$build/opengl-passthrough-opengl-retained-surface"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+    "$root/PassthroughOpenGL/passthrough-opengl-client.c" "$root/probes/opengl-passthrough-opengl-retained-surface.c" \
+    -framework IOKit -framework CoreFoundation -o "$build/opengl-passthrough-opengl-retained-surface-host"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+    "$root/PassthroughOpenGL/passthrough-opengl-client.c" "$root/probes/opengl-passthrough-opengl-surface-drawable.c" \
+    -framework IOKit -framework CoreFoundation -o "$build/opengl-passthrough-opengl-surface-drawable-host"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+    "$root/PassthroughOpenGL/passthrough-opengl-client.c" "$root/probes/opengl-passthrough-opengl-alias-upload.c" \
+    -framework IOKit -framework CoreFoundation -o "$build/opengl-passthrough-opengl-alias-upload-host"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+    "$root/PassthroughOpenGL/passthrough-opengl-client.c" "$root/probes/opengl-passthrough-opengl-view-layout.c" \
+    -framework IOKit -framework CoreFoundation -o "$build/opengl-passthrough-opengl-view-layout-host"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+    "$root/PassthroughOpenGL/passthrough-opengl-client.c" "$root/probes/opengl-passthrough-opengl-patch.c" \
+    -framework IOKit -framework CoreFoundation -o "$build/opengl-passthrough-opengl-patch-host"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-passthrough-opengl-read-rect.c" -L "$build" -lVIMPassthroughOpenGL \
+    -Wl,-rpath,@executable_path -o "$build/opengl-passthrough-opengl-read-rect"
+install_name_tool -change @rpath/libVIMPassthroughOpenGL.dylib @executable_path/libVIMPassthroughOpenGL.dylib "$build/opengl-passthrough-opengl-read-rect"
+clang "${flags[@]}" "$root/probes/opengl-read-mask-plan.c" -o "$build/opengl-read-mask-plan"
+"$build/opengl-read-mask-plan"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-passthrough-opengl-masked-read.c" -L "$build" -lVIMPassthroughOpenGL \
+    -Wl,-rpath,@executable_path -framework IOKit -framework CoreFoundation -o "$build/opengl-passthrough-opengl-masked-read"
+install_name_tool -change @rpath/libVIMPassthroughOpenGL.dylib @executable_path/libVIMPassthroughOpenGL.dylib "$build/opengl-passthrough-opengl-masked-read"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+    "$root/PassthroughOpenGL/passthrough-opengl-client.c" "$root/probes/opengl-passthrough-opengl-read-rect.c" \
+    -framework IOKit -framework CoreFoundation -o "$build/opengl-passthrough-opengl-read-rect-host"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-passthrough-opengl-import-view.c" -L "$build" -lVIMPassthroughOpenGL \
+    -Wl,-rpath,@executable_path -o "$build/opengl-passthrough-opengl-import-view"
+install_name_tool -change @rpath/libVIMPassthroughOpenGL.dylib @executable_path/libVIMPassthroughOpenGL.dylib "$build/opengl-passthrough-opengl-import-view"
+clang "${flags[@]}" "${guest[@]}" "$root/probes/opengl-passthrough-opengl-patch.c" -L "$build" -lVIMPassthroughOpenGL \
+    -Wl,-rpath,@executable_path -o "$build/opengl-passthrough-opengl-patch"
+install_name_tool -change @rpath/libVIMPassthroughOpenGL.dylib @executable_path/libVIMPassthroughOpenGL.dylib "$build/opengl-passthrough-opengl-patch"
+clang "${flags[@]}" "${guest[@]}" -I "$build" "$root/probes/opengl-passthrough-opengl-packet-input.c" \
+    -framework IOKit -framework CoreFoundation -o "$build/opengl-passthrough-opengl-packet-input"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+    "$root/PassthroughOpenGL/passthrough-opengl-client.c" "$root/probes/opengl-passthrough-opengl-import-view.c" \
+    -framework IOKit -framework CoreFoundation -o "$build/opengl-passthrough-opengl-import-view-host"
+printf 'Built PassthroughOpenGL proof: %s\nNo guest system files modified.\n' "$build"

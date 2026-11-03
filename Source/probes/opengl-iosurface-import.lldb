@@ -1,0 +1,26 @@
+# Finite i386 CGL import inspection. Run as guest root after quitting Pages,
+# then launch Pages as its normal console user from a separate SSH connection.
+# No injection or persistent logging; detach after the two plane imports.
+settings set target.x86-disassembly-flavor intel
+target create "/Applications/iWork '09/Pages.app/Contents/MacOS/Pages"
+breakpoint set --name CGLTexImageIOSurface2D --shlib GLEngine
+process attach --name Pages --waitfor
+continue
+thread backtrace -c 12
+# i386 stack: return address, ctx, target, internal, w, h, format, type, surface, plane.
+memory read --format x --size 4 --count 12 $esp
+expression -l c -- void *$surface=(void *)*(unsigned int *)($esp+32)
+expression -l c -- (unsigned int)IOSurfaceGetPlaneCount($surface)
+expression -l c -- (unsigned int)IOSurfaceGetBytesPerElement($surface)
+expression -l c -- (unsigned int)IOSurfaceGetBytesPerRow($surface)
+expression -l c -- (unsigned int)IOSurfaceGetPixelFormat($surface)
+expression -l c -- (unsigned int)IOSurfaceGetWidth($surface)
+expression -l c -- (unsigned int)IOSurfaceGetHeight($surface)
+thread step-out
+register read eax
+continue
+memory read --format x --size 4 --count 12 $esp
+thread step-out
+register read eax
+process detach
+quit

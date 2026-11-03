@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 @class VIMQMPConnection;
 @interface VIMUSBClient : NSObject
+@property BOOL useUSB2Storage;
 + (void)authorizeUsingTerminalWithCompletion:(void (^)(NSError *error))completion;
 - (void)prepareWithCompletion:(void (^)(NSError *error))completion;
 - (void)checkStorageInterface:(NSDictionary *)identity inUserSession:(BOOL)userSession

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AudioOnly</key>
+	<true/>
+	<key>Files</key>
+	<dict>
+		<key>VoodooHDA.kext/Contents/Info.plist</key>
+		<true/>
+		<key>VoodooHDA.kext/Contents/MacOS/VoodooHDA</key>
+		<true/>
+	</dict>
+	<key>FormatVersion</key>
+	<integer>1</integer>
+	<key>KernelArchitecture</key>
+	<string>i386</string>
+	<key>SDKVersion</key>
+	<string>10.5</string>
+</dict>
+</plist>

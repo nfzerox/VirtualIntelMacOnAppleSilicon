@@ -1,0 +1,354 @@
+#!/usr/bin/env python3
+"""Exercise the actual research QEMU device, without a VM disk or renderer.
+
+Bounded scratch RAM/VRAM only. Checks pitched/fragmented copies, guards,
+preflight atomicity, MMIO/ROM/command rejection and the opt-in capability.
+"""
+import argparse
+import array
+import concurrent.futures
+import os
+import pathlib
+import socket
+import struct
+import subprocess
+import tempfile
+import threading
+import time
+
+p = argparse.ArgumentParser(description=__doc__)
+p.add_argument("qemu", type=pathlib.Path)
+p.add_argument("--retina", action="store_true", help="also qualify 2x virtual-panel registers")
+p.add_argument("--resize", action="store_true", help="qualify real app-wire resize notification and level IRQ")
+a = p.parse_args()
+with tempfile.TemporaryDirectory(prefix="vim-fb-blit-test-") as scratch:
+    endpoint = str(pathlib.Path(scratch) / "qtest.sock")
+    # Own the stream receiver. Never send test data to the real GL executor.
+    listener = socket.socket(socket.AF_INET)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    listener.settimeout(5)
+    renderer_port = listener.getsockname()[1]
+    # Keep a real TCG CPU in HLT rather than paused: these production builds
+    # do not include the test-only qtest accelerator. RAM DMA/TB invalidation
+    # can then rendezvous with the CPU normally. No firmware/OS is booted.
+    bios = bytearray(65536)
+    bios[-16:-12] = bytes([0xfa, 0xf4, 0xeb, 0xfd])
+    bios_path = pathlib.Path(scratch) / "halt.bin"
+    bios_path.write_bytes(bios)
+    environment = os.environ.copy()
+    display_listener = display_peer = None
+    if a.resize:
+        display_listener = socket.socket(socket.AF_UNIX)
+        display_listener.bind(str(pathlib.Path(scratch) / "display.sock"))
+        display_listener.listen(1)
+        display_listener.settimeout(5)
+        environment["VIM_INSTALLER_DISPLAY_SOCKET"] = str(pathlib.Path(scratch) / "display.sock")
+    process = subprocess.Popen([str(a.qemu.resolve()), "-machine", "q35", "-m", "64",
+        "-nodefaults", "-display", "none", "-bios", str(bios_path), "-device",
+        f"vmware-svga,addr=06.0,passthrough-opengl-bridge=on,passthrough-opengl-port={renderer_port}"+
+        (",passthrough-opengl-ui-scale=2,passthrough-opengl-panel-width=2560,passthrough-opengl-panel-height=1600" if a.retina else ""),
+        "-qtest", "unix:"+endpoint+",server=on,wait=off"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=environment)
+    try:
+        if a.resize:
+            display_peer, _ = display_listener.accept()
+            hello, ancillary, _, _ = display_peer.recvmsg(32, socket.CMSG_SPACE(4))
+            assert len(hello) == 32 and struct.unpack("<IIQIIII", hello)[:2] == (0x56494d31, 1)
+            descriptors = array.array("i")
+            for level, kind, data in ancillary:
+                if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+                    descriptors.frombytes(data[:len(data)//descriptors.itemsize*descriptors.itemsize])
+            assert len(descriptors) == 1
+            os.close(descriptors[0])
+            def drain_display():
+                try:
+                    def exact(count):
+                        result = bytearray()
+                        while len(result) < count:
+                            part = display_peer.recv(count-len(result))
+                            if not part:
+                                raise EOFError()
+                            result.extend(part)
+                        return result
+                    while True:
+                        magic, operation, sequence, w, h, stride, reserved = struct.unpack("<IIQIIII", exact(32))
+                        assert magic == 0x56494d31 and not reserved
+                        if operation == 5:
+                            exact(w*h*4)
+                        elif operation == 2:
+                            display_peer.sendall(struct.pack("<IIQIIII", magic, 3, sequence, 0, 0, 0, 0))
+                        else:
+                            assert operation == 4
+                except (EOFError, OSError):
+                    pass
+            threading.Thread(target=drain_display, daemon=True).start()
+        connection = socket.socket(socket.AF_UNIX)
+        deadline = time.monotonic()+10
+        while True:
+            try:
+                connection.connect(endpoint)
+                break
+            except (FileNotFoundError, ConnectionRefusedError):
+                if process.poll() is not None or time.monotonic()>deadline:
+                    raise RuntimeError("qtest startup failed, exit="+str(process.poll()))
+                time.sleep(.02)
+        connection.settimeout(5)
+        stream = connection.makefile("rwb", buffering=0)
+        def q(command):
+            connection.sendall(command.encode()+b"\n")
+            while True:
+                response = stream.readline().decode().strip()
+                if response.startswith("IRQ "):
+                    continue
+                if not response.startswith("OK"):
+                    raise RuntimeError(command+": "+response)
+                return response[2:].strip()
+        def out(port, value): q(f"outl {port:#x} {value:#x}")
+        def pci(offset, value):
+            out(0xcf8, 0x80003000+offset)
+            out(0xcfc, value)
+        out(0xcf8, 0x80003000)
+        assert int(q("inl 0xcfc"), 16) == 0x040515ad
+        pci(0x10, 0xc001)
+        pci(0x14, 0xe0000000)
+        pci(0x18, 0xe1000000)
+        pci(4, 7)
+        def reg(index, value):
+            out(0xc000, index)
+            out(0xc001, value)
+        def readreg(index):
+            out(0xc000, index)
+            return int(q("inl 0xc001"), 16)
+        assert readreg(0x1005) == 0x56474631
+        assert readreg(0x1007) == 0x56474431
+        assert readreg(0x1008) == (2560 if a.retina else 1280)
+        assert readreg(0x1009) == (1600 if a.retina else 800)
+        assert readreg(0x100a) == (2 if a.retina else 1)
+        print("PASS native panel capability, geometry and UI scale", 2 if a.retina else 1)
+        if a.resize:
+            assert readreg(0x100b) == 0x56474932 and readreg(0x100c) == 0
+            def irq():
+                out(0xcf8, 0x80003004)
+                active=bool(int(q("inl 0xcfc"), 16) & (1 << 19))
+                # Direct ownership port must mirror our IRQ, without changing
+                # the indexed latch that an interrupted register read owns.
+                out(0xc000, 0x1008)
+                assert int(q("inl 0xc008"),16)==int(active)
+                assert int(q("inl 0xc001"),16)==(2560 if a.retina else 1280)
+                return active
+            def mode(w, h):
+                display_peer.sendall(struct.pack("<IIQIIII", 0x56494d31, 6, 0, w, h, 0, 0))
+            def await_generation(generation):
+                deadline = time.monotonic()+5
+                while readreg(0x100c) != generation:
+                    assert time.monotonic() < deadline, "host mode request did not reach the device"
+                    time.sleep(.01)
+            reg(0x100d, 1)
+            mode(2400, 1600)
+            await_generation(1)
+            assert irq() and (readreg(0x100f), readreg(0x1010)) == (2400, 1600)
+            reg(0x100e, 0)  # stale ACK cannot consume a newer request
+            assert irq()
+            mode(2300, 1500)
+            await_generation(2)
+            assert irq() and readreg(0x100f) == 2300
+            reg(0x100e, 1)
+            assert irq()
+            reg(0x100d, 0)
+            assert not irq()
+            reg(0x100d, 1)
+            assert irq()
+            reg(0x100e, 2)
+            assert not irq()
+            mode(4000, 1600)  # valid app wire, outside qualified device geometry
+            mode(2300, 1500)  # identical request must not generate another IRQ
+            mode(2200, 1500)
+            await_generation(3)
+            assert irq() and readreg(0x100f) == 2200
+            reg(0x100e, 3)
+            assert not irq()
+            print("PASS app-wire resize, coalesced generation, stale ACK and IRQ enable/disable")
+        reg(2, 64)
+        reg(3, 48)
+        reg(7, 32)
+        reg(1, 1)
+        vram, command, visible = 0xe0000000, 4*1024*1024, 64*48*4
+        def write(address, data): q(f"write {address:#x} {len(data):#x} 0x"+data.hex())
+        def read(address, size): return bytes.fromhex(q(f"read {address:#x} {size:#x}")[2:])
+        source = bytes((i*17+31+(i>>8)*7)&255 for i in range(16384))
+        write(0x200000, source)
+        write(vram+2*1024*1024, source)
+        def execute(entries, total=None, token=0):
+            if total is None: total = sum(e[2] for e in entries)
+            packet = struct.pack("<IIIIiI", 0x56474c31, 9, token, total, -1, len(entries))
+            write(vram+command, packet+b"".join(struct.pack("<QIIII", *e) for e in entries))
+            reg(0x1000, command)
+            return struct.unpack("<i", read(vram+command+16, 4))[0]
+        guard = bytes([0xa5])*visible
+        for kind, base in ((0, 2*1024*1024), (1, 0x200000)):
+            entries = [(base+row*91, (row+3)*256+20, 68, kind, 0) for row in range(13)]
+            write(vram, guard)
+            expected = bytearray(guard)
+            for src, dst, size, _, _ in entries:
+                expected[dst:dst+size] = source[src-base:src-base+size]
+            assert execute(entries) == 13*68
+            assert read(vram, visible) == expected
+            print("PASS pitched rows, margins and holes; source kind", kind)
+            # Non-contiguous physical source pages, reverse row order, and
+            # overlapping destinations must preserve command order exactly.
+            entries = [(base+page*4096+37, 1280+row*256, 80, kind, 0)
+                       for row, page in enumerate((3, 0, 2, 1))]
+            entries.append((base+4096+123, 1280+16, 32, kind, 0))
+            write(vram, guard)
+            expected = bytearray(guard)
+            for src, dst, size, _, _ in entries:
+                expected[dst:dst+size] = source[src-base:src-base+size]
+            assert execute(entries) == 352
+            assert read(vram, visible) == expected
+            print("PASS page permutation and overlapping destination order; source kind", kind)
+        good = (0x200000, 1024, 16, 1, 0)
+        cases = {
+            "late invalid RAM": (good, (0xfec00000, 2048, 16, 1, 0)),
+            "ROM": (good, (0xffff0000, 2048, 16, 1, 0)),
+            "physical VRAM claimed as RAM": (good, (vram+0x200000, 2048, 16, 1, 0)),
+            "visible source alias": (good, (512, 2048, 16, 0, 0)),
+            "command source": (good, (command+24, 2048, 16, 0, 0)),
+            "outside visible destination": (good, (0x200000, visible-8, 16, 1, 0)),
+            "overflow source": (good, (2**64-8, 2048, 16, 1, 0)),
+            "reserved bits": (good, (0x200000, 2048, 16, 1, 1)),
+            "invalid kind": (good, (0x200000, 2048, 16, 2, 0)),
+        }
+        for name, entries in cases.items():
+            write(vram, guard)
+            assert execute(entries) == -1, name
+            assert read(vram, visible) == guard, name+" modified framebuffer"
+            print("PASS preflight rejects", name, "without writes")
+        assert execute([good], total=15) == -1
+        assert execute([good], total=17) == -1
+        assert execute([good], token=1) == -1
+        print("PASS incorrect totals and nonzero token")
+        assert readreg(0x1006) == 0x56475531
+        write(vram+command, struct.pack("<IIIIiI", 0x56474c31, 1, 0, 0, -1, 0))
+        reg(0x1000, command)
+        assert struct.unpack("<i", read(vram+command+16, 4))[0] == 0
+        token = struct.unpack("<I", read(vram+command+8, 4))[0]
+        assert token
+        receiver, _ = listener.accept()
+        receiver.settimeout(5)
+        def execute_stream(action, entries, total=None):
+            if total is None: total = sum(e[1] for e in entries)
+            packet = struct.pack("<IIIIiI", 0x56474c31, action, token, total, -1, len(entries))
+            write(vram+command, packet+b"".join(struct.pack("<QII", *e) for e in entries))
+            reg(0x1000, command)
+            return struct.unpack("<i", read(vram+command+16, 4))[0]
+        def receive_exact(size):
+            data = bytearray()
+            while len(data)<size:
+                part = receiver.recv(size-len(data))
+                if not part: raise RuntimeError("stream closed early")
+                data.extend(part)
+            return data
+        # More than 64 vectors exercises multiple writev batches, including
+        # mixed source kinds, repeated pages and non-contiguous row ordering.
+        entries = [(0x200000+(i%4)*4096+(i%9)*17, 256, 1) if i&1 else
+                   (2*1024*1024+(i%4)*4096+(i%9)*17, 256, 0) for i in range(129)]
+        expected = b"".join(source[(address-(0x200000 if kind else 2*1024*1024)):
+                                  (address-(0x200000 if kind else 2*1024*1024))+size]
+                            for address, size, kind in entries)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(receive_exact, len(expected))
+            assert execute_stream(10, entries) == len(expected)
+            assert future.result(timeout=5) == expected
+            large = bytes((i*13+(i>>12)*19)&255 for i in range(256*1024))
+            write(0x400000, large)
+            future = executor.submit(receive_exact, len(large))
+            assert execute_stream(10, [(0x400000, len(large), 1)]) == len(large)
+            assert future.result(timeout=5) == large
+        assert read(0x200000, len(source)) == source
+        assert read(vram+2*1024*1024, len(source)) == source
+        print("PASS RAM upload byte order, 129 mixed vectors, full chunk, unchanged sources")
+        receiver.settimeout(.05)
+        for name, address, kind in (("MMIO", 0xfec00000, 1), ("ROM", 0xffff0000, 1),
+                                    ("command alias", command+24, 0),
+                                    ("overflow", 2**64-8, 1), ("invalid kind", 0x200000, 2)):
+            assert execute_stream(10, [(0x200000, 16, 1), (address, 16, kind)]) == -1
+            try:
+                receiver.recv(1)
+                raise AssertionError("invalid upload sent data or closed stream: "+name)
+            except socket.timeout:
+                pass
+        print("PASS invalid uploads transmit no valid prefix")
+        # The generalized map helper must retain the original receive route.
+        receiver.settimeout(5)
+        payload = source[:2048]
+        receiver.sendall(payload)
+        assert execute_stream(8, [(0x600000, 777, 1), (0x601000, 1271, 1)]) == len(payload)
+        assert read(0x600000, 777)+read(0x601000, 1271) == payload
+        print("PASS RAM receive remains correct after upload errors")
+        assert readreg(0x1011) == 0x56474d31
+        # Masked receive consumes gaps without writing them anywhere in guest
+        # storage. Include a hole larger than scratch and >64 mixed vectors.
+        masked = [(0, 450003, 2)]
+        for i in range(129):
+            masked += [(0x700000+i*512, 91, 1) if i&1 else
+                       (3*1024*1024+i*512, 91, 0), (0, 23, 2)]
+        masked += [(0, 70013, 2)]
+        size = sum(e[1] for e in masked)
+        payload = bytes((i*29+(i>>8))&255 for i in range(size))
+        sentinel = bytes([0xa7])*(129*512+256)
+        write(0x700000, sentinel)
+        write(vram+3*1024*1024, sentinel)
+        expected_ram, expected_vram = bytearray(sentinel), bytearray(sentinel)
+        cursor = 0
+        for address, length, kind in masked:
+            if kind != 2:
+                target = expected_ram if kind else expected_vram
+                offset = address-(0x700000 if kind else 3*1024*1024)
+                target[offset:offset+length] = payload[cursor:cursor+length]
+            cursor += length
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(receiver.sendall, payload)
+            assert execute_stream(11, masked) == size
+            future.result(timeout=5)
+        assert read(0x700000, len(sentinel)) == expected_ram
+        assert read(vram+3*1024*1024, len(sentinel)) == expected_vram
+        print("PASS masked receive: 129 mixed vectors, large discard gaps, unchanged margins")
+        # All validation precedes stream consumption and destination writes.
+        # The valid read after each rejected request must get the same bytes.
+        for action, entries in ((8, [(0, 16, 2)]),
+                                (11, [(0x700000, 8, 1), (1, 8, 2)]),
+                                (11, [(0x700000, 8, 1), (0xfec00000, 8, 1)]),
+                                (11, [(0x700000, 8, 1), (command+24, 8, 0)]),
+                                (11, [(0x700000, 8, 1), (0, 8, 3)])):
+            before = read(0x700000, 16)
+            receiver.sendall(bytes(range(16)))
+            assert execute_stream(action, entries) == -1
+            assert read(0x700000, 16) == before
+            assert execute_stream(8, [(0x701000, 16, 1)]) == 16
+            assert read(0x701000, 16) == bytes(range(16))
+        print("PASS masked preflight atomicity, legacy rejection and stream alignment")
+        write(0x710000, bytes([0xa7])*32)
+        write(vram+0x310000, bytes([0xa7])*32)
+        receiver.sendall(bytes(range(17)))
+        receiver.shutdown(socket.SHUT_WR)
+        assert execute_stream(11, [(0, 5, 2), (0x710000, 32, 1), (0x310000, 32, 0)]) == 17
+        assert read(0x710000, 32) == bytes(range(5, 17))+bytes([0xa7])*20
+        assert read(vram+0x310000, 32) == bytes([0xa7])*32
+        print("PASS masked EOF reports exact prefix and preserves unwritten RAM/VRAM")
+        write(vram+command, struct.pack("<IIIIiI", 0x56474c31, 4, token, 0, -1, 0))
+        reg(0x1000, command)
+        receiver.close()
+        stream.close()
+        connection.close()
+    finally:
+        listener.close()
+        process.terminate()
+        try: process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        if display_peer:
+            display_peer.close()
+        if display_listener:
+            display_listener.close()

@@ -1,8 +1,11 @@
 #import "VIMMachine.h"
+#import "VIMImageSlots.h"
 #import "VIMNetworkDefaults.h"
 #import "VIMLibraryLocation.h"
 #import "VIMFirmwareBoot.h"
 #import "VIMGuestTransactionEvidence.h"
+#import "VIMAutomaticSetup.h"
+#import "VIMOSNaming.h"
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -26,7 +29,14 @@ static BOOL Save(NSDictionary *value, NSURL *URL, NSError **error) {
         format:NSPropertyListXMLFormat_v1_0 options:0 error:error];
     return data && [data writeToURL:URL options:NSDataWritingAtomic error:error];
 }
-static BOOL Supported(NSString *guest) { return [@[@"mojave", @"catalina", @"bigsur"] containsObject:guest]; }
+static BOOL OpenGLResearchEnabled(void) {
+    NSArray *arguments=NSProcessInfo.processInfo.arguments;
+    NSUInteger index=[arguments indexOfObject:@"--opengl-guest-research"];
+    return index!=NSNotFound&&index+1<arguments.count&&[arguments[index+1] isEqual:@"1"];
+}
+static BOOL Supported(NSString *guest) {
+    return [@[@"tiger",@"leopard",@"snowleopard",@"lion",@"mountainlion",@"mavericks",@"yosemite",@"elcapitan",@"sierra",@"highsierra",@"mojave",@"catalina",@"bigsur"] containsObject:guest];
+}
 static BOOL NameValid(NSString *name) {
     return [name isKindOfClass:NSString.class] && name.length && name.length <= 128 && [name stringByTrimmingCharactersInSet:
         NSCharacterSet.whitespaceAndNewlineCharacterSet].length;
@@ -58,8 +68,14 @@ static BOOL SettingsValid(NSDictionary *c) {
         [c[@"SSHPort"] isEqual:c[@"FileSharingPort"]])return NO;
     if(c[@"Description"]&&(![c[@"Description"] isKindOfClass:NSString.class]||[c[@"Description"] length]>4096))return NO;
     if(c[@"OpticalMedia"]&&(![c[@"OpticalMedia"] isKindOfClass:NSString.class]||([c[@"OpticalMedia"] length]&&![c[@"OpticalMedia"] isAbsolutePath])))return NO;
+    if(c[@"AdditionalMedia"]) {
+        if(![c[@"AdditionalMedia"] isKindOfClass:NSArray.class]||[c[@"AdditionalMedia"] count]>=VIMImageSlotCount)return NO;
+        for(id path in c[@"AdditionalMedia"])
+            if(![path isKindOfClass:NSString.class]||([path length]&&![path isAbsolutePath]))return NO;
+    }
     if(c[@"MACAddress"]&&(![c[@"MACAddress"] isKindOfClass:NSString.class]||([c[@"MACAddress"] length]&&!VIMNetworkMACAddressIsValid(c[@"MACAddress"]))))return NO;
     if(c[@"DisplayMode"]&&![@[@"retina",@"scaled",@"space"] containsObject:c[@"DisplayMode"]])return NO;
+    if(c[@"DisplayScalingFilter"]&&![@[@"linear",@"nearest"] containsObject:c[@"DisplayScalingFilter"]])return NO;
     for(NSString *key in @[@"AudioOutputDevice",@"AudioInputDevice"])
         if(c[key]&&(![c[key] isKindOfClass:NSString.class]||[c[key] length]>1024))return NO;
     return YES;
@@ -68,7 +84,7 @@ static NSSet *BaseEditableSettingKeys(void) {
     static NSSet *keys;static dispatch_once_t once;dispatch_once(&once,^{keys=[NSSet setWithArray:@[@"CPUCount",@"MemoryMiB",@"SSHEnabled",@"SSHPort",@"FileSharingEnabled",@"FileSharingPort",@"AudioEnabled",@"Description",@"RetinaEnabled",@"OpticalMedia",@"NetworkConnected",@"MACAddress",@"DisplayMode",@"AudioOutputDevice",@"AudioInputDevice",@"ClipboardEnabled"]];});return keys;
 }
 static NSSet *EditableSettingKeys(void) {
-    NSMutableSet *keys=[BaseEditableSettingKeys() mutableCopy];[keys addObjectsFromArray:@[@"NetworkMode",@"BridgeInterface"]];return keys;
+    NSMutableSet *keys=[BaseEditableSettingKeys() mutableCopy];[keys addObjectsFromArray:@[@"NetworkMode",@"BridgeInterface",@"DisplayScalingFilter",@"AdditionalMedia"]];return keys;
 }
 static int ConfigurationLock(NSURL *package,NSError **error) {
     NSURL *lock=[package URLByAppendingPathComponent:@"State/Configuration.lock"];
@@ -111,7 +127,7 @@ static BOOL Run(NSURL *executable, NSArray *arguments, NSURL *log, NSError **err
 }
 // Only called inside a freshly created, unpublished package. Never format an
 // existing guest disk. Sparse staging keeps large logical disks cheap on exFAT.
-static BOOL CreateFormattedDisk(NSURL *stage, NSURL *qemuImage, NSUInteger diskGiB, NSError **error) {
+static BOOL CreateFormattedDisk(NSURL *stage, NSURL *qemuImage, NSUInteger diskGiB, BOOL recordTarget, NSError **error) {
     NSFileManager *fm=NSFileManager.defaultManager;
     NSURL *seed=[stage URLByAppendingPathComponent:@"Disks/Formatting.sparsebundle"];
     NSURL *disk=[stage URLByAppendingPathComponent:@"Disks/System.qcow2"];
@@ -140,6 +156,22 @@ static BOOL CreateFormattedDisk(NSURL *stage, NSURL *qemuImage, NSUInteger diskG
         return Fail(error,@"Cannot identify the newly formatted virtual disk. See AttachFormattingDisk.log.");
     }
     NSString *raw=[device stringByReplacingOccurrencesOfString:@"/dev/disk" withString:@"/dev/rdisk"];
+    if(recordTarget) {
+        NSString *slice=nil;
+        for(NSDictionary *entity in attached[@"system-entities"])
+            if([entity[@"content-hint"] isEqual:@"Apple_HFS"]){if(slice){slice=nil;break;}slice=entity[@"dev-entry"];}
+        NSRegularExpression *validSlice=[NSRegularExpression regularExpressionWithPattern:@"^/dev/disk[0-9]+s[0-9]+$" options:0 error:NULL];
+        BOOL found=[slice isKindOfClass:NSString.class]&&[slice hasPrefix:[device stringByAppendingString:@"s"]]&&[validSlice numberOfMatchesInString:slice options:0 range:NSMakeRange(0,slice.length)]==1;
+        NSURL *metadata=log(@"FormattedVolume.plist");
+        if(found)found=Run([NSURL fileURLWithPath:@"/usr/sbin/diskutil"],@[@"info",@"-plist",slice],metadata,error);
+        NSDictionary *volume=found?[NSDictionary dictionaryWithContentsOfURL:metadata]:nil;
+        NSString *UUID=volume[@"VolumeUUID"];
+        if(![UUID isKindOfClass:NSString.class]||![[NSUUID alloc] initWithUUIDString:UUID]||
+           !Save(@{@"FormatVersion":@1,@"VolumeUUID":UUID,@"Filesystem":@"HFS+"},[stage URLByAppendingPathComponent:@"State/InstallationTarget.plist"],error)) {
+            Run(hdiutil,@[@"detach",device],log(@"DetachFormattingDisk.log"),nil);
+            return Fail(error,@"The new Macintosh HD could not be identified safely for automatic installation.");
+        }
+    }
     BOOL converted=Run(qemuImage,@[@"convert",@"-f",@"raw",@"-O",@"qcow2",raw,disk.path],log(@"CreateDisk.log"),error);
     NSError *detachError=nil;
     BOOL detached=Run(hdiutil,@[@"detach",device],log(@"DetachFormattingDisk.log"),&detachError);
@@ -187,6 +219,9 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
     return [[NSUUID alloc] initWithUUIDString:stem]&&self.configuration[@"Name"]?self.configuration[@"Name"]:stem;
 }
 - (NSString *)guest { return self.configuration[@"Guest"]; }
+- (BOOL)preMetalGuest {return VIMGuestUsesOpenGLDesktop(self.guest);}
+- (BOOL)passthroughOpenGLEnabled {return [self.configuration[@"PassthroughOpenGLEnabled"]?:self.configuration[@"LegacyDirectGLBridge"] boolValue];}
+- (BOOL)openGLResearchGuest { return self.preMetalGuest&&OpenGLResearchEnabled(); }
 - (uint64_t)diskCapacityBytes {
     if(self.cachedDiskCapacity)return self.cachedDiskCapacity.unsignedLongLongValue;
     uint64_t capacity=0;
@@ -284,6 +319,7 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
     return machine;
 }
 - (BOOL)requiresInstallerDisplay {
+    if(self.preMetalGuest)return YES;
     // Security updates boot a temporary OS without the installed system's PVG
     // patches. Preserve its verified receipt, but use software video whenever
     // Apple's live firmware variable explicitly selects that installer.
@@ -308,7 +344,35 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
     }
     if(!self.configuration[@"InstallerMedia"] &&
        ![self.configuration[@"InstallState"] isEqual:@"host-populated"])return NO;
-    return !self.hasPublishedGuestGraphics;
+    NSDictionary *native=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"State/NativeBigSurDisplay.plist"]];
+    BOOL nativeBigSur=[self.guest isEqual:@"bigsur"]&&[native[@"FormatVersion"] isEqual:@1]&&
+        [native[@"MachineIdentifier"] isEqual:self.configuration[@"Identifier"]]&&
+        [native[@"Guest"] isEqual:@"bigsur"]&&[native[@"NativePVGAvailable"] isEqual:@YES]&&
+        [native[@"VolumeUUID"] isKindOfClass:NSString.class]&&[[NSUUID alloc] initWithUUIDString:native[@"VolumeUUID"]];
+    return !self.hasPublishedGuestGraphics&&!nativeBigSur;
+}
+- (BOOL)prepareNativeBigSurDisplayWithGuestReport:(NSDictionary *)report error:(NSError **)error {
+    if(![self.guest isEqual:@"bigsur"]||!self.requiresInstallerDisplay||self.hasPublishedGuestGraphics||
+       ![self.configuration[@"InstallState"] isEqual:@"installing"]||!self.configuration[@"InstallerMedia"]||
+       ![report[@"Guest"] isEqual:@"bigsur"]||![report[@"LiveRoot"] isEqual:@YES]||
+       ![report[@"KernelMatchesSystem"] isEqual:@YES]||![report[@"InstalledRootPresent"] isEqual:@YES]||
+       ![report[@"RecoveryToolsPresent"] isEqual:@NO]||![report[@"InstallerMarkers"] isEqual:@[]]||
+       ![report[@"SetupComplete"] isEqual:@NO]||![report[@"NativePVGAvailable"] isEqual:@YES])return NO;
+    if(VIMFirmwareBootTargetAtURL([self.URL URLByAppendingPathComponent:self.configuration[@"NVRAM"]])==VIMFirmwareBootInstaller)return NO;
+    NSDictionary *previous=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"State/NativeBigSurDisplay.plist"]];
+    if([previous[@"MachineIdentifier"] isEqual:self.configuration[@"Identifier"]]&&
+       [previous[@"VolumeUUID"] isEqual:report[@"VolumeUUID"]]&&[previous[@"NativePVGAvailable"] isEqual:@YES])return NO;
+    for(NSString *key in @[@"VolumeUUID",@"BootSessionUUID"])
+        if(![report[key] isKindOfClass:NSString.class]||![[NSUUID alloc] initWithUUIDString:report[key]])return NO;
+    NSString *build=report[@"ProductBuildVersion"];
+    if(![build isKindOfClass:NSString.class]||!build.length||build.length>40||
+       [build rangeOfCharacterFromSet:NSCharacterSet.alphanumericCharacterSet.invertedSet].location!=NSNotFound)return NO;
+    // The agent belongs to this running VM. This selects its shipped driver,
+    // not a donated kext, account change, install completion or ISO cleanup.
+    NSDictionary *record=@{@"FormatVersion":@1,@"Guest":@"bigsur",@"NativePVGAvailable":@YES,
+        @"MachineIdentifier":self.configuration[@"Identifier"],@"VolumeUUID":report[@"VolumeUUID"],
+        @"BootSessionUUID":report[@"BootSessionUUID"],@"ProductBuildVersion":build};
+    return Save(record,[self.URL URLByAppendingPathComponent:@"State/NativeBigSurDisplay.plist"],error);
 }
 - (BOOL)prepareUpdaterDisplayForBoot:(NSError **)error {
     if(!self.hasPublishedGuestGraphics||VIMFirmwareBootTargetAtURL(
@@ -352,6 +416,41 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
     NSMutableDictionary *pending=[[NSDictionary dictionaryWithContentsOfURL:URL] mutableCopy]?:[NSMutableDictionary dictionary];pending[@"RequestedBundleName"]=name;
     BOOL saved=Save(pending,URL,error);close(fd);
     return saved&&[self applyPendingChanges:error];
+}
+- (BOOL)saveAutomaticSetup:(NSDictionary *)profile error:(NSError **)error {
+    if(![VIMAutomaticSetup supportsGuest:self.guest]||![self.configuration[@"InstallState"] isEqual:@"installing"]||
+       ![profile isKindOfClass:NSDictionary.class]||![profile[@"FormatVersion"] isEqual:@1]||![profile[@"Enabled"] isEqual:@YES])
+        return Fail(error,@"Automatic setup is only available for a new virtual Mac installation.");
+    NSMutableSet *allowed=[NSMutableSet setWithArray:@[@"FormatVersion",@"Enabled",@"Username",@"FileSharing",@"RemoteLogin",@"CredentialIdentifier"]];
+    // Old saved transactions retain their one-time-login behavior. New UI
+    // and CLI transactions explicitly request persistent automatic login.
+    if(profile[@"AutomaticLogin"]) [allowed addObject:@"AutomaticLogin"];
+    if(![allowed isEqual:[NSSet setWithArray:profile.allKeys]])return Fail(error,@"Automatic setup contains an unsupported option.");
+    if(![VIMAutomaticSetup validateUsername:profile[@"Username"] error:error]||
+       ![profile[@"CredentialIdentifier"] isKindOfClass:NSString.class]||![[NSUUID alloc] initWithUUIDString:profile[@"CredentialIdentifier"]])
+        return Fail(error,@"Check the virtual Mac’s account and setup credential.");
+    for(NSString *key in (profile[@"AutomaticLogin"]?@[@"FileSharing",@"RemoteLogin",@"AutomaticLogin"]:@[@"FileSharing",@"RemoteLogin"]))
+        if(![profile[key] isKindOfClass:NSNumber.class]||([profile[key] doubleValue]!=0&&[profile[key] doubleValue]!=1))return Fail(error,@"Check the automatic sharing options.");
+    NSDictionary *target=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"State/InstallationTarget.plist"]];
+    NSDictionary *installer=[VIMAutomaticSetup installerConfigurationForVolumeUUID:target[@"VolumeUUID"] error:error];
+    if(!installer)return NO;
+    NSURL *lock=[self.URL URLByAppendingPathComponent:@"State/Session.lock"];
+    int fd=open(lock.fileSystemRepresentation,O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC,0600);
+    struct stat lockInfo;
+    if(fd<0||fstat(fd,&lockInfo)||!S_ISREG(lockInfo.st_mode)||lockInfo.st_nlink!=1||flock(fd,LOCK_EX|LOCK_NB)){if(fd>=0)close(fd);return Fail(error,@"Stop this virtual Mac before changing its initial setup.");}
+    @try {
+        NSURL *journal=[self.URL URLByAppendingPathComponent:@"State/AutomaticSetup.plist"];
+        if([NSFileManager.defaultManager fileExistsAtPath:journal.path]) {
+            NSDictionary *existing=[NSDictionary dictionaryWithContentsOfURL:journal];
+            if(!existing)return Fail(error,@"The saved automatic setup state could not be read. It was not replaced.");
+            for(NSString *key in allowed)if(![existing[key] isEqual:profile[key]])
+                return Fail(error,@"This Mac’s initial account setup has already been saved. Resume that setup before changing it.");
+            return YES; // Never reset an in-progress/completed journal to pending.
+        }
+        NSMutableDictionary *state=[profile mutableCopy];state[@"Guest"]=self.guest;
+        state[@"MachineIdentifier"]=self.configuration[@"Identifier"];state[@"VolumeUUID"]=target[@"VolumeUUID"];state[@"Phase"]=@"pending";
+        return Save(state,journal,error);
+    } @finally {close(fd);}
 }
 - (BOOL)saveSettings:(NSDictionary *)settings error:(NSError **)error {
     NSSet *allowed=EditableSettingKeys();
@@ -503,6 +602,7 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
     } @finally {close(lock);}
 }
 - (BOOL)retryInstallerCleanup:(NSError **)error {
+    if(self.preMetalGuest)return [self retryOpenGLInstallerCleanup:error];
     NSDictionary *pending=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"State/Install.plist"]];
     if(![pending[@"Phase"] isEqual:@"cleanup-pending"]) {
         // Verification is durable, but the session's completionGuestReport is
@@ -521,6 +621,97 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
        ![pending[@"GuestReport"] isKindOfClass:NSDictionary.class])
         return Fail(error,@"Saved installer cleanup does not match this Mac. Media was retained.");
     return [self finishInstallationWithGuestReport:pending[@"GuestReport"] error:error];
+}
+- (BOOL)validateOpenGLSetupReport:(NSDictionary *)report requirePixels:(BOOL)pixels error:(NSError **)error {
+    NSDictionary *target=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"State/InstallationTarget.plist"]];
+    NSDictionary *graphics=report[@"Graphics"];
+    BOOL tiger=[self.guest isEqual:@"tiger"];
+    if(!self.preMetalGuest||![report[@"OwnershipVerified"] isEqual:@YES]||
+       ![report[@"KernelMatchesSystem"] isEqual:@YES]||(pixels&&![report[@"PixelChecksPassed"] isEqual:@YES])||
+       ![report[@"MachineIdentifier"] isEqual:self.configuration[@"Identifier"]]||
+       ![report[@"VolumeUUID"] isEqual:target[@"VolumeUUID"]]||
+       ![[NSUUID alloc] initWithUUIDString:report[@"BootSessionUUID"]?:@""]||
+       ![graphics[@"ProductBuildVersion"] isEqual:report[@"ProductBuildVersion"]]||
+       ![graphics[@"Phase"] isEqual:@"installed"]||
+       (tiger&&![report[@"GraphicsFilesVerified"] isEqual:@YES]))
+        return Fail(error,@"Matching installed-system and accelerated graphics evidence is required. The installer was retained.");
+    return YES;
+}
+- (BOOL)prepareOpenGLRestartWithReport:(NSDictionary *)report error:(NSError **)error {
+    // New graphics/GA files may not be loaded by this boot's WindowServer.
+    // Restart is authorized by verified installed files/identity, not a fake
+    // pixel result. Actual accelerated pixels are mandatory for completion.
+    if(![self validateOpenGLSetupReport:report requirePixels:NO error:error])return NO;
+    int lock=ConfigurationLock(self.URL,error);if(lock<0)return NO;
+    @try {
+        NSDictionary *current=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"Machine.plist"]];
+        if(![current[@"Identifier"] isEqual:self.configuration[@"Identifier"]])return Fail(error,@"This Mac’s configuration changed. Setup was not restarted.");
+        NSDictionary *owner=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"Installation/Ownership.plist"]];
+        if(current[@"InstallerMedia"]&&(![owner[@"MachineIdentifier"] isEqual:current[@"Identifier"]]||
+            ![owner[@"Media"] isEqual:current[@"InstallerMedia"]]))return Fail(error,@"Installer ownership could not be confirmed. It was not detached.");
+        NSURL *restart=[self.URL URLByAppendingPathComponent:@"State/LegacySetupRestart.plist"];
+        if(!Save(@{@"FormatVersion":@1,@"MachineIdentifier":current[@"Identifier"],@"FromBootSessionUUID":report[@"BootSessionUUID"],
+            @"GuestReport":report,@"RequestState":@"prepared"},restart,error))return NO;
+        NSMutableDictionary *config=[current mutableCopy];
+        [config removeObjectsForKeys:@[@"InstallerMedia",@"InstallerMediaKind",@"InstallerMediaShared"]];
+        config[@"InstallState"]=@"patching";
+        if(!Save(config,[self.URL URLByAppendingPathComponent:@"Machine.plist"],error))return NO;
+        _configuration=[config copy];return YES;
+    } @finally {close(lock);}
+}
+- (BOOL)recordOpenGLRestartAcknowledged:(NSError **)error {
+    int lock=ConfigurationLock(self.URL,error);if(lock<0)return NO;
+    @try {
+        NSURL *path=[self.URL URLByAppendingPathComponent:@"State/LegacySetupRestart.plist"];
+        NSMutableDictionary *state=[[NSDictionary dictionaryWithContentsOfURL:path] mutableCopy];
+        if(![state[@"MachineIdentifier"] isEqual:self.configuration[@"Identifier"]])return Fail(error,@"The restart record no longer matches this Mac.");
+        state[@"RequestState"]=@"acknowledged";return Save(state,path,error);
+    } @finally {close(lock);}
+}
+- (BOOL)finishOpenGLSetupWithReport:(NSDictionary *)report error:(NSError **)error {
+    if(![self validateOpenGLSetupReport:report requirePixels:YES error:error]||![report[@"DesktopRunning"] isEqual:@YES])return NO;
+    NSDictionary *profile=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"State/AutomaticSetup.plist"]];
+    if([profile[@"Enabled"] boolValue]&&![report[@"Account"][@"Phase"] isEqual:@"complete"])
+        return Fail(error,@"The first-login handoff has not completed. Its recovery records were retained.");
+    int lock=ConfigurationLock(self.URL,error);if(lock<0)return NO;
+    @try {
+        NSDictionary *current=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"Machine.plist"]];
+        if(![current[@"Identifier"] isEqual:self.configuration[@"Identifier"]]||current[@"InstallerMedia"])
+            return Fail(error,@"Restart this Mac without its installer before completing setup.");
+        NSDictionary *receipt=@{@"FormatVersion":@1,@"Phase":@"graphics-verified",@"Guest":self.guest,
+            @"MachineIdentifier":current[@"Identifier"],@"GuestReport":report,@"VerifiedAt":NSDate.date};
+        if(!Save(receipt,[self.URL URLByAppendingPathComponent:@"State/LegacyGuestInstallation.plist"],error))return NO;
+        NSMutableDictionary *config=[current mutableCopy];config[@"InstallState"]=@"installed";
+        if(!Save(config,[self.URL URLByAppendingPathComponent:@"Machine.plist"],error))return NO;
+        _configuration=[config copy];
+        // Completion no longer needs a host-side cleartext setup credential.
+        // Retire it now, not only after the VM is eventually shut down.
+        if(profile[@"CredentialIdentifier"]&&![VIMAutomaticSetup removePasswordForIdentifier:profile[@"CredentialIdentifier"] error:error])return NO;
+        return YES;
+    } @finally {close(lock);}
+}
+- (BOOL)retryOpenGLInstallerCleanup:(NSError **)error {
+    NSDictionary *finished=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"State/Install.plist"]];
+    if([finished[@"Phase"] isEqual:@"complete"]&&[finished[@"Identifier"] isEqual:self.configuration[@"Identifier"]])return YES;
+    NSDictionary *receipt=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"State/LegacyGuestInstallation.plist"]];
+    if(![receipt[@"Phase"] isEqual:@"graphics-verified"])return YES;
+    // Called before session acquisition or after QEMU exit, never on a live
+    // optical backend. Use the same lifetime lock as modern cleanup.
+    int fd=open([[self.URL URLByAppendingPathComponent:@"State/Session.lock"] fileSystemRepresentation],O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC,0600);
+    if(fd<0||flock(fd,LOCK_EX|LOCK_NB)){if(fd>=0)close(fd);return Fail(error,@"Shut down this Mac before retiring its installer files.");}
+    @try {
+        VIMMachine *fresh=[VIMMachine loadURL:self.URL error:error];if(!fresh)return NO;
+        if(fresh.configuration[@"InstallerMedia"]||![fresh.configuration[@"InstallState"] isEqual:@"installed"]||
+           ![receipt[@"MachineIdentifier"] isEqual:fresh.configuration[@"Identifier"]])return Fail(error,@"Installer cleanup is not yet authorized for this Mac.");
+        NSDictionary *owner=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"Installation/Ownership.plist"]];
+        if(!owner)return YES;
+        if(![owner[@"MachineIdentifier"] isEqual:fresh.configuration[@"Identifier"]])return Fail(error,@"Installer ownership changed. Its files were retained.");
+        BOOL removed=RemovePreparedMedia(owner[@"Media"],self.URL);
+        NSDictionary *profile=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"State/AutomaticSetup.plist"]];
+        if(profile[@"CredentialIdentifier"]&&![VIMAutomaticSetup removePasswordForIdentifier:profile[@"CredentialIdentifier"] error:error])return NO;
+        return Save(@{@"Phase":@"complete",@"Identifier":fresh.configuration[@"Identifier"],@"InstallerDetached":@YES,
+            @"SharedMediaRetained":@(!removed),@"CompletedAt":NSDate.date},[self.URL URLByAppendingPathComponent:@"State/Install.plist"],error);
+    } @finally {close(fd);}
 }
 - (BOOL)finishInstallationWithGuestReport:(NSDictionary *)report error:(NSError **)error {
     NSURL *lock=[self.URL URLByAppendingPathComponent:@"State/Session.lock"];
@@ -653,7 +844,7 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
     BOOL efiDisk=EFIDisk(bootMedia);
     NSArray *paths = @[@"Firmware/CODE.fd", @"Firmware/NVRAM.fd", efiDisk?@"Firmware/EFI.img":@"Firmware/OpenCore.iso"];
     for (NSUInteger i = 1; i < 2; i++)
-        if (![fm copyItemAtURL:sources[i] toURL:[stage URLByAppendingPathComponent:paths[i]] error:error]) return nil;
+        if (![fm copyItemAtURL:[sources[i] URLByResolvingSymlinksInPath] toURL:[stage URLByAppendingPathComponent:paths[i]] error:error]) return nil;
     NSDictionary *c = VIMNetworkConfigurationWithDefaults(@{@"FormatVersion":@1, @"Identifier":identifier, @"Guest":guest,
         @"Disk":@"Disks/System.qcow2", @"Firmware":paths[0], @"NVRAM":paths[1], @"BootMedia":paths[2],
         @"BootMediaKind":efiDisk?@"efi-disk":@"legacy-opencore-iso", @"CPUCount":@4, @"MemoryMiB":@4096,
@@ -675,7 +866,10 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
     if(![fm createDirectoryAtURL:library withIntermediateDirectories:YES attributes:nil error:error])return nil;
     for(NSURL *input in @[firmware,nvram,bootMedia,installer,qemuImage]) {
         NSNumber *regular=nil;
-        if(!input.isFileURL||![input getResourceValue:&regular forKey:NSURLIsRegularFileKey error:error]||!regular.boolValue) {
+        // Bundled per-OS firmware paths intentionally alias the shared image.
+        // Validate the actual file, just as copying and runtime lookup do;
+        // NSURLIsRegularFileKey on the alias itself reports a symbolic link.
+        if(!input.isFileURL||![input.URLByResolvingSymlinksInPath getResourceValue:&regular forKey:NSURLIsRegularFileKey error:error]||!regular.boolValue) {
             Fail(error,@"A required firmware, installer, or disk tool file is missing.");return nil;
         }
     }
@@ -698,22 +892,37 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
     for(NSString *folder in @[@"Disks",@"Firmware",@"State",@"Logs",@"Installation"])
         if(![fm createDirectoryAtURL:[stage URLByAppendingPathComponent:folder] withIntermediateDirectories:NO attributes:nil error:error])return nil;
     if(!Save(@{@"Phase":@"creating",@"Identifier":identifier},[stage URLByAppendingPathComponent:@"State/Install.plist"],error))return nil;
-    if(!CreateFormattedDisk(stage,qemuImage,diskGiB,error))return nil;
+    BOOL tigerResearch=[guest isEqual:@"tiger"]&&OpenGLResearchEnabled();
+    // The new-disk identity is needed by native unattended installation too,
+    // independent of which graphics stack this release uses.
+    if(!CreateFormattedDisk(stage,qemuImage,diskGiB,YES,error))return nil;
     NSArray *sources=@[firmware,nvram,bootMedia,installer];
     BOOL efiDisk=EFIDisk(bootMedia);
     NSArray *paths=@[@"Firmware/CODE.fd",@"Firmware/NVRAM.fd",efiDisk?@"Firmware/EFI.img":@"Firmware/OpenCore.iso",installer.URLByResolvingSymlinksInPath.path];
-    for(NSUInteger i=1;i<2;i++)
-        if(![fm copyItemAtURL:sources[i] toURL:[stage URLByAppendingPathComponent:paths[i]] error:error])return nil;
+    for(NSUInteger i=tigerResearch?0:1;i<(tigerResearch?3:2);i++)
+        if(![fm copyItemAtURL:[sources[i] URLByResolvingSymlinksInPath] toURL:[stage URLByAppendingPathComponent:paths[i]] error:error])return nil;
     // Ownership identity is distinct from BootMedia. Later cleanup must verify
     // it and authoritative guest completion; a desktop frame is not completion.
     if(!Save(@{@"FormatVersion":@1,@"MachineIdentifier":identifier,@"Media":paths[3],@"Size":@(imageSize)},
         [stage URLByAppendingPathComponent:@"Installation/Ownership.plist"],error))return nil;
-    NSDictionary *configuration=VIMNetworkConfigurationWithDefaults(@{@"FormatVersion":@1,@"Identifier":identifier,@"Guest":guest,
+    NSMutableDictionary *configuration=[VIMNetworkConfigurationWithDefaults(@{@"FormatVersion":@1,@"Identifier":identifier,@"Guest":guest,
         @"CPUCount":@4,@"MemoryMiB":@4096,@"Disk":@"Disks/System.qcow2",@"DiskGiB":@(diskGiB),
         @"Firmware":paths[0],@"NVRAM":paths[1],@"BootMedia":paths[2],@"BootMediaKind":efiDisk?@"efi-disk":@"legacy-opencore-iso",
         @"FirmwareSource":@"application",@"InstallerMediaShared":@YES,
-        @"InstallerMedia":paths[3],@"InstallerMediaKind":EFIDisk(installer)?@"disk":@"optical",@"InstallState":@"installing"},library,destination);
+        @"InstallerMedia":paths[3],@"InstallerMediaKind":EFIDisk(installer)?@"disk":@"optical",@"InstallState":@"installing"},library,destination) mutableCopy];
     if(!configuration){Fail(error,@"No local connection ports are available. Close unused virtual Macs or network services, then try again.");return nil;}
+    if(tigerResearch) {
+        configuration[@"FirmwareSource"]=@"package";
+    }
+    if([guest isEqual:@"tiger"]) {
+        configuration[@"LegacyDisplayAdapter"]=@"vmware";
+        configuration[@"DisplayMode"]=@"scaled";
+        configuration[@"PassthroughOpenGLEnabled"]=@NO;
+    }
+    if(VIMGuestUsesOpenGLDesktop(guest)) {
+        configuration[@"LegacyDisplayAdapter"]=@"vmware";
+        configuration[@"PassthroughOpenGLEnabled"]=@YES;
+    }
     if(!Save(configuration,[stage URLByAppendingPathComponent:@"Machine.plist"],error)||
        !Save(@{@"Phase":@"awaiting-os-install",@"Identifier":identifier},[stage URLByAppendingPathComponent:@"State/Install.plist"],error)||
        ![fm moveItemAtURL:stage toURL:destination error:error])return nil;

@@ -1,0 +1,19 @@
+#!/bin/bash
+# Standalone, quick guest/physical-Mavericks workload build. No driver rebuild.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+build="${VIM_WINDOW_INTERACTION_BUILD:-$root/Build/PassthroughOpenGLResearch/WindowInteraction}"
+sdk="${VIM_OPENGL_SDK:-$root/resources/sdk/MacOSX10.9.sdk}"
+mkdir -p "$build"
+clang -O2 -g -fno-omit-frame-pointer -Wall -Wextra -Werror -Wno-deprecated-declarations \
+    -arch x86_64 -isysroot "$sdk" -mmacosx-version-min=10.9 \
+    "$root/probes/opengl-window-interaction.m" -framework Cocoa -framework ApplicationServices \
+    -o "$build/opengl-window-interaction"
+clang -O2 -g -fno-omit-frame-pointer -Wall -Wextra -Werror -Wno-deprecated-declarations \
+    -arch x86_64 -isysroot "$sdk" -mmacosx-version-min=10.9 \
+    "$root/probes/opengl-window-activate.m" -framework Cocoa -framework ApplicationServices \
+    -o "$build/opengl-window-activate"
+clang -O2 -g -fno-omit-frame-pointer -Wall -Wextra -Werror -Wno-deprecated-declarations \
+    -arch x86_64 -isysroot "$sdk" -mmacosx-version-min=10.9 \
+    "$root/probes/opengl-window-list.c" -framework ApplicationServices -o "$build/opengl-window-list"
+printf 'Built %s\n' "$build/opengl-window-interaction"

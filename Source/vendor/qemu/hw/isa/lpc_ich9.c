@@ -38,6 +38,7 @@
 #include "hw/isa/isa.h"
 #include "migration/vmstate.h"
 #include "hw/core/irq.h"
+#include "hw/intc/intc.h"
 #include "hw/isa/apm.h"
 #include "hw/pci/pci.h"
 #include "hw/southbridge/ich9.h"
@@ -679,6 +680,56 @@ static const MemoryRegionOps ich9_rst_cnt_ops = {
     .endianness = DEVICE_LITTLE_ENDIAN
 };
 
+/* Local laboratory control, never a default routing policy. Only the legacy
+ * PIC-enable bit of PIRQ F may change; its native GSI21 route and every other
+ * PIRQ stay intact. An explicit original byte can restore it, but a changed
+ * guest routing selection is refused instead of overwritten. No hidden saved
+ * state, migration change, polling, timer or interrupt hot-path work. */
+static void ich9_lpc_get_pirq_f(Object *obj, Visitor *v, const char *name,
+                                void *opaque, Error **errp)
+{
+    ICH9LPCState *lpc = ICH9_LPC_DEVICE(obj);
+    uint64_t value = lpc->d.config[ICH9_LPC_PIRQE_ROUT + 1];
+    visit_type_uint64(v, name, &value, errp);
+}
+
+static void ich9_lpc_set_pirq_f(Object *obj, Visitor *v, const char *name,
+                                void *opaque, Error **errp)
+{
+    ICH9LPCState *lpc = ICH9_LPC_DEVICE(obj);
+    uint64_t value;
+    const unsigned offset = ICH9_LPC_PIRQE_ROUT + 1;
+    uint8_t before = lpc->d.config[offset];
+    if (!visit_type_uint64(v, name, &value, errp)) {
+        return;
+    }
+    if (!qdev_is_realized(DEVICE(lpc)) || value > UINT8_MAX ||
+        ((value ^ before) & ~ICH9_LPC_PIRQ_ROUT_IRQEN)) {
+        error_setg(errp, "Research PIRQ F control only toggles its PIC-disable bit on a realized chipset; routing changed or invalid byte");
+        return;
+    }
+    ich9_lpc_config_write(&lpc->d, offset, value, 1);
+    /* Re-evaluate the old PIC line now; native GSI21 is unaffected. Merely
+     * changing the byte otherwise waits for the next PCI level transition. */
+    ich9_lpc_update_pic(lpc, before & ICH9_LPC_PIRQ_ROUT_MASK);
+}
+
+static void ich9_lpc_print_irq_info(InterruptStatsProvider *obj, GString *buf)
+{
+    ICH9LPCState *lpc = ICH9_LPC_DEVICE(obj);
+    g_string_append(buf, "ICH9-LPC PCI interrupt routes (PIC and native IOAPIC)\n");
+    for (unsigned i = 0; i < ICH9_LPC_NB_PIRQS; i++) {
+        unsigned offset = i < 4 ? ICH9_LPC_PIRQA_ROUT + i : ICH9_LPC_PIRQE_ROUT + i - 4;
+        int irq, disabled;
+        ich9_lpc_pic_irq(lpc, i, &irq, &disabled);
+        g_string_append_printf(buf, "  PIRQ%c reg=0x%x raw=0x%02x PIC=%d enabled=%u IOAPIC=%d level=%d\n",
+            'A' + i, offset, lpc->d.config[offset], irq, !disabled,
+            ich9_pirq_to_gsi(i), pci_bus_get_irq_level(pci_get_bus(&lpc->d), i));
+    }
+    g_string_append_printf(buf, "  D1.INTA=PIRQ%c D2.INTD=PIRQ%c D31.INTA=PIRQ%c\n",
+        'A' + lpc->irr[1][0], 'A' + lpc->irr[2][3], 'A' + lpc->irr[31][0]);
+}
+
 static void ich9_lpc_initfn(Object *obj)
 {
     ICH9LPCState *lpc = ICH9_LPC_DEVICE(obj);
@@ -689,6 +740,8 @@ static void ich9_lpc_initfn(Object *obj)
                              IOAPIC_NUM_PINS);
 
     ich9_pm_reset_properties(&lpc->pm);
+    object_property_add(obj, "x-pirq-f-pic-route", "uint64",
+                        ich9_lpc_get_pirq_f, ich9_lpc_set_pirq_f, NULL, NULL);
 }
 
 static void ich9_lpc_realize(PCIDevice *d, Error **errp)
@@ -818,6 +871,8 @@ static const VMStateDescription vmstate_ich9_lpc = {
 };
 
 static const Property ich9_lpc_properties[] = {
+    DEFINE_PROP_BOOL("x-apic-pirq-f-native-only", ICH9LPCState,
+                     apic_pirq_f_native_only, false),
     DEFINE_PROP_BOOL("noreboot", ICH9LPCState, pin_strap.spkr_hi, false),
     DEFINE_PROP_BOOL("smm-compat", ICH9LPCState, pm.smm_compat, false),
     DEFINE_PROP_BOOL("smm-enabled", ICH9LPCState, pm.smm_enabled, false),
@@ -873,6 +928,8 @@ static void ich9_lpc_class_init(ObjectClass *klass, const void *data)
     HotplugHandlerClass *hc = HOTPLUG_HANDLER_CLASS(klass);
     AcpiDeviceIfClass *adevc = ACPI_DEVICE_IF_CLASS(klass);
     AcpiDevAmlIfClass *amldevc = ACPI_DEV_AML_IF_CLASS(klass);
+    InterruptStatsProviderClass *intc = INTERRUPT_STATS_PROVIDER_CLASS(klass);
+    intc->print_info = ich9_lpc_print_irq_info;
 
     static const uint8_t acpi_enable_cmd = ICH9_APM_ACPI_ENABLE;
     static const uint8_t acpi_disable_cmd = ICH9_APM_ACPI_DISABLE;
@@ -933,6 +990,7 @@ static const TypeInfo ich9_lpc_info = {
         { TYPE_ACPI_DEVICE_IF },
         { INTERFACE_CONVENTIONAL_PCI_DEVICE },
         { TYPE_ACPI_DEV_AML_IF },
+        { TYPE_INTERRUPT_STATS_PROVIDER },
         { }
     }
 };

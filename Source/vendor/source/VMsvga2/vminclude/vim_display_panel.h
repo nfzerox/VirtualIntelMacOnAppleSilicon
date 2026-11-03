@@ -1,0 +1,18 @@
+/* Private research virtual-panel metadata. Fixed, read-only registers;
+ * old peers return no capability and retain the original framebuffer path. */
+#ifndef VIM_DISPLAY_PANEL_H
+#define VIM_DISPLAY_PANEL_H
+#define VIM_PANEL_CAPABILITIES_REGISTER 0x1007u
+#define VIM_PANEL_MAGIC 0x56474431u
+#define VIM_PANEL_WIDTH_REGISTER 0x1008u
+#define VIM_PANEL_HEIGHT_REGISTER 0x1009u
+#define VIM_PANEL_SCALE_REGISTER 0x100au
+#define VIM_PANEL_IRQ_CAPABILITIES_REGISTER 0x100bu
+#define VIM_PANEL_IRQ_MAGIC 0x56474932u
+#define VIM_PANEL_IRQ_STATUS_PORT 8u
+#define VIM_PANEL_GENERATION_REGISTER 0x100cu
+#define VIM_PANEL_IRQ_ENABLE_REGISTER 0x100du
+#define VIM_PANEL_ACK_REGISTER 0x100eu
+#define VIM_PANEL_REQUEST_WIDTH_REGISTER 0x100fu
+#define VIM_PANEL_REQUEST_HEIGHT_REGISTER 0x1010u
+#endif

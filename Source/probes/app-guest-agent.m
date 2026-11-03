@@ -4,13 +4,25 @@
 
 // Read-only live qualification of the production guest-agent transport.
 int main(int argc, char **argv) { @autoreleasepool {
-    if(argc>=4&&!strcmp(argv[1],"--exec")) {
+    if(argc==2&&!strcmp(argv[1],"--transport-names")) {
+        VIMGuestAgent *guest=[[VIMGuestAgent alloc] initWithSocketPath:@"/nonexistent/native-agent"];
+        NSCAssert([guest.transportName isEqual:@"AppleVirtIO"],@"native transport identity");
+        guest.preMetalGuest=YES;
+        NSCAssert([guest.transportName isEqual:@"Apple16X50Serial"],@"period serial identity");
+        guest.preMetalGuest=NO;[guest setValue:@YES forKey:@"recoveryTransport"];
+        NSCAssert([guest.transportName isEqual:@"Apple16X50SerialRecovery"],@"selected Recovery endpoint identity");
+        [guest close];puts("PASS: native, period serial and Recovery transport records");return 0;
+    }
+    BOOL recovery=argc>=5&&!strcmp(argv[1],"--recovery-exec");
+    if(recovery||(argc>=4&&!strcmp(argv[1],"--exec"))) {
         VIMGuestAgent *guest=[[VIMGuestAgent alloc] initWithSocketPath:@(argv[2])];
-        NSMutableArray *arguments=[NSMutableArray array];for(int i=4;i<argc;i++)[arguments addObject:@(argv[i])];
+        int executable=recovery?4:3;
+        if(recovery)guest.recoverySocketPath=@(argv[3]);
+        NSMutableArray *arguments=[NSMutableArray array];for(int i=executable+1;i<argc;i++)[arguments addObject:@(argv[i])];
         __block BOOL done=NO;__block int code=1;
         [guest connectWithCompletion:^(NSError *error) {
             if(error){NSLog(@"%@",error);done=YES;return;}
-            [guest runExecutable:@(argv[3]) arguments:arguments timeout:600 completion:^(NSDictionary *result,NSError *failure) {
+            [guest runExecutable:@(argv[executable]) arguments:arguments timeout:600 completion:^(NSDictionary *result,NSError *failure) {
                 if(failure)NSLog(@"%@",failure);
                 else {
                     fwrite([result[@"stdout"] bytes],1,[result[@"stdout"] length],stdout);

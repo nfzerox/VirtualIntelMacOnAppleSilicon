@@ -1,0 +1,43 @@
+#!/bin/bash
+# READY-coordinated finite guest observation through an already authenticated
+# SSH master. Read the guest sudo password from stdin; never save/export it.
+# No second QMP owner, host debugger, policy changes or guest-side polling.
+set -euo pipefail
+umask 077
+[[ $# == 3 ]] || { echo 'Usage: trace-opengl-writer-handoff SSH_MASTER WS_PID NEW_ABSOLUTE_PREFIX (guest sudo password on stdin)' >&2;exit 2; }
+task_master=$1 task_pid=$2 task_prefix=$3
+[[ -S "$task_master" && "$task_pid" =~ ^[1-9][0-9]*$ && "$task_prefix" == /* ]] || exit 2
+for task_suffix in phases.log input.log stderr.log; do [[ ! -e "$task_prefix.$task_suffix" ]] || exit 2;done
+IFS= read -r task_guest_password
+[[ $(ssh -n -S "$task_master" -p2222 -o BatchMode=yes mac@127.0.0.1 'pgrep -x WindowServer') == "$task_pid" ]] || exit 2
+[[ $(ssh -n -S "$task_master" -p2222 -o BatchMode=yes mac@127.0.0.1 'sysctl -n kern.uuid') == 8926E512-6714-34FC-B27C-6AE90EB51D5E ]] || {
+    echo 'Refused unqualified guest kernel clock layout.' >&2;exit 2;
+}
+task_root=$(cd "$(dirname "$0")/.." && pwd)
+scp -o ControlPath="$task_master" -o BatchMode=yes -P2222 "$task_root/probes/opengl-writer-handoff-scheduling.d" mac@127.0.0.1:/var/tmp/opengl-writer-handoff-coordinated.d
+task_trace_pid=
+cleanup() {
+    if [[ -n "$task_trace_pid" ]] && kill -0 "$task_trace_pid" 2>/dev/null;then
+        kill -INT "$task_trace_pid" 2>/dev/null || true
+        wait "$task_trace_pid" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+printf '%s\n' "$task_guest_password" | ssh -S "$task_master" -p2222 -o BatchMode=yes mac@127.0.0.1 \
+    "sudo -k -S -p '' /usr/sbin/dtrace -q -s /var/tmp/opengl-writer-handoff-coordinated.d -p$task_pid" \
+    >"$task_prefix.phases.log" 2>"$task_prefix.stderr.log" &
+task_trace_pid=$!
+unset task_guest_password
+while ! grep -q '^READY selected writer scheduling ' "$task_prefix.phases.log";do
+    kill -0 "$task_trace_pid" 2>/dev/null || { wait "$task_trace_pid";exit 1; }
+    sleep .05
+done
+! grep -q '^END selected writer scheduling' "$task_prefix.phases.log" || exit 1
+ssh -n -S "$task_master" -p2222 -o BatchMode=yes mac@127.0.0.1 \
+    '/var/tmp/opengl-native-transition-input-r114 mission-control; /var/tmp/opengl-native-transition-input-r114 app-expose; /var/tmp/opengl-native-transition-input-r114 launchpad; /var/tmp/opengl-native-transition-input-r114 mission-control; /var/tmp/opengl-native-transition-input-r114 app-expose' \
+    >"$task_prefix.input.log" 2>&1
+wait "$task_trace_pid"
+task_trace_pid=
+grep -q '^END selected writer scheduling' "$task_prefix.phases.log"
+! grep -q '^INVALID ' "$task_prefix.phases.log"
+echo "Completed finite selected writer handoff: $task_prefix"

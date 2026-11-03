@@ -1,0 +1,23 @@
+Apple xnu-792.22.5, commit cb6340129a81ba09dd80f88e9c6a618f230118eb
+https://github.com/apple-oss-distributions/xnu/tree/xnu-792.22.5
+
+Unmodified kernel header subset required to rebuild the native Darwin8 SMB
+client. Includes the original APPLE_LICENSE and per-file notices. No kernel
+implementation, prebuilt kernel, Git checkout, submodule or fabricated layout.
+
+Selected mechanically from the period Apple compiler's actual -MD dependencies
+for all31 SMB source-phase units plus the module declaration. Paths retain
+the original bsd/osfmk/libkern/pexpert hierarchy. The genuine10.4u SDK continues
+to supply exported/generated Mach architecture and MIG headers.
+
+Qualification: TigerSMBClient338 builds against the complete original XNU tree;
+TigerSMBClient339 builds against only this subset. Their linked native smbfs
+executables are byte-identical. The copied201 headers occupy approximately2MB,
+not the44MB implementation tree. Compiler/linker/SDK remain explicit period
+toolchain inputs; no guest developer tools are required.
+
+Regenerate only when actual include dependencies change, using
+Source/probes/build-leopard-smb-client.py --vendor-headers NEW_DIRECTORY
+with the genuine upstream --xnu tree, then qualify the subset build before
+replacing this directory. No credential material or machine metadata belongs
+in this subset.

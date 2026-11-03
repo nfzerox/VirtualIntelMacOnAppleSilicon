@@ -1,0 +1,19 @@
+# Finite i386 context inspection; quit iMovie first, then launch as its normal
+# console user AFTER debugserver is waiting. Click its project clip and Play.
+# Tested interactively with period LLDB: 9.0 lazily creates the QC context.
+script lldb.debugger.SetAsync(False)
+settings set target.x86-disassembly-flavor intel
+target create "/Applications/iMovie.app/Contents/MacOS/iMovie"
+breakpoint set --name CGLChoosePixelFormat --shlib OpenGL
+process attach --name iMovie --waitfor
+process handle -s false -n false -p true SIGCONT
+continue
+thread backtrace -c 12
+# i386 cdecl: return, attributes, output-format, output-screen-count.
+memory read --format x --size 4 --count 4 $esp
+expression -l c -- unsigned int *$attrs=(unsigned int *)*(unsigned int *)($esp+4)
+memory read --format x --size 4 --count 8 $attrs
+thread step-out
+register read eax
+process detach
+quit

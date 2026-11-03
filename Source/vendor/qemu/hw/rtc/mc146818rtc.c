@@ -989,13 +989,12 @@ static void rtc_build_aml(AcpiDevAmlIf *adev, Aml *scope)
     Aml *dev;
     Aml *crs;
 
-    /*
-     * Reserving 8 io ports here, following what physical hardware
-     * does, even though qemu only responds to the first two ports.
-     */
+    /* Advertise only the implemented index/data pair. AppleRTC treats a
+     * larger range as a second CMOS bank; reading its unimplemented ports
+     * fabricates an all-ones sleep-failure record on Snow Leopard. */
     crs = aml_resource_template();
     aml_append(crs, aml_io(AML_DECODE16, s->io_base, s->io_base,
-                           0x01, 0x08));
+                           0x01, 0x02));
     aml_append(crs, aml_irq_no_flags(s->isairq));
 
     dev = aml_device("RTC");

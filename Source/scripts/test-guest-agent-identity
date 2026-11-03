@@ -1,0 +1,9 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+mkdir -p "$root/Build/Probes"
+xcrun clang -fobjc-arc -fmodules -arch arm64 -arch x86_64 -mmacosx-version-min=15.0 \
+    -I "$root/VirtualIntelMac" "$root/probes/guest-agent-identity-tests.m" \
+    "$root/VirtualIntelMac/VIMGuestAgent.m" "$root/VirtualIntelMac/VIMQMPConnection.m" \
+    -framework Foundation -o "$root/Build/Probes/guest-agent-identity-tests"
+"$root/Build/Probes/guest-agent-identity-tests"

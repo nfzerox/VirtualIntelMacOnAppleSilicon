@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Files</key>
+	<dict>
+		<key>Samba-COPYING.txt</key>
+		<true/>
+		<key>tiger-opendirectory.so</key>
+		<true/>
+		<key>tiger-smbd</key>
+		<true/>
+	</dict>
+	<key>FormatVersion</key>
+	<integer>1</integer>
+	<key>Guest</key>
+	<string>tiger</string>
+	<key>PolicyVersion</key>
+	<integer>2</integer>
+	<key>UpstreamCommit</key>
+	<string>55b54999e108fc287b6dfd5e8e5a06a60d4bc6c0</string>
+</dict>
+</plist>

@@ -1,4 +1,5 @@
 #import "VIMInstallerCatalog.h"
+#import "VIMInstallerSource.h"
 static NSError *CatalogError(NSString *text) {
     return [NSError errorWithDomain:@"VirtualIntelMac.Installers" code:1 userInfo:@{NSLocalizedDescriptionKey:text}];
 }
@@ -35,26 +36,34 @@ static NSError *CatalogError(NSString *text) {
     if(valid)for(id entry in object[@"Installers"]) {
         if(![entry isKindOfClass:NSDictionary.class]) { valid=NO;break; }
         NSString *guest=entry[@"Guest"],*assembly=entry[@"Assembly"];
-        if(![@[@"mojave",@"catalina",@"bigsur",@"highsierra"] containsObject:guest?:@""] || [guests containsObject:guest] ||
+        if(![@[@"tiger",@"leopard",@"snowleopard",@"lion",@"mountainlion",@"mavericks",@"yosemite",@"elcapitan",@"sierra",@"highsierra",@"mojave",@"catalina",@"bigsur"] containsObject:guest?:@""] || [guests containsObject:guest] ||
             ![entry[@"Name"] isKindOfClass:NSString.class] || ![entry[@"Name"] length] || [entry[@"Name"] length]>80 ||
             ![entry[@"Version"] isKindOfClass:NSString.class] || [entry[@"Version"] length]>30 ||
-            ![@[@"split-legacy",@"assistant-pkg"] containsObject:assembly?:@""] || ![entry[@"Files"] isKindOfClass:NSArray.class]) { valid=NO;break; }
+            ![@[@"split-legacy",@"assistant-pkg",@"installer-dmg",@"recovery-esd",@"restore-dvd"] containsObject:assembly?:@""] || ![entry[@"Files"] isKindOfClass:NSArray.class]) { valid=NO;break; }
+        NSString *expectedRecipe=@{@"tiger":@"restore-dvd",@"leopard":@"restore-dvd",@"snowleopard":@"restore-dvd",@"lion":@"installer-dmg",@"mountainlion":@"installer-dmg",@"mavericks":@"recovery-esd",@"yosemite":@"installer-dmg",@"elcapitan":@"installer-dmg",@"sierra":@"installer-dmg",@"mojave":@"split-legacy",@"catalina":@"split-legacy",@"bigsur":@"assistant-pkg",@"highsierra":@"split-legacy"}[guest];
+        if(![assembly isEqual:expectedRecipe]){valid=NO;break;}
         NSMutableSet *roles=[NSMutableSet set];
         for(id file in entry[@"Files"]) {
             if(![file isKindOfClass:NSDictionary.class] || ![file[@"URL"] isKindOfClass:NSString.class]) { valid=NO;break; }
             NSURL *url=[NSURL URLWithString:file[@"URL"]];NSString *role=file[@"Role"];
-            if(![@[@"assistant",@"recovery",@"esd"] containsObject:role?:@""] || [roles containsObject:role] ||
-                ![url.scheme isEqual:@"https"] || ![url.host isEqual:@"swcdn.apple.com"] || url.user || url.password || url.port || url.fragment ||
-                ![url.path hasPrefix:@"/content/downloads/"] || ![url.pathExtension isEqual:@"pkg"]) { valid=NO;break; }
+            if(![@[@"assistant",@"recovery",@"esd",@"diskimage"] containsObject:role?:@""] || [roles containsObject:role] ||
+                ![VIMInstallerSource isApprovedURL:url]) { valid=NO;break; }
+            if([assembly isEqual:@"recovery-esd"]&&![VIMInstallerSource isMavericksRecoveryAsset:url]){valid=NO;break;}
+            if([assembly isEqual:@"installer-dmg"]&&![url.host isEqual:@"updates.cdn-apple.com"]){valid=NO;break;}
+            if([assembly isEqual:@"restore-dvd"]&&![url.host isEqual:@"archive.org"]&&![url.host hasSuffix:@".archive.org"]){valid=NO;break;}
+            NSString *hash=file[@"SHA256"];
+            if(hash&&(![hash isKindOfClass:NSString.class]||hash.length!=64||
+                [hash rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdefABCDEF"].invertedSet].location!=NSNotFound)){valid=NO;break;}
+            if([assembly isEqual:@"recovery-esd"]&&!hash){valid=NO;break;}
             [roles addObject:role];
         }
-        NSSet *expected=[NSSet setWithArray:[assembly isEqual:@"split-legacy"]?@[@"assistant",@"recovery",@"esd"]:@[@"assistant"]];
+        NSSet *expected=[NSSet setWithArray:[assembly isEqual:@"split-legacy"]?@[@"assistant",@"recovery",@"esd"]:
+            [assembly isEqual:@"recovery-esd"]?@[@"esd"]:[@[@"installer-dmg",@"restore-dvd"] containsObject:assembly]?@[@"diskimage"]:@[@"assistant"]];
         if(!valid || ![roles isEqual:expected]) { valid=NO;break; }
         [guests addObject:guest];
-        // High Sierra cannot be enabled by a remotely supplied flag in v1.
-        if(![guest isEqual:@"highsierra"])[supported addObject:entry];
+        [supported addObject:entry];
     }
-    if(!valid || supported.count!=3) { if(error)*error=CatalogError(@"The installer catalog is invalid or incompatible.");return nil; }
+    if(!valid || supported.count!=13) { if(error)*error=CatalogError(@"The installer catalog is invalid or incompatible.");return nil; }
     VIMInstallerCatalog *catalog=[self new];catalog->_revision=[object[@"Revision"] unsignedIntegerValue];
     catalog->_supportedInstallers=[supported copy];return catalog;
 }
@@ -67,6 +76,18 @@ static NSError *CatalogError(NSString *text) {
     if(result&&error)*error=nil;
     if(!result && error)*error=CatalogError(@"No valid installer catalog is available.");
     return result;
+}
++ (NSDictionary *)fileForGuest:(NSString *)guest role:(NSString *)role {
+    for(NSDictionary *installer in [self currentCatalogWithError:NULL].supportedInstallers)
+        if([installer[@"Guest"] isEqual:guest])
+            for(NSDictionary *file in installer[@"Files"])if([file[@"Role"] isEqual:role])return file;
+    return nil;
+}
++ (NSDictionary *)fileForURL:(NSURL *)URL {
+    for(NSDictionary *installer in [self currentCatalogWithError:NULL].supportedInstallers)
+        for(NSDictionary *file in installer[@"Files"])
+            if([file[@"URL"] isEqual:URL.absoluteString])return file;
+    return nil;
 }
 + (void)refreshWithCompletion:(void (^)(VIMInstallerCatalog *,NSError *))completion {
     NSURL *url=[NSURL URLWithString:@"https://raw.githubusercontent.com/nfzerox/VirtualIntelMacOnAppleSilicon/refs/heads/main/Source/VirtualIntelMac/InstallerCatalog.plist"];

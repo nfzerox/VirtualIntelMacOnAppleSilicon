@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Read numeric frame-delivery counters through the app's existing owner.
+
+Run while a repeatable Finder workload or continuous animation is visible. Does not send input,
+capture pixels, connect another QMP client, or alter guest settings.
+"""
+import argparse
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('directory', type=Path, help='per-VM --guest-diagnostics-root directory')
+parser.add_argument('--seconds', type=float, default=8)
+parser.add_argument('--command', nargs=argparse.REMAINDER,
+                    help='Measure around this exact host command instead of sleeping; command output goes to stderr')
+args = parser.parse_args()
+if not args.directory.is_dir() or not 1 <= args.seconds <= 60:
+    parser.error('Use an existing per-VM diagnostics directory and a 1–60-second interval.')
+
+
+def read_frame():
+    request = args.directory/'Request.json'
+    result = args.directory/'Result.json'
+    running = args.directory/'Running.json'
+    if request.exists() or running.exists():
+        raise SystemExit('Another app diagnostic is pending; leave it alone and retry afterward.')
+    old = result.stat().st_mtime_ns if result.exists() else None
+    # Same serialized production owner as other app diagnostics; no shell or
+    # arbitrary monitor command is exposed by this tool.
+    with os.fdopen(os.open(request, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as stream:
+        json.dump({'Action': 'display-state'}, stream)
+    deadline = time.monotonic()+10
+    while time.monotonic() < deadline:
+        if result.exists() and result.stat().st_mtime_ns != old and not running.exists() and not request.exists():
+            response = json.loads(result.read_text())
+            frame = response.get('Frame', {})
+            if 'CompletedFrames' not in frame:
+                raise SystemExit('This app build does not expose numeric frame counters.')
+            return frame
+        time.sleep(.1)
+    raise SystemExit('The app did not answer; do not open a second control connection.')
+
+
+first = read_frame()
+first_observed = time.monotonic()
+command_status = None
+if args.command:
+    command_status = subprocess.run(args.command, stdout=sys.stderr).returncode
+else:
+    time.sleep(args.seconds)
+last = read_frame()
+last_observed = time.monotonic()
+frames = last['CompletedFrames']-first['CompletedFrames']
+elapsed = last['LastCompletionTime']-first['LastCompletionTime']
+observed = last_observed-first_observed
+report = {'First': first, 'Last': last, 'Frames': frames, 'CompletionSeconds': elapsed,
+          'ObservationSeconds': observed,
+          'WorkloadExitStatus': command_status,
+          'CompletedFramesPerSecond': frames/observed if observed > 0 else None,
+          'Caution': 'GPU completion/handoff count per observation interval, not display scanout fps. Endpoint completion timestamps can predate the workload when idle.'}
+
+
+def histogram_delta(a, b, key):
+    old, new = a[key], b[key]
+    if len(old) != 256 or len(new) != 256 or any(y < x for x, y in zip(old, new)):
+        raise SystemExit('Presentation counters reset during measurement; repeat on a stable display epoch.')
+    counts = [y-x for x, y in zip(old, new)]
+    total = sum(counts)
+    percentiles = {}
+    for label, fraction in [('p50', .5), ('p95', .95), ('p99', .99)]:
+        cumulative = 0
+        for bucket, count in enumerate(counts):
+            cumulative += count
+            if total and cumulative >= total*fraction:
+                percentiles[label] = {'AtLeast': bucket, 'LessThan': bucket+1 if bucket < 255 else None}
+                break
+    return {'Samples': total, 'PercentilesMilliseconds': percentiles,
+            'AtLeast255Milliseconds': counts[-1]}
+
+
+if 'PresentationTiming' in first and 'PresentationTiming' in last:
+    a, b = first['PresentationTiming'], last['PresentationTiming']
+    shown = b['PresentedFrames']-a['PresentedFrames']
+    seconds = b['LastPresentedAt']-a['LastPresentedAt']
+    report['Presentation'] = {
+        'FramesShown': shown, 'Seconds': seconds,
+        'ObservationSeconds': observed,
+        'FramesShownPerSecond': shown/observed if observed > 0 else None,
+        'Skipped': b['Skipped']-a['Skipped'],
+        'ReorderedCallbacks': b['ReorderedCallbacks']-a['ReorderedCallbacks'],
+        'FrameGaps': histogram_delta(a, b, 'GapMillisecondsHistogram'),
+        'SubmitToPresentation': histogram_delta(a, b, 'SubmissionMillisecondsHistogram'),
+        'NextDrawableMillisecondsPerCompletedFrame':
+            (b['NextDrawableSeconds']-a['NextDrawableSeconds'])*1000/frames if frames > 0 else None,
+        'Caution': 'Actual Metal drawable presentation callbacks per observation interval; no pixel-distinctness or input-to-photon assertion. Includes workload pauses. The first new gap may straddle pre-observation idle; endpoint presentation Seconds is diagnostic only.'}
+if 'DistinctPresentationTiming' in first and 'DistinctPresentationTiming' in last:
+    a, b = first['DistinctPresentationTiming'], last['DistinctPresentationTiming']
+    measured = b['PresentedFingerprintFrames']-a['PresentedFingerprintFrames']
+    distinct = b['DistinctFrames']-a['DistinctFrames']
+    duplicates = b['DuplicateFrames']-a['DuplicateFrames']
+    failures = b['Failures']-a['Failures']
+    reordered = b['Reordered']-a['Reordered']
+    valid = (a['Enabled'] and b['Enabled'] and a['Generation'] == b['Generation'] and not failures and not reordered
+             and not b['Error'] and measured == distinct+duplicates)
+    report['DistinctPresentation'] = {
+        'MeasurementValid': valid, 'PresentedFingerprintFrames': measured,
+        'DistinctFrames': distinct, 'DuplicateFrames': duplicates,
+        'Failures': failures, 'Reordered': reordered,
+        'Unpresented': b['Unpresented']-a['Unpresented'],
+        'DistinctFramesPerSecond': distinct/observed if valid and observed > 0 else None,
+        'FrameGaps': histogram_delta(a, b, 'GapMillisecondsHistogram'),
+        'Method': b['Method'],
+        'Caution': 'Opt-in diagnostic GPU work can perturb pacing; compare its overhead separately. Includes workload pauses and the first gap may straddle pre-observation idle. A 64-bit fingerprint is not a mathematical collision-free comparison, and no input-to-photon claim is made.'}
+print(json.dumps(report, indent=2))
+if command_status:
+    raise SystemExit(command_status)

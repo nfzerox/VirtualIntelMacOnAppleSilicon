@@ -30,6 +30,12 @@ if sys.version_info < (3, 12):
             os.execv(candidate,[candidate,*sys.argv])
     sys.exit('Building requires Python 3.12 or later. Install it with Homebrew, or set VIM_BUILD_PYTHON to its executable. Xcode’s Python 3.9 cannot build current QEMU safely.')
 
+# Runtime compilation uses this interpreter's Meson/Ninja. Use the same tool
+# discovery for cache validation, including when a venv Python was invoked by
+# absolute path without activating it. Otherwise every valid runtime appears
+# stale simply because the parent checked a different PATH.
+os.environ['PATH'] = str(Path(sys.executable).parent) + os.pathsep + os.environ.get('PATH', '')
+
 source = Path(__file__).resolve().parents[1]
 if '--fresh-release' in sys.argv[1:]:
     os.execv(sys.executable, [sys.executable, str(source/'scripts/build-release.py'),
@@ -154,6 +160,28 @@ if args.rebuild_runtime:
     if args.dependencies:
         runtime_command += ['--dependencies', str(args.dependencies)]
     subprocess.run(runtime_command, check=True)
+def ensure_boot_policy(candidate):
+    # UI/harness builds also generate development EFI disks. They need the
+    # same source/byte-verified policy, not an unrelated stale prebuilt copy.
+    from importlib.util import spec_from_file_location, module_from_spec
+    spec = spec_from_file_location('boot_policy_recipe',source/'scripts/build-boot-policy.py')
+    recipe = module_from_spec(spec); spec.loader.exec_module(recipe)
+    candidate = candidate or source/'Build/BootPolicy/Output'
+    receipt = freshness.load(candidate/'BuildReceipt.plist')
+    hashes = receipt.get('Hashes',{})
+    current = (receipt.get('SourceFiles') == recipe.inputs() and bool(hashes)
+               and receipt.get('BuildFingerprint') == recipe.fingerprint())
+    try:
+        current = current and all(freshness.digest(candidate/name)==checksum for name,checksum in hashes.items())
+    except OSError:
+        current = False
+    if not current:
+        subprocess.run([sys.executable,str(source/'scripts/build-boot-policy.py'),'--bootstrap-tools',
+                        '--jobs',str(args.jobs)],check=True)
+        candidate = source/'Build/BootPolicy/Output'
+    return candidate
+
+args.boot_policy_build = ensure_boot_policy(args.boot_policy_build)
 if not args.ui_only:
     runtime_receipt = freshness.load(args.runtime_bin/'BuildReceipt.plist')
     args.dependencies = freshness.ensure_dependencies(source,
@@ -175,23 +203,6 @@ if not args.ui_only:
         candidate = work/'Output-RELEASE'
         firmware_rebuilt = True
     args.firmware_build = candidate
-    from importlib.util import spec_from_file_location, module_from_spec
-    spec = spec_from_file_location('boot_policy_recipe',source/'scripts/build-boot-policy.py')
-    policy_recipe = module_from_spec(spec); spec.loader.exec_module(policy_recipe)
-    args.boot_policy_build = args.boot_policy_build or source/'Build/BootPolicy/Output'
-    policy_receipt = freshness.load(args.boot_policy_build/'BuildReceipt.plist')
-    policy_hashes = policy_receipt.get('Hashes',{})
-    policy_current = (policy_receipt.get('SourceFiles') == policy_recipe.inputs() and bool(policy_hashes)
-                      and policy_receipt.get('BuildFingerprint') == policy_recipe.fingerprint())
-    try:
-        policy_current = policy_current and all(freshness.digest(args.boot_policy_build/name)==checksum
-                                               for name,checksum in policy_hashes.items())
-    except OSError:
-        policy_current = False
-    if not policy_current:
-        subprocess.run([sys.executable,str(source/'scripts/build-boot-policy.py'),'--bootstrap-tools',
-                        '--jobs',str(args.jobs)],check=True)
-        args.boot_policy_build = source/'Build/BootPolicy/Output'
     if not supports_sound_recovery(args.runtime_bin):
         parser.error('This QEMU runtime lacks Big Sur sound recovery. Rebuild with --rebuild-runtime.')
     # These small native tools must match the host protocol, including desktop
@@ -202,16 +213,12 @@ if not args.ui_only:
                         '--output', str(guest_tools)], check=True)
     # These small project-owned drivers are always rebuilt. The historical
     # Apple donor seeds remain intentional, hash-verified binary inputs.
-    import hashlib
     drivers = guest_tools/'IOSurfaceABI'
     for guest, target, suffix in (('mojave','10.14','-Mojave'),('catalina','10.15','')):
         environment = dict(os.environ, PVG_TARGET_OS=target)
         subprocess.run(['/bin/zsh',str(source/'scripts/build-iosurface-abi')],env=environment,check=True)
         product = source/('work/build/PVGIOSurfaceABI'+suffix)/'Build/Products/Debug/PVGIOSurfaceABI.kext'
         shutil.copytree(product,drivers/guest/product.name,symlinks=True)
-    (drivers/'SHA256SUMS').write_text(''.join(
-        hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.relative_to(drivers).as_posix()+'\n'
-        for p in sorted(drivers.rglob('*')) if p.is_file()))
     if not (args.qemu/'pc-bios').is_dir():
         parser.error(f'QEMU source is missing at {args.qemu}. Supply --qemu with a QEMU source folder.')
     required = [args.runtime_bin/name for name in ('qemu-system-x86_64', 'qemu-img', 'apple-gfx-helper')]
@@ -243,9 +250,10 @@ app = derived/'Build/Products'/args.configuration/'Virtual Intel Mac.app'
 app_info = plistlib.loads((app/'Contents/Info.plist').read_bytes())
 if app_info.get('LSMinimumSystemVersion') != '15.0':
     sys.exit('Build refused: the main app must target macOS 15.0; runtime dependencies remain macOS 11.0.')
-if (app_info.get('CFBundleIconName') != 'AppIcon'
-        or not (app/'Contents/Resources/AppIcon.icns').is_file()):
-    sys.exit('Build refused: compile the AppIcon.icon Icon Composer source as the app icon.')
+icon_name = app_info.get('CFBundleIconName')
+if (icon_name not in ('AppIcon', 'AppIcon26')
+        or not (app/'Contents/Resources'/(icon_name+'.icns')).is_file()):
+    sys.exit('Build refused: compile the toolchain-selected Icon Composer source as the app icon.')
 # Xcode's incremental resource phase can retain removed resources. Never carry
 # the superseded hardcoded app/folder icons into a newly packaged app.
 for name in ('VirtualIntelMac.icns', 'FolderIcon.icns'):
@@ -302,13 +310,18 @@ else:
     sys.path.insert(0, str(source/'scripts'))
     import deployment_target
     donor = args.output/'Contents/Resources/Runtime/Donor'  # unmodified Apple binaries
+    tiger_graphics = args.output/'Contents/Resources/Runtime/OpenGLGuests/tiger'
     for path in sorted(args.output.rglob('*')):
         if donor in path.parents:
             continue
         if path.is_file() and not path.is_symlink() and path.open('rb').read(4) in (
                 b'\xca\xfe\xba\xbe', b'\xcf\xfa\xed\xfe', b'\xce\xfa\xed\xfe'):
             try:
-                deployment_target.check_weak_libsystem_imports(path)
+                if path.parent == tiger_graphics and path.name in ('GLEngine','libVIMPassthroughOpenGL.dylib'):
+                    from tiger_rosetta_imports import check_tiger_rosetta_imports
+                    check_tiger_rosetta_imports(path)
+                else:
+                    deployment_target.check_weak_libsystem_imports(path)
             except RuntimeError as error:
                 sys.exit(f'Package refused: {error}')
     if args.runtime_bin:
@@ -337,7 +350,7 @@ else:
             'GuestToolsRebuilt':True, 'GuestDriversRebuilt':True, 'FirmwareRebuilt':firmware_rebuilt,
             'FreshnessVerified':True, 'RuntimeFingerprint':runtime_receipt['Freshness']['Fingerprint'],
             'BuilderArchitecture':platform.machine(), 'Xcode':freshness.command_version('xcodebuild','-version'),
-            'SDKVersion':freshness.command_version('xcrun','--show-sdk-version'),
+            'SDKVersion':freshness.command_version('xcrun','--sdk','macosx','--show-sdk-version'),
             'PythonVersion':platform.python_version(), 'HostSigningIdentity':packaging['HostSigningIdentity'],
             'BuildVerificationPassed':True, 'RuntimeQualificationPassed':False, 'Notarized':False}
         release = runpy.run_path(str(source/'scripts/build-release.py'))

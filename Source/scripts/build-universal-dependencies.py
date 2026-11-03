@@ -85,7 +85,7 @@ if not a.pkg_config:
         a.pkg_config = prefix/'bin/pkgconf'
 if not shutil.which('meson') or not shutil.which('ninja'):
     p.error('Install standard build tools in this Python environment: pip install meson ninja')
-sdk = subprocess.check_output(['xcrun', '--show-sdk-path'], text=True).strip()
+sdk = subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-path'], text=True).strip()
 for arch in ('x86_64', 'arm64'):
     prefix = a.output / arch
     prefix.mkdir(exist_ok=True)
