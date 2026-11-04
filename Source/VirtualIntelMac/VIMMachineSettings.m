@@ -378,7 +378,7 @@ static void VIMAlignFormBaselines(NSView *view) {
         NSPopUpButton *mode=[NSPopUpButton new];[mode addItemWithTitle:@"Automatic"];
         [mode.widthAnchor constraintEqualToConstant:220].active=YES;
         NSGridView *grid=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:@"Mouse & Keyboard:"],mode]]];grid.columnSpacing=12;
-        return VIMColumn(@[grid,VIMText(@"Click inside this Mac to use its mouse and Mac keyboard. Press Control–Option to release them.",NO)]);
+        return VIMColumn(@[grid,VIMText(@"Click inside this Mac to use its mouse and Mac keyboard. Press Command–Option to release them.",NO)]);
     }
     if(self.hardwareIndex==6) {
         NSArray *images=[VIMSession connectedImagesForMachine:self.machine];NSMutableArray *rows=[NSMutableArray new];
