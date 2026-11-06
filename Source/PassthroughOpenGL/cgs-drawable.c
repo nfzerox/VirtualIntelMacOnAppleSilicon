@@ -593,7 +593,13 @@ static CGLError VIMImportAcceleratorBacking(struct VIMContext *c,struct VIMCGSDr
 static CGLError VIMCreateFullscreen(struct VIMContext *c,const uint32_t *record)
 {
     if(!record) return kCGLBadDisplay;
-#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ != 1040
+#if defined(__i386__) && VIM_GLI_DISPATCH_COUNT == 757
+    /* Leopard i386 CGLSetFullScreenOnDisplay allocates 20 bytes and
+     * passes allocation + 16: a single uint32_t screen index, not the
+     * later four-word record. Reading record[3] is out of bounds and
+     * can reject screen zero. Validate the actual screen index instead. */
+    if(record[0]) return kCGLBadDisplay;
+#elif __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ != 1040
     // The later compositor record selects an IOFramebuffer in word three.
     // This provider supports its single display only.
     if(record[3]) return kCGLBadDisplay;
