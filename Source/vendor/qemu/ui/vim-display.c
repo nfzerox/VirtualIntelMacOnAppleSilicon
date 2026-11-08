@@ -153,6 +153,12 @@ static void vim_read(void *opaque)
                                    .logical_scale = m->stride};
                 qemu_console_set_ui_info(s->dcl.con, &info, false);
             }
+        } else if (m->operation == APPLE_GFX_APP_GUEST_POWER ||
+                   m->operation == APPLE_GFX_APP_DISPLAY_POWER) {
+            /* The app can send display-power notifications on any boot's
+             * display connection (e.g. when the guest display sleeps or the
+             * power bridge drops). Stock VGA has no power consumer, so ignore
+             * them instead of killing the whole VM with "unknown app message". */
         } else {
             vim_fail("unknown app message");
         }

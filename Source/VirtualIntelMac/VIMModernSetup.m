@@ -74,6 +74,16 @@ static NSError *SetupError(NSString *text){return [NSError errorWithDomain:@"Vir
        (self.state.count&&(![self.state[@"MachineIdentifier"] isEqual:identifier]||![self.state[@"TargetVolumeUUID"] isEqual:target]))){
         completion(nil,SetupError(@"This Mac’s automatic setup identity does not match its saved installation target."));return;
     }
+    // A "failed" journal is only authoritative while the guest is still in
+    // Recovery. startosinstall can print "Helper tool crashed..." and exit
+    // non-zero after it has already staged the install and rebooted the guest.
+    // Once the installed system has booted (no Recovery tools, installed root
+    // present), that stale failure must not block account setup forever.
+    if([self.state[@"Phase"] isEqual:@"failed"]&&![report[@"RecoveryToolsPresent"] isEqual:@YES]&&
+       [report[@"InstalledRootPresent"] isEqual:@YES]){
+        NSError *saveError=nil;[self.state removeObjectForKey:@"Error"];
+        if(![self savePhase:@"install-prepared" error:&saveError]){completion(nil,saveError);return;}
+    }
     if([self.state[@"Phase"] isEqual:@"failed"]){completion(nil,SetupError(self.state[@"Error"]?:@"Automatic installation could not finish. Its diagnostic files were retained."));return;}
     if([report[@"RecoveryToolsPresent"] isEqual:@YES]){
         if(self.state[@"InstallDispatched"]){completion(@{@"Handled":@YES,@"Message":@"Installing macOS…"},nil);return;}
@@ -128,6 +138,20 @@ static NSError *SetupError(NSString *text){return [NSError errorWithDomain:@"Vir
                     id result=[reply[@"exitcode"] isEqual:@0]?[NSJSONSerialization JSONObjectWithData:reply[@"stdout"]?:NSData.data options:0 error:NULL]:nil;
                     if(failure||![result isKindOfClass:NSDictionary.class]){
                         NSString *detail=[[NSString alloc] initWithData:reply[@"stderr"]?:NSData.data encoding:NSUTF8StringEncoding];
+                        // The guest tool refuses (without touching anything) when the user already created an
+                        // account or finished Setup Assistant by hand. That is not a failure: there is nothing
+                        // left for automatic setup to do. Retire it so the session continues to graphics setup
+                        // instead of showing this error forever and never installing the accelerated drivers.
+                        if(!failure&&!finishing&&[detail containsString:@"already has an account or completed Setup Assistant"]){
+                            NSMutableDictionary *profile=[self.profile mutableCopy];profile[@"Phase"]=@"complete";
+                            NSURL *file=[self.machine.URL URLByAppendingPathComponent:@"State/AutomaticSetup.plist"];
+                            NSError *skipError=nil;
+                            if([profile writeToURL:file error:&skipError]){
+                                self.profile=profile;
+                                [VIMAutomaticSetup removePasswordForIdentifier:profile[@"CredentialIdentifier"] error:NULL];
+                                completion(@{@"Handled":@NO},nil);return;
+                            }
+                        }
                         completion(nil,failure?:SetupError(detail.length?detail:@"The automatic account setup did not finish. Its records were retained."));return;
                     }
                     NSError *saveError=nil;
