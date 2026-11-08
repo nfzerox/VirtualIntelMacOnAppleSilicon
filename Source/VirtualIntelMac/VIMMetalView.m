@@ -353,7 +353,7 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
     [self refreshNativeCursor];
 }
 - (void)routeCapturedKey:(NSEvent *)event {
-    if((event.modifierFlags&(NSEventModifierFlagControl|NSEventModifierFlagOption))==(NSEventModifierFlagControl|NSEventModifierFlagOption)) {
+    if((event.modifierFlags&(NSEventModifierFlagCommand|NSEventModifierFlagOption))==(NSEventModifierFlagCommand|NSEventModifierFlagOption)) {
         [self releaseInputCapture];
         // Releasing only the tap leaves AppKit's first responder forwarding
         // Command equivalents (and later key-ups) straight back to the guest.
