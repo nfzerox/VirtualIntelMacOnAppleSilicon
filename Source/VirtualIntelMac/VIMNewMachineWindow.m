@@ -869,7 +869,7 @@ static VIMNewMachineWindow *creationController;
     }
     NSError *spaceError=nil;
     if(![NSFileManager.defaultManager createDirectoryAtPath:self.job[@"Library"] withIntermediateDirectories:YES attributes:nil error:&spaceError]){[self presentCreationError:spaceError.localizedDescription];return;}
-    NSDictionary *space=[NSFileManager.defaultManager attributesOfFileSystemForPath:self.job[@"Library"] error:&spaceError];
+    NSDictionary *space=[NSFileManager.defaultManager attributesOfFileSystemForPath:[VIMLibraryLocation.currentURL absoluteString] error:&spaceError];
     if(!space){[self presentCreationError:spaceError.localizedDescription?:@"Connect your library drive before continuing."];return;}
     // The guest disk is sparse, so reserve what setup actually writes, not its
     // capacity: downloads, the peak of installer assembly and media creation
