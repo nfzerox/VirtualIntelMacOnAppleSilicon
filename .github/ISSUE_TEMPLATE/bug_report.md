@@ -2,7 +2,7 @@
 name: Bug report
 about: For issues relating to software
 title: ''
-labels: ''
+labels: bug
 assignees: ''
 
 ---
@@ -12,16 +12,18 @@ A clear and concise description of what the bug is.
 
 **To Reproduce**
 Steps to reproduce the behavior:
-1. Go to '...'
-2. Click on '....'
-3. Scroll down to '....'
-4. See error
+1. Open '...'
+2. Click on '...'
+3. See error
 
 **Expected behavior**
 A clear and concise description of what you expected to happen.
 
 **Screenshots**
 If applicable, add screenshots to help explain your problem.
+
+**Diagnostics**
+To get diagnostics, go to *VirtualIntelMac -> Settings -> Diagnostics*. Then drag the exported diagnostics here.
 
 **Guest Info (please complete the following information):**
  - OS: [e.g. Mac OS X 10.6.8]
@@ -35,5 +37,5 @@ If applicable, add screenshots to help explain your problem.
 - CPU: [eg. M5 Pro (15 core CPU)]
 - GPU: [eg. Integrated]
 
-**Additional context/Diagnostics**
+**Additional context**
 Add any other context about the problem here.
