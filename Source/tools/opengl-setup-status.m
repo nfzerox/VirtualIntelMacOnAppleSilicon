@@ -181,9 +181,9 @@ int main(int argc,char **argv){@autoreleasepool{
 #endif
     if(locked>=0)[report setObject:[NSNumber numberWithBool:locked!=0] forKey:@"ConsoleLocked"];
     NSString *bootSource=nil,*boot=VIMOpenGLBootSessionUUID(&bootSource);
-    if([version hasPrefix:@"10.12."])
-        [report setObject:[NSNumber numberWithInt:1] forKey:@"SierraLoginHandoffVersion"];
-    if(identity&&!accountBusy&&!desktop&&VIMSierraLoginHandoffMissing(version,ownership,account,boot,uid))
+    if(VIMCanRecoverLoginHandoff(version))
+        [report setObject:[NSNumber numberWithInt:2] forKey:@"LoginHandoffRecoveryVersion"];
+    if(identity&&!accountBusy&&!desktop&&VIMLoginHandoffNeedsRecovery(version,ownership,account,boot,uid))
         [report setObject:[NSNumber numberWithBool:YES] forKey:@"AutoLoginHandoffMissing"];
     if(boot){[report setObject:boot forKey:@"BootSessionUUID"];[report setObject:bootSource forKey:@"BootIdentitySource"];
         [report setObject:[NSNumber numberWithBool:VIMOpenGLControlIdleSleepGuard(boot)] forKey:@"IdleSleepGuardRegistered"];}

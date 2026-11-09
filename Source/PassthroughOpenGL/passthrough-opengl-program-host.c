@@ -157,6 +157,69 @@ static int DGHostHasExtension(const char *extensions,const char *name)
         if((p==extensions || p[-1]==' ') && (!p[n] || p[n]==' '))return 1;
     return 0;
 }
+/* Called once per queried core context. Host-wide export presence alone
+ * does not establish what the selected CGL renderer actually supports. */
+static uint32_t DGHostCoreExtensionCandidates(uint32_t features1,uint32_t features2)
+{
+    uint32_t mask=0;
+#define DG_CORE_EXT_CANDIDATE(symbol, bit, name, required1, required2) \
+    if((features1 & (required1))==(required1) && (features2 & (required2))==(required2))mask|=DG_CORE_EXT_##symbol;
+    DG_CORE_EXTENSIONS(DG_CORE_EXT_CANDIDATE)
+#undef DG_CORE_EXT_CANDIDATE
+    if(!dlsym(RTLD_DEFAULT,"glTexStorage1D") ||
+       !dlsym(RTLD_DEFAULT,"glTexStorage2D") || !dlsym(RTLD_DEFAULT,"glTexStorage3D"))
+        mask&=~DG_CORE_EXT_TEXTURE_STORAGE;
+    return mask;
+}
+static uint32_t DGHostCoreExtensionMask(uint32_t candidates)
+{
+    if(!candidates)return 0;
+    const GLubyte *(*indexed)(GLenum,GLuint)=dlsym(RTLD_DEFAULT,"glGetStringi");
+    if(!indexed)return 0;
+    GLint count=0;glGetIntegerv(0x821d,&count);
+    uint32_t mask=0;
+    for(GLint i=0;i<count;++i){
+        const char *name=(const char *)indexed(GL_EXTENSIONS,(GLuint)i);
+        if(!name)continue;
+#define DG_CORE_EXT_MATCH(symbol, bit, text, required1, required2) \
+        if((candidates&DG_CORE_EXT_##symbol) && !strcmp(name,text))mask|=DG_CORE_EXT_##symbol;
+        DG_CORE_EXTENSIONS(DG_CORE_EXT_MATCH)
+#undef DG_CORE_EXT_MATCH
+        if(mask==candidates)break;
+    }
+    return mask;
+}
+static void DGAppendIndexedExtensions(char *out,size_t capacity,const char *native,
+                                      uint64_t revision,uint64_t features)
+{
+    if(revision<2 || !(features&DG_FEATURE_INDEXED_STATE))return;
+    if(DGHostHasExtension(native,"GL_EXT_draw_buffers2")){
+        size_t used=strlen(out);snprintf(out+used,capacity-used," GL_EXT_draw_buffers2");
+    }
+    if((features&DG_FEATURE_TRANSFORM_FEEDBACK_NAMES) &&
+       DGHostHasExtension(native,"GL_EXT_transform_feedback")){
+        size_t used=strlen(out);snprintf(out+used,capacity-used," GL_EXT_transform_feedback");
+    }
+}
+static void DGAppendTextureExtensions(char *out,size_t capacity,const char *native,
+                                     uint64_t revision,uint64_t features,uint64_t features2)
+{
+    /* Revision 7 qualifies native DXT pixels/readback, PBO offsets, and
+     * anisotropy parameter/error state. This is discovery, not a draw hook. */
+    if(revision<7)return;
+    const uint64_t compressed=DG_FEATURE_COMPRESSED_TEXTURE_UPLOAD|DG_FEATURE_TEXTURE_IMAGE_READBACK;
+    if((features&compressed)==compressed &&
+       DGHostHasExtension(native,"GL_EXT_texture_compression_s3tc")){
+        size_t used=strlen(out);snprintf(out+used,capacity-used," GL_EXT_texture_compression_s3tc");
+    }
+    if(DGHostHasExtension(native,"GL_EXT_texture_filter_anisotropic")){
+        size_t used=strlen(out);snprintf(out+used,capacity-used," GL_EXT_texture_filter_anisotropic");
+    }
+    if(revision>=8 && (features2&DG_FEATURE2_SRGB_DECODE) &&
+       DGHostHasExtension(native,"GL_EXT_texture_sRGB_decode")){
+        size_t used=strlen(out);snprintf(out+used,capacity-used," GL_EXT_texture_sRGB_decode");
+    }
+}
 static int DGProgramString(struct DGHostContext *c,struct DGMessage *m,struct DGReply *r)
 {
     if(m->flags!=(DG_REPLY|DG_OUTPUT_ONLY))return -1;

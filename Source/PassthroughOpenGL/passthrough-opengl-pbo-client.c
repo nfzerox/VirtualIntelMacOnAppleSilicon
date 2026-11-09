@@ -37,12 +37,12 @@ static int DGPBOStack(struct DGContext *c,GLbitfield mask,int pushing)
     }
     struct DGClientAttribFrame *frame=pushing?DGClientAttribCapture(c,mask):NULL;
     if((pushing&&!frame) || (!pushing&&!DGClientAttribPreparePop(c)))return 1;
-    struct DGClientStackState stack={0};struct DGPixelState3D *volume=&stack.pixel;struct DGPixelState *state=&volume->base;
+    struct DGClientStackStatePoint stack={0};struct DGPixelState3D *volume=&stack.base.pixel;struct DGPixelState *state=&volume->base;
     int extended=!!(c->connection->capabilities&DG_CAP_TEXTURE_3D);
     struct DGPacket p=DGPacketNew(c,DG_PBO_CLIENT_STACK);
     p.message.args[0]=pushing;p.message.args[1]=mask;p.message.flags=vertex_push?0:DG_OUTPUT_ONLY;
-    if(vertex_push)DGClientAttribWire(c,&stack);
-    p.message.bytes=vertex_push?sizeof(stack):extended ? sizeof(*volume) : sizeof(*state);p.data=(void *)&stack;
+    int point=vertex_push && DGClientAttribWire(c,&stack);
+    p.message.bytes=vertex_push?(point?sizeof(stack):sizeof(stack.base)):extended ? sizeof(*volume) : sizeof(*state);p.data=(void *)&stack;
     p.capacity=p.message.bytes;DGSubmit(c,&p,1);
     if(p.valid_reply) {
         memcpy(c->alignment,state->alignment,sizeof(c->alignment));memcpy(c->row_length,state->row_length,sizeof(c->row_length));

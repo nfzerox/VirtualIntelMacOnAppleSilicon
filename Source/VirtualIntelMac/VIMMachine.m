@@ -1,4 +1,5 @@
 #import "VIMMachine.h"
+#import "VIMToolPropertyList.h"
 #import "VIMImageSlots.h"
 #import "VIMNetworkDefaults.h"
 #import "VIMLibraryLocation.h"
@@ -138,14 +139,8 @@ static BOOL CreateFormattedDisk(NSURL *stage, NSURL *qemuImage, NSUInteger diskG
         @"-volname",@"Macintosh HD",seed.path],log(@"FormatDisk.log"),error))return NO;
     NSURL *attachLog=log(@"AttachFormattingDisk.log");
     if(!Run(hdiutil,@[@"attach",@"-nomount",@"-readonly",@"-plist",seed.path],attachLog,error))return NO;
-    // hdiutil on newer hosts appends a deprecation warning to the merged log.
-    NSString *output=[NSString stringWithContentsOfURL:attachLog encoding:NSUTF8StringEncoding error:error];
-    NSRange start=[output rangeOfString:@"<?xml"],end=[output rangeOfString:@"</plist>"];
-    NSDictionary *attached=nil;
-    if(output && start.location!=NSNotFound && end.location!=NSNotFound && end.location>=start.location) {
-        NSData *plist=[[output substringWithRange:NSMakeRange(start.location,NSMaxRange(end)-start.location)] dataUsingEncoding:NSUTF8StringEncoding];
-        attached=[NSPropertyListSerialization propertyListWithData:plist options:0 format:nil error:error];
-    }
+    // The merged log can also hold host deprecation warnings or tweak output.
+    NSDictionary *attached=VIMToolDictionary(attachLog);
     NSString *device=nil;
     for(NSDictionary *entity in attached[@"system-entities"])
         if([entity[@"content-hint"] isEqual:@"GUID_partition_scheme"])device=entity[@"dev-entry"];
@@ -164,7 +159,7 @@ static BOOL CreateFormattedDisk(NSURL *stage, NSURL *qemuImage, NSUInteger diskG
         BOOL found=[slice isKindOfClass:NSString.class]&&[slice hasPrefix:[device stringByAppendingString:@"s"]]&&[validSlice numberOfMatchesInString:slice options:0 range:NSMakeRange(0,slice.length)]==1;
         NSURL *metadata=log(@"FormattedVolume.plist");
         if(found)found=Run([NSURL fileURLWithPath:@"/usr/sbin/diskutil"],@[@"info",@"-plist",slice],metadata,error);
-        NSDictionary *volume=found?[NSDictionary dictionaryWithContentsOfURL:metadata]:nil;
+        NSDictionary *volume=found?VIMToolDictionary(metadata):nil;
         NSString *UUID=volume[@"VolumeUUID"];
         if(![UUID isKindOfClass:NSString.class]||![[NSUUID alloc] initWithUUIDString:UUID]||
            !Save(@{@"FormatVersion":@1,@"VolumeUUID":UUID,@"Filesystem":@"HFS+"},[stage URLByAppendingPathComponent:@"State/InstallationTarget.plist"],error)) {
@@ -183,6 +178,8 @@ static BOOL CreateFormattedDisk(NSURL *stage, NSURL *qemuImage, NSUInteger diskG
 @interface VIMMachine ()
 @property NSNumber *cachedDiskCapacity;
 - (BOOL)authorizeUpdateRepair:(NSDictionary *)report claim:(BOOL)claim error:(NSError **)error;
+- (NSDictionary *)updateDisplayBaseline;
+- (BOOL)hasPendingInPlaceUpdateWithBaseline:(NSDictionary *)baseline;
 @end
 /// Media the app prepared lives in its own Downloads/Preparation/<UUID>
 /// attempt and is never reused for another Mac. Once the owner is installed,
@@ -318,6 +315,14 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
     (void)machine.diskCapacityBytes; // Warm on the library's background scan.
     return machine;
 }
+- (BOOL)requiresStandardVGAForUpdate {
+    // The native 10.13 update BaseSystem has none of the installed system's
+    // OpenGL support. Its updater progresses on standard VGA, but stalled on
+    // the installed VMware adapter. Use Apple's actual boot selection so the
+    // normal installed system gets its original adapter back automatically.
+    return [self.guest isEqual:@"highsierra"]&&VIMFirmwareBootTargetAtURL(
+        [self.URL URLByAppendingPathComponent:self.configuration[@"NVRAM"]])==VIMFirmwareBootInstaller;
+}
 - (BOOL)requiresInstallerDisplay {
     if(self.preMetalGuest)return YES;
     // Security updates boot a temporary OS without the installed system's PVG
@@ -351,6 +356,9 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
         [native[@"VolumeUUID"] isKindOfClass:NSString.class]&&[[NSUUID alloc] initWithUUIDString:native[@"VolumeUUID"]];
     return !self.hasPublishedGuestGraphics&&!nativeBigSur;
 }
+- (BOOL)requiresInstallerDisplayForBoot {
+    return self.requiresInstallerDisplay||[self hasPendingInPlaceUpdateWithBaseline:[self updateDisplayBaseline]];
+}
 - (BOOL)prepareNativeBigSurDisplayWithGuestReport:(NSDictionary *)report error:(NSError **)error {
     if(![self.guest isEqual:@"bigsur"]||!self.requiresInstallerDisplay||self.hasPublishedGuestGraphics||
        ![self.configuration[@"InstallState"] isEqual:@"installing"]||!self.configuration[@"InstallerMedia"]||
@@ -374,10 +382,9 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
         @"BootSessionUUID":report[@"BootSessionUUID"],@"ProductBuildVersion":build};
     return Save(record,[self.URL URLByAppendingPathComponent:@"State/NativeBigSurDisplay.plist"],error);
 }
-- (BOOL)prepareUpdaterDisplayForBoot:(NSError **)error {
-    if(!self.hasPublishedGuestGraphics||VIMFirmwareBootTargetAtURL(
-        [self.URL URLByAppendingPathComponent:self.configuration[@"NVRAM"]])!=VIMFirmwareBootInstaller)return YES;
+- (NSDictionary *)updateDisplayBaseline {
     NSDictionary *state=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"State/GuestInstallation.plist"]];
+    if(!self.hasPublishedGuestGraphics)return nil;
     NSDictionary *verified=state[@"PostBootVerification"]?:state[@"PreviousPostBootVerification"],*result=state[@"GuestResult"];
     if(![verified isKindOfClass:NSDictionary.class]||![verified[@"TransactionID"] isEqual:state[@"TransactionID"]]||
        ![verified[@"ProductBuildVersion"] isKindOfClass:NSString.class]||![verified[@"ProductBuildVersion"] length]||
@@ -385,9 +392,22 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
        ![verified[@"VerifiedAfterReboot"] isEqual:@YES]||![verified[@"MetalCommandVerified"] isEqual:@YES]||
        ![verified[@"ProductBuildVersion"] isEqual:result[@"ProductBuildVersion"]]||
        ![verified[@"VolumeUUID"] isEqual:result[@"VolumeUUID"]])
-        return YES; // Firmware still selects software video; do not invent a verified baseline/automatic-repair authorization.
-    NSDictionary *record=@{@"FormatVersion":@1,@"Guest":self.guest,@"PreviousTransactionID":state[@"TransactionID"],
+        return nil; // Firmware can still select software video without a verified baseline.
+    return @{@"FormatVersion":@1,@"Guest":self.guest,@"PreviousTransactionID":state[@"TransactionID"],
         @"PreviousBuild":verified[@"ProductBuildVersion"],@"VolumeUUID":verified[@"VolumeUUID"],@"StartedAt":NSDate.date};
+}
+- (BOOL)hasPendingInPlaceUpdateWithBaseline:(NSDictionary *)baseline {
+    if(!baseline||self.preMetalGuest||![self.configuration[@"InstallState"] isEqual:@"installed"]||
+       self.configuration[@"InstallerMedia"])return NO;
+    NSDictionary *observed=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"State/GuestStatus.plist"]];
+    return VIMPendingInPlaceUpdate(observed,self.guest,baseline);
+}
+- (BOOL)prepareUpdaterDisplayForBoot:(NSError **)error {
+    NSDictionary *record=[self updateDisplayBaseline];
+    if(!record)return YES;
+    BOOL firmwareSelectsUpdate=VIMFirmwareBootTargetAtURL(
+        [self.URL URLByAppendingPathComponent:self.configuration[@"NVRAM"]])==VIMFirmwareBootInstaller;
+    if(!firmwareSelectsUpdate&&![self hasPendingInPlaceUpdateWithBaseline:record])return YES;
     return Save(record,[self.URL URLByAppendingPathComponent:@"State/UpdateDisplay.plist"],error);
 }
 - (BOOL)hasPublishedGuestGraphics {
@@ -578,13 +598,19 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
         NSData *data=[NSPropertyListSerialization dataWithPropertyList:record format:NSPropertyListBinaryFormat_v1_0 options:0 error:error];
         NSError *writeError=nil;
         if(data&&[data writeToURL:claim options:NSDataWritingWithoutOverwriting error:&writeError])return YES;
-        // Recover only a pre-dispatch failure: the old proven journal is still
-        // present with its original ID and a failed *read*. A dispatched new
-        // installation exclusively creates a new ID/journal after archival,
-        // so it cannot satisfy this condition. Never reuse that new attempt.
+        // Recover only a pre-dispatch failure. For a host-assembled Mac the
+        // verified original has no installation journal; preparation must
+        // also not have started. A dispatched apply creates its own journal
+        // before sending a guest command and must be reconciled, not replayed.
         if(writeError.code==NSFileWriteFileExistsError&&[writeError.domain isEqual:NSCocoaErrorDomain]) {
             NSDictionary *saved=[NSDictionary dictionaryWithContentsOfURL:claim];
-            BOOL recover=[state[@"Phase"] isEqual:@"outcome-unknown"]&&[state[@"ReconciliationError"] isKindOfClass:NSString.class]&&[state[@"ReconciliationError"] length]>0&&
+            NSURL *preparation=[journal.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"GuestPreparation.plist"];
+            struct stat evidence;
+            BOOL noPreparationOrApply=!state&&lstat(journal.fileSystemRepresentation,&evidence)&&errno==ENOENT&&
+                lstat(preparation.fileSystemRepresentation,&evidence)&&errno==ENOENT;
+            BOOL failedPriorRead=[state[@"Phase"] isEqual:@"outcome-unknown"]&&
+                [state[@"ReconciliationError"] isKindOfClass:NSString.class]&&[state[@"ReconciliationError"] length]>0;
+            BOOL recover=(noPreparationOrApply||failedPriorRead)&&
                 [saved[@"FormatVersion"] isEqual:@1]&&[saved[@"Phase"] isEqual:@"claimed"]&&
                 [saved[@"MachineIdentifier"] isEqual:self.configuration[@"Identifier"]]&&
                 [saved[@"PreviousTransactionID"] isEqual:identity]&&[saved[@"PreviousBuild"] isEqual:previous]&&

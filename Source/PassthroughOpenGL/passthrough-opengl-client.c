@@ -30,6 +30,7 @@ extern IOReturn IOConnectTrap4(io_connect_t,unsigned int,uintptr_t,uintptr_t,
 #include "passthrough-opengl-wire.h"
 #include "iosurface-element-layout.h"
 #include "direct-layout.h"
+#include "direct-opcodes.h"
 #include "passthrough-opengl-surfaces.h"
 #include "passthrough-opengl-program-locations.h"
 #include "guest-resource-namespace.h"
@@ -77,7 +78,7 @@ static void DGLoadInprocessClient(void)
 }
 #endif
 
-struct DGConnection { int fd,dead;io_connect_t device;unsigned refs,features;uint64_t capabilities;
+struct DGConnection { int fd,dead;io_connect_t device;unsigned refs,features,features2,features3;uint64_t capabilities;
 #ifdef VIM_PASSTHROUGH_OPENGL_INPROCESS_CLIENT
     void *inprocess;
 #endif
@@ -104,10 +105,14 @@ struct DGContext {
     /* CGL can migrate one native context between real hardware/software
      * screens. Retain both sets so callers' old string pointers stay valid. */
     char *strings[2][6];unsigned native_renderer_kind;
+    uint64_t core_extension_mask;
+    int core_extensions_cached;
     GLuint pixel_buffer[2];void *pixels;uint64_t unsupported[16];
-    GLuint array_buffer;int client_texture;
+    GLuint array_buffer;int client_texture,weight_units,point_sizes;
     struct DGVertexState *vertex_states,*vertex;
     struct DGClientAttribFrame *client_attrib_stack;
+    struct { void *pointer;uint32_t words; } render_buffers[2];
+    GLenum render_mode;
     unsigned char *draw_scratch;size_t draw_scratch_capacity;
     uint64_t shape_failures[64];unsigned shape_failure_count;
     struct DGClientDrawable *drawables;uint32_t next_drawable,current_drawable;
@@ -364,7 +369,7 @@ static struct DGPacket DGPacketNew(struct DGContext *c,uint32_t op)
     // restores temporary buffer/client-unit state and alias/FBO helpers do
     // not change the logical viewport, matrices or public bindings.
     unsigned retained=dg_common_neutral_reuse ?
-        (op==DG_ERROR||op==DG_UNIFORM_QUERY || op==DG_DRAW || op==DG_DRAW_INSTANCED_ARRAYS ||
+        (op==DG_ERROR||op==DG_UNIFORM_QUERY || op==DG_TEXTURE_READ || op==DG_DRAW || op==DG_DRAW_INSTANCED_ARRAYS ||
          op==DG_FLUSH_DRAWABLE_STATE || op==DG_FLUSH_IOSURFACE_STATE || op==DG_SURFACE_EPOCH ||
          op==DG_SURFACE_PUBLISH || op==DG_SURFACE_PUBLISH_REGIONS || op==DG_SURFACE_COPY_REGIONS ||
          op==DG_SURFACE_SEALED_REGIONS || op==DG_SURFACE_SEAL_VERSION || op==DG_SURFACE_IMPORT_REGION ?
@@ -590,11 +595,69 @@ static void DGPacketCopy(struct DGPacket *p,int index,void *pointer,size_t bytes
         memcpy(pointer,p->data+offset-1,bytes);
 }
 static void DGPacketFree(struct DGPacket *p) { if(!p->borrowed)free(p->data); }
+#include "passthrough-opengl-imaging-client.c"
+
+static void DGImagingClientTransfer(struct DGContext *c,struct DGPacket *p,
+    enum DGImagingTransfer op,GLenum target,GLint width,GLint height,GLint start,
+    GLenum format,GLenum type,int pack,const int indices[2],const void *const pixels[2])
+{
+    GLenum error=GL_NO_ERROR;
+    size_t bits=DGImagingPixelBits(format,type);
+    if(c->profile!=0x1000 || c->common_state_blocked ||
+       !(c->connection->features2&DG_FEATURE2_IMAGING_TRANSFERS))error=GL_INVALID_OPERATION;
+    else if(!DGImagingTargetValid(op,target) || !bits)error=GL_INVALID_ENUM;
+    else if(width<0 || height<0 || start<0 ||
+            (op==DG_IMAGING_TABLE && (width & (width-1))))error=GL_INVALID_VALUE;
+    if(error){if(!c->error)c->error=error;return;}
+
+    if(op==DG_IMAGING_TABLE && DGImagingProxy(target)){DGSubmit(c,p,0);return;}
+    if(c->pixel_buffer[pack]){
+        p->message.args[15]=1;
+        for(int i=0;i<2 && indices[i]>=0;++i)
+            p->message.args[indices[i]]=(uintptr_t)pixels[i];
+        DGSubmit(c,p,0);return;
+    }
+    if(pack && !DGImagingDimensions(op,target,&width,&height))return;
+    if(op==DG_IMAGING_SUBTABLE){
+        GLint extent=0,unused;
+        if(!DGImagingDimensions(op,target,&extent,&unused))return;
+        if((int64_t)start+width>extent){if(!c->error)c->error=GL_INVALID_VALUE;return;}
+    }
+    uint64_t spans[2];
+    DGImagingSpans(op,width,height,bits,c->row_length[pack],c->alignment[pack],
+        c->skip_rows[pack],c->skip_pixels[pack],c->row_bytes[pack],spans);
+    if(DGCompactImaging(c,p,op,width,height,bits,pack,indices,pixels))return;
+    if(spans[0]>DG_MAX_BYTES || spans[1]>DG_MAX_BYTES){
+        if(!c->error)c->error=GL_OUT_OF_MEMORY;return;
+    }
+    if((spans[0] && !pixels[0]) || (spans[1] && !pixels[1])){
+        if(!c->error)c->error=GL_INVALID_VALUE;return;
+    }
+    /* Preserve row/column aliasing: staging two independent seeded outputs
+     * would let the second copy-back restore stale bytes over the first. */
+    int first=(uintptr_t)pixels[1]<(uintptr_t)pixels[0],second=1-first;
+    uint64_t delta=(uintptr_t)pixels[second]-(uintptr_t)pixels[first];
+    if(spans[second] && delta<spans[first]){
+        size_t merged=(size_t)(delta+spans[second]>spans[first]?delta+spans[second]:spans[first]);
+        DGPacketPointer(p,indices[first],pixels[first],merged,pack?2:0);
+        p->message.args[indices[second]]=p->message.args[indices[first]]+delta;
+        DGSubmit(c,p,pack);
+        if(pack)DGPacketCopy(p,indices[first],(void *)pixels[first],merged);
+        return;
+    }
+    for(int i=0;i<2 && indices[i]>=0;++i)
+        if(spans[i])DGPacketPointer(p,indices[i],pixels[i],(size_t)spans[i],pack?2:0);
+    DGSubmit(c,p,pack);
+    if(pack)for(int i=0;i<2 && indices[i]>=0;++i)
+        DGPacketCopy(p,indices[i],(void *)pixels[i],(size_t)spans[i]);
+}
 #include "passthrough-opengl-sync-client.c"
 #include "passthrough-opengl-buffers-client.c"
 #include "passthrough-opengl-mapping-client.c"
+#include "period-signed-attributes.h"
 #include "passthrough-opengl-arrays-client.c"
 #include "passthrough-opengl-pbo-client.c"
+#include "passthrough-opengl-retained-render-client.c"
 static void DGUnsupported(struct DGContext *c,unsigned slot)
 {
     if(!c) return;c->error=GL_INVALID_OPERATION;
@@ -687,6 +750,80 @@ static void DGRecordBuffer(struct DGContext *c,GLenum target,GLuint buffer)
         if(c->vertex) c->vertex->element_buffer=buffer;
     }
 }
+static void DGGetAttachedObjects(struct DGContext *c,GLhandleARB container,GLsizei capacity,
+                                 GLsizei *count,GLhandleARB *objects)
+{
+    if(!c)return;
+    uintptr_t name=(uintptr_t)container;
+    if(name>UINT32_MAX || capacity<0 || (capacity && !objects) ||
+       (uint32_t)capacity>(DG_MAX_BYTES-8)/sizeof(GLuint)){
+        if(!c->error)c->error=GL_INVALID_VALUE;return;
+    }
+    /* Native ARB and core return the same names and order. Carry 32-bit
+     * names and widen only the written prefix on the guest (i386/LP64). */
+    struct DGPacket p=DGPacketNew(c,DG_OP_get_attached_shaders);
+    p.message.args[0]=name;p.message.args[1]=(uint32_t)capacity;
+    GLsizei written=-1;
+    DGPacketPointer(&p,2,&written,sizeof(written),2);
+    if(capacity)DGPacketPointer(&p,3,&written,(size_t)capacity*sizeof(GLuint),1);
+    DGSubmit(c,&p,1);DGPacketCopy(&p,2,&written,sizeof(written));
+    if(written>=0 && written<=capacity){
+        if(written){
+            const unsigned char *names=p.data+p.message.args[3]-1;
+            for(GLsizei i=0;i<written;++i){
+                GLuint value;memcpy(&value,names+(size_t)i*sizeof(value),sizeof(value));
+                objects[i]=(GLhandleARB)(uintptr_t)value;
+            }
+        }
+        if(count)*count=written;
+    }
+    DGPacketFree(&p);
+}
+static void DGPacketIncludeString(struct DGPacket *p,int index,const GLchar *s,GLint length)
+{
+    if(!s)return;
+    static const GLchar empty=0;
+    if(!length)DGPacketPointer(p,index,&empty,1,0);
+    else DGPacketPointer(p,index,s,length<0?DGStringBytes(s):(size_t)length,0);
+}
+static void DGCompileShaderInclude(struct DGContext *c,unsigned op,GLuint shader,GLsizei count,
+                                   const GLchar *const *paths,const GLint *lengths)
+{
+    if(!c)return;
+    if(count<0 || (unsigned)count>DG_FEEDBACK_NAME_LIMIT || (count && !paths)){
+        if(!c->error)c->error=GL_INVALID_VALUE;return;
+    }
+    /* A fixed-width length vector followed by terminated path slices;
+     * retain explicit lengths, including embedded zeroes, without sending
+     * guest pointers or reading a byte beyond a counted source. */
+    GLint local[32],*sizes=count<=32?local:malloc((size_t)count*sizeof(*sizes));
+    if(!sizes){if(!c->error)c->error=GL_OUT_OF_MEMORY;return;}
+    struct DGPacket p=DGPacketNew(c,op);
+    p.message.args[0]=shader;p.message.args[1]=(uint32_t)count;
+    size_t header=(size_t)count*sizeof(*sizes),total=header;
+    for(GLsizei i=0;i<count;++i){
+        GLint length=lengths?lengths[i]:-1;
+        size_t bytes=paths[i]?(length<0?DGStringBytes(paths[i]):(size_t)length+1):0;
+        if(!bytes || bytes>DG_MAX_BYTES-total){
+            if(!c->error)c->error=GL_INVALID_VALUE;goto done;
+        }
+        sizes[i]=(GLint)(bytes-1);total+=bytes;
+    }
+    if(total){
+        if(!DGPacketOwn(&p,total)){if(!c->error)c->error=GL_OUT_OF_MEMORY;goto done;}
+        memcpy(p.data,sizes,header);
+        size_t offset=header;
+        for(GLsizei i=0;i<count;++i){
+            size_t bytes=(size_t)sizes[i];
+            memcpy(p.data+offset,paths[i],bytes);
+            p.data[offset+bytes]=0;offset+=bytes+1;
+        }
+        p.message.bytes=(uint32_t)total;
+    }
+    DGSubmit(c,&p,0);
+done:
+    DGPacketFree(&p);if(sizes!=local)free(sizes);
+}
 static void DGShaderSource(struct DGContext *c,GLuint shader,GLsizei count,const GLchar *const *strings,const GLint *lengths)
 {
     if(!c) return;
@@ -710,7 +847,280 @@ static void DGShaderSource(struct DGContext *c,GLuint shader,GLsizei count,const
     packet.message.args[0]=shader;packet.message.args[1]=total;
     DGPacketPointer(&packet,2,joined,total+1,0);DGSubmit(c,&packet,0);DGPacketFree(&packet);free(joined);
 }
+/* Pack NUL-separated varying names in order, not the application's pointer
+ * vector. Empty lists still reach native program/mode validation. */
+static void DGFeedbackVaryings(struct DGContext *c,unsigned op,GLuint program,
+    GLsizei count,const GLchar *const *names,GLenum mode)
+{
+    if(!c)return;
+    if(!(c->connection->features&DG_FEATURE_TRANSFORM_FEEDBACK_NAMES)){
+        c->error=GL_INVALID_OPERATION;return;
+    }
+    if(mode!=GL_INTERLEAVED_ATTRIBS_EXT && mode!=GL_SEPARATE_ATTRIBS_EXT){
+        c->error=GL_INVALID_ENUM;return;
+    }
+    if(count<0 || (unsigned)count>DG_FEEDBACK_NAME_LIMIT || (count && !names)){
+        c->error=GL_INVALID_VALUE;return;
+    }
+    size_t total=0;
+    for(GLsizei i=0;i<count;++i){
+        size_t bytes=DGStringBytes(names[i]);
+        if(!bytes || bytes>DG_MAX_BYTES-total){c->error=GL_INVALID_VALUE;return;}
+        total+=bytes;
+    }
+    struct DGPacket p=DGPacketNew(c,op);
+    p.message.args[0]=program;p.message.args[1]=count;p.message.args[2]=mode;
+    if(total){
+        if(!DGPacketOwn(&p,total)){c->error=GL_OUT_OF_MEMORY;return;}
+        size_t offset=0;
+        for(GLsizei i=0;i<count;++i){
+            size_t bytes=DGStringBytes(names[i]);
+            if(!bytes || bytes>total-offset){c->error=GL_INVALID_VALUE;DGPacketFree(&p);return;}
+            memcpy(p.data+offset,names[i],bytes);offset+=bytes;
+        }
+        if(offset!=total){c->error=GL_INVALID_VALUE;DGPacketFree(&p);return;}
+        p.message.bytes=(uint32_t)total;
+    }
+    DGSubmit(c,&p,0);DGPacketFree(&p);
+}
+static GLuint DGCreateShaderProgram(struct DGContext *c,unsigned op,GLenum type,
+    GLsizei count,const GLchar *const *strings)
+{
+    if(!c)return 0;
+    if(count>0 && (!strings || (unsigned)count>DG_FEEDBACK_NAME_LIMIT)){
+        c->error=GL_INVALID_VALUE;return 0;
+    }
+    struct DGPacket p=DGPacketNew(c,op);
+    p.message.args[0]=type;p.message.args[1]=(uint32_t)count;
+    p.message.flags=DG_INPUT_ONLY;
+    size_t total=0;
+    for(GLsizei i=0;i<count;++i){
+        size_t n=DGStringBytes(strings[i]);
+        if(!n || n>DG_MAX_BYTES-total){c->error=GL_INVALID_VALUE;return 0;}
+        total+=n;
+    }
+    if(total){
+        if(!DGPacketOwn(&p,total)){c->error=GL_OUT_OF_MEMORY;return 0;}
+        size_t offset=0;
+        for(GLsizei i=0;i<count;++i){
+            size_t n=DGStringBytes(strings[i]);
+            if(!n || n>total-offset){c->error=GL_INVALID_VALUE;DGPacketFree(&p);return 0;}
+            memcpy(p.data+offset,strings[i],n);offset+=n;
+        }
+        if(offset!=total){c->error=GL_INVALID_VALUE;DGPacketFree(&p);return 0;}
+        p.message.bytes=(uint32_t)total;
+    }
+    GLuint program=(GLuint)DGSubmit(c,&p,1).result;
+    DGPacketFree(&p);return program;
+}
+static void DGUniformIndices(struct DGContext *c,unsigned op,GLuint program,GLsizei count,
+    const GLchar *const *names,GLuint *indices)
+{
+    if(!c)return;
+    if(count<0 || (unsigned)count>DG_FEEDBACK_NAME_LIMIT || (count && (!names || !indices))){
+        c->error=GL_INVALID_VALUE;return;
+    }
+    struct DGPacket p=DGPacketNew(c,op);
+    p.message.args[0]=program;p.message.args[1]=(uint32_t)count;
+    size_t output=(size_t)count*sizeof(*indices),total=output;
+    for(GLsizei i=0;i<count;++i){
+        size_t n=DGStringBytes(names[i]);
+        if(!n || n>DG_MAX_BYTES-total){c->error=GL_INVALID_VALUE;return;}
+        total+=n;
+    }
+    if(total){
+        if(!DGPacketOwn(&p,total)){c->error=GL_OUT_OF_MEMORY;return;}
+        memcpy(p.data,indices,output);
+        size_t position=output;
+        for(GLsizei i=0;i<count;++i){
+            size_t n=DGStringBytes(names[i]);
+            if(!n || n>total-position){c->error=GL_INVALID_VALUE;DGPacketFree(&p);return;}
+            memcpy(p.data+position,names[i],n);position+=n;
+        }
+        if(position!=total){c->error=GL_INVALID_VALUE;DGPacketFree(&p);return;}
+        p.message.bytes=(uint32_t)total;p.message.args[2]=1;
+    }
+    DGSubmit(c,&p,1);DGPacketCopy(&p,2,indices,output);DGPacketFree(&p);
+}
+/* Evaluate validity in stream order before inspecting the caller's pointer.
+ * The second packet carries only control points, never stride padding. */
+static int DGPackEvaluatorPoints(struct DGContext *c,struct DGPacket *packet,
+    int index,const void *points,unsigned width,GLint ustride,GLint uorder,
+    GLint vstride,GLint vorder,size_t element,int dimensions,unsigned stride_arg)
+{
+    if(!(c->connection->features&DG_FEATURE_EVALUATOR_UPLOADS)){
+        if(!c->error)c->error=GL_INVALID_OPERATION;
+        return 0;
+    }
+    struct DGPacket check={0};check.message=packet->message;check.message.args[15]=1;
+    struct DGReply reply=DGSubmit(c,&check,1);
+    if(!check.valid_reply || reply.result!=1)return 0;
+
+    size_t bytes=DGEvaluatorCoefficientBytes(width,uorder,vorder,element);
+    uint64_t span=(uint64_t)(uorder-1)*ustride+(uint64_t)(vorder-1)*vstride+width;
+    if(!points || !width || bytes==SIZE_MAX || span>(UINTPTR_MAX-(uintptr_t)points)/element){
+        if(!c->error)c->error=GL_INVALID_VALUE;
+        return 0;
+    }
+    if(!DGPacketOwn(packet,bytes)){
+        if(!c->error)c->error=GL_OUT_OF_MEMORY;
+        return 0;
+    }
+    size_t point_bytes=width*element;
+    unsigned char *dst=packet->data;
+    const unsigned char *src=points;
+    for(int i=0;i<uorder;++i){
+        for(int j=0;j<vorder;++j){
+            size_t offset=((size_t)i*ustride+(size_t)j*vstride)*element;
+            memcpy(dst,src+offset,point_bytes);dst+=point_bytes;
+        }
+    }
+    packet->message.args[stride_arg]=(uint64_t)vorder*width;
+    if(dimensions==2)packet->message.args[stride_arg+4]=width;
+    packet->message.args[index]=1;packet->message.bytes=(uint32_t)bytes;
+    return 1;
+}
+static void DGQueryAppleEvaluator(struct DGContext *c,unsigned op,GLuint index,GLenum pname,void *out,size_t element)
+{
+    if(!c)return;
+    if(!(c->connection->features2&DG_FEATURE2_APPLE_EVALUATORS) || c->profile!=0x1000){
+        if(!c->error)c->error=GL_INVALID_OPERATION;return;
+    }
+    if(!out){if(!c->error)c->error=GL_INVALID_VALUE;return;}
+    struct DGPacket p=DGPacketNew(c,op);
+    p.message.args[0]=index;p.message.args[1]=pname;
+    unsigned kind=(pname-0x8a02)&3,dimensions=pname>=0x8a06?2:1;
+    size_t bytes=(kind==3?2*dimensions:kind==2?dimensions:1)*element;
+    if(kind==1){
+        /* Coefficient length follows native context state, not the last
+         * guest upload: a compiled display list can replace either map. */
+        p.message.args[3]=1;
+        struct DGReply size=DGSubmit(c,&p,1);
+        if(!p.valid_reply || !size.result || size.result>DG_MAX_BYTES || size.result%element)return;
+        bytes=(size_t)size.result;
+        p=DGPacketNew(c,op);
+        p.message.args[0]=index;p.message.args[1]=pname;
+    }
+    p.message.flags=DG_OUTPUT_ONLY;
+    DGPacketPointer(&p,2,out,bytes,1);
+    struct DGReply reply=DGSubmit(c,&p,1);
+    if(reply.result==bytes)DGPacketCopy(&p,2,out,bytes);
+    DGPacketFree(&p);
+}
+static void DGPlaceTextureBytes(const struct DGTextureReadLayout *l,void *pixels,
+    size_t offset,const unsigned char *src,size_t bytes)
+{
+    unsigned char *dst=pixels;
+    if((l->rows==1 || l->row_stride==l->row_bytes) &&
+        (l->images==1 || l->image_stride==(uint64_t)l->rows*l->row_bytes)){
+        memcpy(dst+(size_t)l->offset+offset,src,bytes);
+        return;
+    }
+    size_t row=offset/l->row_bytes,within=offset%l->row_bytes;
+    while(bytes){
+        size_t count=l->row_bytes-within;
+        if(count>bytes)count=bytes;
+        uint64_t dest=l->offset+(row/l->rows)*l->image_stride+(row%l->rows)*l->row_stride+within;
+        memcpy(dst+(size_t)dest,src,count);
+        src+=count;bytes-=count;++row;within=0;
+    }
+}
+static void DGReadTexture(struct DGContext *c,GLenum target,GLint level,
+    GLenum format,GLenum type,void *pixels,int compressed,GLint row_bytes)
+{
+    if(!c)return;
+    if(!(c->connection->features&DG_FEATURE_TEXTURE_READ_LAYOUT)){
+        if(!c->error)c->error=GL_INVALID_OPERATION;
+        return;
+    }
+    if((format==GL_YCBCR_422_APPLE || type==GL_UNSIGNED_SHORT_8_8_APPLE ||
+        type==GL_UNSIGNED_SHORT_8_8_REV_APPLE) && !(c->connection->capabilities&DG_CAP_APPLE_VIDEO_TEXTURES)){
+        if(!c->error)c->error=GL_INVALID_OPERATION;
+        return;
+    }
+    struct DGPacket p=DGPacketNew(c,DG_TEXTURE_READ);
+    p.message.args[1]=compressed;p.message.args[2]=target;
+    p.message.args[3]=(uint64_t)(int64_t)level;p.message.args[4]=format;p.message.args[5]=type;
+    p.message.args[7]=row_bytes;
+    if(c->pixel_buffer[1]){
+        p.message.args[0]=DG_TEXTURE_READ_PBO;p.message.args[6]=(uintptr_t)pixels;
+        DGSubmit(c,&p,0);return;
+    }
+    struct DGTextureReadLayout layout={0};
+    struct DGPacket query=p;query.message.flags=DG_OUTPUT_ONLY;
+    if(c->connection->features&DG_FEATURE_TEXTURE_READ_CHUNKS)query.message.args[8]=1;
+    DGPacketPointer(&query,6,&layout,sizeof(layout),1);
+    struct DGReply r=DGSubmit(c,&query,1);
+    if(query.valid_reply && r.result==sizeof(layout))DGPacketCopy(&query,6,&layout,sizeof(layout));
+    DGPacketFree(&query);
+    if(!query.valid_reply || r.result!=sizeof(layout))return;
+    uint64_t end=0;size_t bytes=DGTextureReadSize(&layout,&end);
+    if(!bytes)return;
+    if(bytes==SIZE_MAX || !pixels || end>UINTPTR_MAX-(uintptr_t)pixels){
+        if(!c->error)c->error=GL_INVALID_VALUE;
+        return;
+    }
+    if(bytes>DG_MAX_BYTES){
+        if(!(c->connection->features&DG_FEATURE_TEXTURE_READ_CHUNKS)){
+            if(!c->error)c->error=GL_OUT_OF_MEMORY;
+            return;
+        }
+        struct DGPacket chunk=DGPacketNew(c,DG_TEXTURE_READ);
+        if(!DGPacketOwn(&chunk,DG_TEXTURE_READ_CHUNK_BYTES)){
+            if(!c->error)c->error=GL_OUT_OF_MEMORY;
+            return;
+        }
+        p.message.args[0]=DG_TEXTURE_READ_STAGE;p.message.args[8]=bytes;
+        r=DGSubmit(c,&p,1);
+        if(p.valid_reply && r.result==bytes){
+            chunk.message.flags=DG_OUTPUT_ONLY;
+            chunk.message.args[0]=DG_TEXTURE_READ_CHUNK;chunk.message.args[6]=1;
+            for(size_t offset=0;offset<bytes;){
+                size_t count=bytes-offset;
+                if(count>DG_TEXTURE_READ_CHUNK_BYTES)count=DG_TEXTURE_READ_CHUNK_BYTES;
+                chunk.message.args[8]=offset;chunk.message.bytes=(uint32_t)count;
+                r=DGSubmit(c,&chunk,1);
+                if(!chunk.valid_reply || r.result!=count)break;
+                DGPlaceTextureBytes(&layout,pixels,offset,chunk.data,count);
+                offset+=count;
+            }
+        }
+        DGPacketFree(&chunk);
+        return;
+    }
+    p.message.flags=DG_OUTPUT_ONLY;p.message.args[0]=DG_TEXTURE_READ_DATA;
+    if(!DGPacketOwn(&p,bytes)){if(!c->error)c->error=GL_OUT_OF_MEMORY;return;}
+    p.message.args[6]=1;p.message.bytes=(uint32_t)bytes;
+    r=DGSubmit(c,&p,1);
+    if(p.valid_reply && r.result==bytes)DGPlaceTextureBytes(&layout,pixels,0,p.data,bytes);
+    DGPacketFree(&p);
+}
+int DGReadTextureWithRowBytes(GLenum target,GLint level,GLenum format,GLenum type,void *pixels,GLint row_bytes)
+{
+    struct DGContext *c=dg_current;
+    if(!c || !(c->connection->features&DG_FEATURE_TEXTURE_READ_LAYOUT))return 0;
+    DGReadTexture(c,target,level,format,type,pixels,0,row_bytes);
+    return 1;
+}
+#include "passthrough-opengl-public-core.h"
+static uint64_t DGCoreExtensionMask(struct DGContext *c)
+{
+    if(!(c->connection->features2&DG_FEATURE2_CORE_EXTENSIONS))return 0;
+    if(!c->core_extensions_cached){
+        struct DGPacket p=DGPacketNew(c,DG_STRING);
+        p.message.args[0]=0x821d; /* GL_NUM_EXTENSIONS */
+        struct DGReply r=DGSubmit(c,&p,1);
+        if(p.valid_reply){
+            c->core_extension_mask=r.result & DGPublicCoreMask();
+            c->core_extensions_cached=1;
+        }
+        DGPacketFree(&p);
+    }
+    return c->core_extension_mask;
+}
 #include "direct-declarations.inc"
+#include "passthrough-opengl-large-texture-client.c"
+#include "passthrough-opengl-raster-read-client.c"
 #include "passthrough-opengl-common-state-client.c"
 #include "direct-client-generated.inc"
 
@@ -748,29 +1158,38 @@ void glDeleteShader(GLuint s) { glDeleteObjectARB((GLhandleARB)(uintptr_t)s); }
 void glDeleteProgram(GLuint p) { glDeleteObjectARB((GLhandleARB)(uintptr_t)p); }
 void glShaderSource(GLuint s,GLsizei n,const GLchar *const *strings,const GLint *lengths)
 { DGShaderSource(dg_current,s,n,strings,lengths); }
-static void DGReadUniform(GLuint program,GLint location,void *params,int integer)
+static void DGReadUniform(GLuint program,GLint location,void *params,enum DGUniformResult type)
 {
     struct DGContext *c=dg_current;if(!c)return;
-    if(!(c->connection->capabilities&DG_CAP_UNIFORM_QUERY)){c->error=GL_INVALID_OPERATION;return;}
+    if(!(c->connection->capabilities&DG_CAP_UNIFORM_QUERY) ||
+       (type==DG_UNIFORM_UINT && !(c->connection->features&DG_FEATURE_INTEGER_PARAMETERS)) ||
+       (type==DG_UNIFORM_DOUBLE && !(c->connection->features&DG_FEATURE_FP64_UNIFORM))){
+        c->error=GL_INVALID_OPERATION;return;
+    }
     if(!params){c->error=GL_INVALID_VALUE;return;}
-    union {GLfloat floating[16];GLint integer[16];} value={0};
+    size_t element=type==DG_UNIFORM_DOUBLE?sizeof(GLdouble):sizeof(GLfloat);
+    GLdouble storage[16];
     struct DGPacket packet=DGPacketNew(c,DG_UNIFORM_QUERY);packet.message.flags=DG_OUTPUT_ONLY;
-    packet.message.args[0]=program;packet.message.args[1]=(uint64_t)(int64_t)location;packet.message.args[2]=integer;
-    DGPacketPointer(&packet,3,&value,sizeof(value),1);struct DGReply reply=DGSubmit(c,&packet,1);
+    packet.message.args[0]=program;packet.message.args[1]=(uint64_t)(int64_t)location;packet.message.args[2]=type;
+    DGPacketPointer(&packet,3,storage,16*element,1);struct DGReply reply=DGSubmit(c,&packet,1);
     if(packet.valid_reply&&!reply.error){
         if(!reply.result||reply.result>16){if(!c->error)c->error=GL_INVALID_OPERATION;}
-        else {size_t bytes=(size_t)reply.result*sizeof(GLfloat);DGPacketCopy(&packet,3,&value,bytes);memcpy(params,&value,bytes);}
+        else DGPacketCopy(&packet,3,params,(size_t)reply.result*element);
     }
     DGPacketFree(&packet);
 }
 void glGetUniformfvARB(GLhandleARB programObj,GLint location,GLfloat *params)
-{DGReadUniform((GLuint)(uintptr_t)programObj,location,params,0);}
+{DGReadUniform((GLuint)(uintptr_t)programObj,location,params,DG_UNIFORM_FLOAT);}
 void glGetUniformivARB(GLhandleARB programObj,GLint location,GLint *params)
-{DGReadUniform((GLuint)(uintptr_t)programObj,location,params,1);}
+{DGReadUniform((GLuint)(uintptr_t)programObj,location,params,DG_UNIFORM_INT);}
 void glGetUniformfv(GLuint program,GLint location,GLfloat *params)
-{DGReadUniform(program,location,params,0);}
+{DGReadUniform(program,location,params,DG_UNIFORM_FLOAT);}
 void glGetUniformiv(GLuint program,GLint location,GLint *params)
-{DGReadUniform(program,location,params,1);}
+{DGReadUniform(program,location,params,DG_UNIFORM_INT);}
+void glGetUniformuivEXT(GLuint program,GLint location,GLuint *params)
+{DGReadUniform(program,location,params,DG_UNIFORM_UINT);}
+void glGetUniformdv(GLuint program,GLint location,GLdouble *params)
+{DGReadUniform(program,location,params,DG_UNIFORM_DOUBLE);}
 
 GLenum glGetError(void)
 {
@@ -812,7 +1231,7 @@ static int DGClientNativeRendererCommand(int select,unsigned software,struct DGN
        !(observed.flags&(kind?DG_NATIVE_SOFTWARE:DG_NATIVE_HARDWARE))||(select&&kind!=software)){
         if(!c->error)c->error=GL_INVALID_OPERATION;return 0;
     }
-    if(c->native_renderer_kind!=kind)c->common_state_valid=0;
+    if(c->native_renderer_kind!=kind){c->common_state_valid=0;c->core_extensions_cached=0;c->core_extension_mask=0;c->point_sizes=0;}
     c->native_renderer_kind=kind;*info=observed;return 1;
 }
 /* Unsupported peers return -1; native unavailable/rejected transitions return
@@ -844,13 +1263,23 @@ const GLubyte *glGetString(GLenum key)
         if(!value)value=calloc(4096,1);
         if(!value) { dg_current->error=GL_OUT_OF_MEMORY;return NULL; }
         struct DGPacket packet=DGPacketNew(dg_current,DG_STRING);packet.message.args[0]=key;
-        if(key==GL_EXTENSIONS)packet.message.args[3]=DG_COMPAT_DISPATCH_REVISION;
-        if(key==GL_EXTENSIONS && (dg_current->connection->capabilities&DG_CAP_APPLE_VIDEO_TEXTURES))
-            packet.message.args[2]=DG_CAP_APPLE_VIDEO_TEXTURES;
+        if(key==GL_EXTENSIONS){
+            packet.message.args[3]=DG_COMPAT_DISPATCH_REVISION;
+            packet.message.args[4]=dg_current->connection->features;
+            packet.message.args[5]=dg_current->connection->features2;
+            packet.message.args[2]=dg_current->connection->capabilities&
+                (DG_CAP_APPLE_VIDEO_TEXTURES|DG_CAP_PIXEL_BUFFERS);
+        }
         DGPacketPointer(&packet,1,value,4096,1);
         DGSubmit(dg_current,&packet,1);DGPacketCopy(&packet,1,value,4096);
         int good=packet.valid_reply;DGPacketFree(&packet);
         if(!good) { if(allocated)free(value);return NULL; }
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1070 && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1080
+        if(dg_current->profile!=0x1000 && key==GL_VERSION)
+            snprintf(value,4096,"3.2 PassthroughOpenGL");
+        if(dg_current->profile!=0x1000 && key==GL_SHADING_LANGUAGE_VERSION)
+            snprintf(value,4096,"1.50");
+#endif
         /* This is a virtual Intel GPU, not a physical host GPU exposed to
          * the guest. Period Core Image's renderer-family tables cannot know
          * Apple Silicon: Tiger classifies "Apple M4" as speed zero, selects
@@ -904,13 +1333,19 @@ const GLubyte *glGetString(GLenum key)
 
 const GLubyte *glGetStringi(GLenum name,GLuint index)
 {
-    (void)index;
-    if(!dg_current)return NULL;
-    /* No optional core extensions are qualified yet. Keep NUM_EXTENSIONS,
-     * indexed bounds and the removed compatibility query mutually consistent;
-     * never forward a host pointer or imply all host extensions are ported. */
-    dg_current->error=dg_current->profile==0x1000 ? GL_INVALID_OPERATION :
-        name==GL_EXTENSIONS ? GL_INVALID_VALUE : GL_INVALID_ENUM;
+    struct DGContext *c=dg_current;
+    if(!c)return NULL;
+    if(c->profile==0x1000 || name!=GL_EXTENSIONS){
+        if(!c->error)c->error=c->profile==0x1000 ? GL_INVALID_OPERATION : GL_INVALID_ENUM;
+        return NULL;
+    }
+    uint64_t mask=DGCoreExtensionMask(c);
+    /* The returned pointers are stable client strings, never host addresses. */
+#define DG_CORE_EXT_INDEX(symbol, bit, text, required1, required2) \
+    if((mask & DG_CORE_EXT_##symbol) && index--==0)return (const GLubyte *)text;
+    DG_CORE_EXTENSIONS(DG_CORE_EXT_INDEX)
+#undef DG_CORE_EXT_INDEX
+    if(!c->error)c->error=GL_INVALID_VALUE;
     return NULL;
 }
 /* Process-local context/drawable backend for the measured CGL/GLI adapter. */
@@ -943,7 +1378,11 @@ void *DGCreateContext(const int *attrs,void *shared)
         struct DGReply hello_reply=DGSubmit(c,&hello,1);
         connection->capabilities=hello_reply.result;
         struct DGHelloFeatures features={0};DGPacketCopy(&hello,2,&features,sizeof(features));
-        if(hello.valid_reply&&features.magic==DG_HELLO_FEATURES_MAGIC)connection->features=features.features;
+        if(hello.valid_reply&&features.magic==DG_HELLO_FEATURES_MAGIC){
+            connection->features=features.features;
+            if(features.magic2==DG_HELLO_FEATURES2_MAGIC)connection->features2=features.features2;
+            if(features.magic3==DG_HELLO_FEATURES3_MAGIC)connection->features3=features.features3;
+        }
         DGPacketFree(&hello);
         if(c->error) { DGConnectionRelease(connection);free(c);return NULL; }
     }
@@ -963,7 +1402,9 @@ void *DGCreateContext(const int *attrs,void *shared)
         if(attrs[i]==0x56494d01) packet.message.args[3]=attrs[i+1];
         if(attrs[i]==0x56494d02)c->profile=attrs[i+1];
     }
-    if(c->profile!=0x1000 && (c->profile!=0x3200 || !(c->connection->capabilities&DG_CAP_CORE_PROFILE))) {
+    if(c->profile!=0x1000 && (!(c->connection->capabilities&DG_CAP_CORE_PROFILE) ||
+       (c->profile!=0x3200 && (c->profile!=DG_CGL_PROFILE_GL4 ||
+         !(c->connection->features&DG_FEATURE_GL4_PROFILE))))) {
         DGConnectionRelease(c->connection);free(c);return NULL;
     }
     if(c->profile!=0x1000)packet.message.args[5]=c->profile;
@@ -1037,12 +1478,14 @@ void DGDestroyContext(void *opaque)
     for(unsigned renderer=0;renderer<2;++renderer)for(unsigned i=0;i<6;++i)free(c->strings[renderer][i]);
     free(c);
 }
-int DGQueryRendererDetails(GLint *video,GLint *texture,struct DGNativeRendererInfo *native)
+int DGQueryRendererDetailsWithGL4(GLint *video,GLint *texture,struct DGNativeRendererInfo *native,int *gl4)
 {
+    if(gl4)*gl4=0;
     if(!video||!texture)return 0;
     /* Enumeration can precede any guest GL context. A temporary real native
      * context selects the same renderer family; no client TLS is changed. */
     struct DGContext *c=DGCreateContext(NULL,NULL);if(!c) return 0;
+    if(gl4)*gl4=!!(c->connection->features&DG_FEATURE_GL4_PROFILE);
     struct DGPacket packet=DGPacketNew(c,DG_RENDERER_MEMORY);
     struct DGReply reply=DGSubmit(c,&packet,1);int good=packet.valid_reply && !reply.error;
     if(good) { *video=(GLint)(uint32_t)reply.result;*texture=(GLint)(uint32_t)(reply.result>>32); }
@@ -1060,6 +1503,8 @@ int DGQueryRendererDetails(GLint *video,GLint *texture,struct DGNativeRendererIn
     }
     DGDestroyContext(c);return good;
 }
+int DGQueryRendererDetails(GLint *video,GLint *texture,struct DGNativeRendererInfo *native)
+{return DGQueryRendererDetailsWithGL4(video,texture,native,NULL);}
 int DGQueryRendererMemory(GLint *video,GLint *texture)
 {return DGQueryRendererDetails(video,texture,NULL);}
 int DGDrawableDamage(int32_t bounds[4],int reset)
@@ -1747,11 +2192,19 @@ int DGImportDrawablePatch(const void *pixels,int x,int y,int width,int height,un
 void DGPixelStore(GLint key,GLint value) { if(dg_current && key==0x10) dg_current->row=value; }
 static void DGExternalPresent(GLboolean external) { (void)external; /* This backend never implicitly presents. */ }
 static void DGPreserveDrawable(void) { /* Host drawable persists until resize/destroy. */ }
+static void DGClientSetBlitScissor(GLboolean enable)
+{
+    if(dg_current && dg_current->profile!=0x1000 &&
+       (dg_current->connection->features&DG_FEATURE_VIEWPORT_ARRAY)){
+        if(enable)glEnableIndexedEXT(GL_SCISSOR_TEST,0);else glDisableIndexedEXT(GL_SCISSOR_TEST,0);
+    }else if(enable)glEnable(GL_SCISSOR_TEST);else glDisable(GL_SCISSOR_TEST);
+}
 void (*DGGetProcAddress(const char *name))(void)
 {
     if(!strcmp(name,"glBlitFramebuffer")) return (void (*)(void))glBlitFramebufferEXT;
     if(!strcmp(name,"DGSetExternalPresent")) return (void (*)(void))DGExternalPresent;
     if(!strcmp(name,"DGPreserveCurrentBuffer")) return DGPreserveDrawable;
+    if(!strcmp(name,"DGSetBlitScissor")) return (void (*)(void))DGClientSetBlitScissor;
 #include "direct-lookup.inc"
     return NULL;
 }

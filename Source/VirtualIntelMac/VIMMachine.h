@@ -21,6 +21,10 @@ NS_ASSUME_NONNULL_BEGIN
 /// Media ownership and display selection are independent: a completed native
 /// installation boots PVG for verification while its ISO is still retained.
 @property(nonatomic, readonly) BOOL requiresInstallerDisplay;
+/// Includes the last live observation of an in-place update for a new QEMU launch.
+@property(nonatomic, readonly) BOOL requiresInstallerDisplayForBoot;
+/// High Sierra's separate update OS needs the standard adapter while selected.
+@property(nonatomic, readonly) BOOL requiresStandardVGAForUpdate;
 /// Published transaction evidence, independent of ISO ownership/import state.
 @property(nonatomic, readonly) BOOL hasPublishedGuestGraphics;
 /// Big Sur's own driver can accelerate Setup Assistant before GL patching.

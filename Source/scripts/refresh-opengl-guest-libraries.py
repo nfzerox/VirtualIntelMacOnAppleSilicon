@@ -42,6 +42,7 @@ def publish(root, directory, guests):
         target = root/'prebuilt/PassthroughOpenGL'/guest/'GuestTools'
         for relative in LIBRARIES:
             shutil.copy2(directory/'Libraries'/guest/relative, target/relative)
+            (target/relative).chmod(0o755)
     print('Published the three owned libraries for: '+', '.join(guests))
 
 
@@ -132,6 +133,7 @@ def main():
             destination = stage/relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
+            destination.chmod(0o755)
         verify_libraries(stage, guest)
         print('Built '+guest, flush=True)
     if args.publish:

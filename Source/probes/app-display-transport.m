@@ -15,6 +15,12 @@ typedef struct { uint32_t magic, operation; uint64_t sequence;
 static void check(BOOL value, const char *message) {
     if (!value) { fprintf(stderr,"FAIL: %s\n",message); exit(1); }
 }
+@interface VIMTransportProbeWindow : NSWindow
+@property BOOL simulatedKeyWindow;
+@end
+@implementation VIMTransportProbeWindow
+- (BOOL)isKeyWindow { return self.simulatedKeyWindow || [super isKeyWindow]; }
+@end
 @interface VIMSleepRaceView : VIMMetalView
 @property BOOL sleepDuringNextFrame;
 @end
@@ -32,12 +38,15 @@ static void check(BOOL value, const char *message) {
 int main(void) { @autoreleasepool {
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
-    NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,640,400)
+    VIMTransportProbeWindow *window = [[VIMTransportProbeWindow alloc] initWithContentRect:NSMakeRect(0,0,640,400)
         styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
     VIMSleepRaceView *view = [[VIMSleepRaceView alloc] initWithFrame:NSMakeRect(0,0,640,400)];
+    window.contentView = view;
     // Exercise cursor policy without capturing input, installing an event tap
     // or depending on where the human user's pointer currently is.
     [view setValue:@YES forKey:@"inputCaptured"];view.softwareCursor=YES;
+    check(![[view cursorDiagnostics][@"EffectiveCursorHidden"] boolValue],"VGA leaves the host cursor alone outside its key window");
+    window.simulatedKeyWindow=YES;
     check([[view cursorDiagnostics][@"EffectiveCursorHidden"] boolValue],"VGA keeps its software cursor without a duplicate host arrow");
     view.softwareCursor=NO;[view setGuestCursorVisible:NO];
     check([[view cursorDiagnostics][@"EffectiveCursorHidden"] boolValue],"honor an explicit guest cursor hide");
@@ -45,7 +54,8 @@ int main(void) { @autoreleasepool {
     check(![[view cursorDiagnostics][@"EffectiveCursorHidden"] boolValue],"show restores the native cursor even before a glyph arrives");
     [view setValue:@NO forKey:@"inputCaptured"];[view updateTrackingAreas];
     check((view.trackingAreas.lastObject.options&NSTrackingCursorUpdate)!=0,"AppKit cursor updates are tracked");
-    window.contentView = view; window.title = @"Display transport smoke test";
+    window.simulatedKeyWindow=NO;
+    window.title = @"Display transport smoke test";
     [window center]; [window orderFront:nil];
     [view layout];NSUInteger layouts=[[view frameDiagnostics][@"LayoutUpdates"] unsignedIntegerValue];
     [view layout];[view layout];

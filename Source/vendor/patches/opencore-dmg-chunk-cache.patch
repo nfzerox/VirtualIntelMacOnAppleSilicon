@@ -1,0 +1,121 @@
+--- a/Include/Acidanthera/Library/OcAppleDiskImageLib.h
++++ b/Include/Acidanthera/Library/OcAppleDiskImageLib.h
+@@ -30,4 +30,6 @@
+ 
+   UINT32                               BlockCount;
+   APPLE_DISK_IMAGE_BLOCK_DATA          **Blocks;
++  CONST APPLE_DISK_IMAGE_CHUNK          *CachedChunk;
++  UINT8                                *CachedChunkData;
+ } OC_APPLE_DISK_IMAGE_CONTEXT;
+--- a/Library/OcAppleDiskImageLib/OcAppleDiskImageLib.c
++++ b/Library/OcAppleDiskImageLib/OcAppleDiskImageLib.c
+@@ -188,5 +188,7 @@
+   Context->ExtentTable = ExtentTable;
+   Context->BlockCount  = DmgBlockCount;
+   Context->Blocks      = DmgBlocks;
+   Context->SectorCount = (UINTN)SectorCount;
++  Context->CachedChunk = NULL;
++  Context->CachedChunkData = NULL;
+ 
+@@ -262,5 +264,9 @@
+ 
+   ASSERT (Context != NULL);
+ 
++  if (Context->CachedChunkData != NULL) {
++    FreePool (Context->CachedChunkData);
++  }
++
+   for (Index = 0; Index < Context->BlockCount; ++Index) {
+     FreePool (Context->Blocks[Index]);
+@@ -295,5 +301,6 @@
+   UINT64                       ChunkLength;
+   UINT64                       ChunkOffset;
++  UINT64                       AllocationSize;
+   UINT8                        *ChunkData;
+   UINT8                        *ChunkDataCompressed;
+ 
+@@ -369,36 +376,56 @@
+       }
+ 
+       case APPLE_DISK_IMAGE_CHUNK_TYPE_ZLIB:
+       {
+-        ChunkData = AllocatePool ((UINTN)(ChunkTotalLength + Chunk->CompressedLength));
+-        if (ChunkData == NULL) {
+-          return FALSE;
+-        }
+-
+-        ChunkDataCompressed = (ChunkData + (UINTN)ChunkTotalLength);
+-        Result              = OcAppleRamDiskRead (
+-                                Context->ExtentTable,
+-                                (UINTN)Chunk->CompressedOffset,
+-                                (UINTN)Chunk->CompressedLength,
+-                                ChunkDataCompressed
+-                                );
+-        if (!Result) {
+-          FreePool (ChunkData);
+-          return FALSE;
+-        }
+-
+-        OutSize = DecompressZLIB (
+-                    ChunkData,
+-                    (UINTN)ChunkTotalLength,
+-                    ChunkDataCompressed,
+-                    (UINTN)Chunk->CompressedLength
+-                    );
+-        if (OutSize != (UINTN)ChunkTotalLength) {
+-          FreePool (ChunkData);
+-          return FALSE;
++        //
++        // EFI filesystems issue small adjacent reads. Decompressing the same
++        // immutable chunk per read is particularly expensive under TCG.
++        // Keep one verified-image chunk per context, not per boot or disk.
++        //
++        if (Context->CachedChunk != Chunk) {
++          if (Context->CachedChunkData != NULL) {
++            FreePool (Context->CachedChunkData);
++            Context->CachedChunkData = NULL;
++            Context->CachedChunk     = NULL;
++          }
++
++          if (BaseOverflowAddU64 (ChunkTotalLength, Chunk->CompressedLength, &AllocationSize)
++              || (AllocationSize > MAX_UINTN)) {
++            return FALSE;
++          }
++
++          ChunkData = AllocatePool ((UINTN)AllocationSize);
++          if (ChunkData == NULL) {
++            return FALSE;
++          }
++
++          ChunkDataCompressed = (ChunkData + (UINTN)ChunkTotalLength);
++          Result              = OcAppleRamDiskRead (
++                                  Context->ExtentTable,
++                                  (UINTN)Chunk->CompressedOffset,
++                                  (UINTN)Chunk->CompressedLength,
++                                  ChunkDataCompressed
++                                  );
++          if (!Result) {
++            FreePool (ChunkData);
++            return FALSE;
++          }
++
++          OutSize = DecompressZLIB (
++                      ChunkData,
++                      (UINTN)ChunkTotalLength,
++                      ChunkDataCompressed,
++                      (UINTN)Chunk->CompressedLength
++                      );
++          if (OutSize != (UINTN)ChunkTotalLength) {
++            FreePool (ChunkData);
++            return FALSE;
++          }
++
++          Context->CachedChunkData = ChunkData;
++          Context->CachedChunk     = Chunk;
+         }
+ 
+-        CopyMem (BufferCurrent, (ChunkData + ChunkOffset), BufferChunkSize);
+-        FreePool (ChunkData);
++        CopyMem (BufferCurrent, Context->CachedChunkData + ChunkOffset, BufferChunkSize);
+         break;
+       }

@@ -1,0 +1,35 @@
+#!/bin/bash
+# Unmodified public GL Piglit programs; no extension/version override.
+# Thin period builds select the Intel width; the same script handles native GL.
+set -u
+launch=(/usr/bin/env)
+if [[ ${1:-} == --process-library ]]; then
+    [[ $# -ge 2 && $2 = /* && -f $2 ]] || exit 64
+    launch=(/usr/bin/env "DYLD_INSERT_LIBRARIES=$2");shift 2
+fi
+[[ $# -ge 2 ]] || { echo "Usage: $0 [--process-library ABSOLUTE_DYLIB] BIN_DIRECTORY NEW_RESULTS_DIRECTORY [TEST ...]" >&2;exit 64; }
+bin="$(cd "$1" && pwd)" || exit 66
+results="$2";shift 2
+[[ ! -e "$results" ]] || { echo 'Choose a new results directory.' >&2;exit 65; }
+tests=("$@")
+if [[ ${#tests[@]} == 0 ]]; then
+    tests=(draw-pixels copy-pixels dlist-color-material texgen fog-modes
+        two-sided-lighting polygon-mode linestipple pbo-drawpixels
+        pbo-getteximage pbo-teximage drawpix-z stencil-drawpixels)
+fi
+for name in "${tests[@]}"; do
+    case "$name" in ''|*[!a-zA-Z0-9_-]*) echo 'Use a Piglit executable name.' >&2;exit 64;; esac
+    [[ -x "$bin/$name" ]] || { echo "Missing test: $name" >&2;exit 66; }
+done
+mkdir -p "$results" || exit 1
+printf '%s\n' "${tests[@]}" >"$results/cases.txt"
+failed=0
+for name in "${tests[@]}"; do
+    "${launch[@]}" "$bin/$name" -auto -fbo >"$results/$name.log" 2>&1
+    status=$?
+    printf '%s\t%d\n' "$name" "$status" | tee -a "$results/status.tsv"
+    [[ $status == 0 || $status == 77 ]] || failed=1
+done
+# Exit zero is NOT a pass oracle: Piglit also exits zero for skipped tests.
+# Use summarize-opengl-piglit.py on the retained case list, raw JSON and status.
+exit "$failed"

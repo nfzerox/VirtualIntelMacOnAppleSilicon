@@ -59,7 +59,7 @@ static void *DGMapBegin(struct DGContext *c,GLenum target,GLintptr offset,GLsize
     if(!connection->dead && reply.result && reply.result<=UINT32_MAX)DGDropClientMap(connection,(uint32_t)reply.result);
     if(!p.valid_reply || !info.lease) { pthread_mutex_unlock(&connection->map_lock);return NULL; }
     struct DGClientMapping *map=NULL;
-    if(info.length<=DG_MAX_BYTES && info.length<=SIZE_MAX && info.length<=DG_MAP_BUDGET-connection->map_bytes) {
+    if(info.length<=SIZE_MAX && info.length<=DG_MAP_BUDGET-connection->map_bytes) {
         map=calloc(1,sizeof(*map));
         if(map) {
             size_t bytes=info.length?(size_t)info.length:1;
@@ -126,6 +126,17 @@ static void DGFlushMap(struct DGContext *c,GLenum target,GLintptr offset,GLsizei
     if(offset<0 || length<0 || base>info.size || (uint64_t)offset>info.size-base || (uint64_t)length>info.size-base-(uint64_t)offset) {
         c->error=GL_INVALID_VALUE;pthread_mutex_unlock(&connection->map_lock);return;
     }
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 101100
+    /* Held Iris Pro on El Capitan and native Metal GL validate the actual
+     * mapped range and require EXPLICIT. The older Mavericks contract is
+     * deliberately more permissive; do not apply that quirk to newer GLI. */
+    if(!apple && !(info.access&GL_MAP_FLUSH_EXPLICIT_BIT)){
+        if(!c->error)c->error=GL_INVALID_OPERATION;pthread_mutex_unlock(&connection->map_lock);return;
+    }
+    if(!apple && ((uint64_t)offset>info.length || (uint64_t)length>info.length-(uint64_t)offset)){
+        if(!c->error)c->error=GL_INVALID_VALUE;pthread_mutex_unlock(&connection->map_lock);return;
+    }
+#endif
     uint64_t left=base+(uint64_t)offset,right=left+(uint64_t)length;
     if(left<info.offset)left=info.offset;if(right>info.offset+info.length)right=info.offset+info.length;
     if(right>left && (info.access&GL_MAP_WRITE_BIT) && !DGMapTransfer(c,target,map,left-info.offset,right-left,1)) {

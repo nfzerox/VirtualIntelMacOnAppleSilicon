@@ -193,31 +193,84 @@ static BOOL ShareHome(VIMAccountNode *node,NSString *name,NSString *home){
     return verified?YES:ShareFailure("command read-back attributes",nil);
 }
 #endif
+/* Setup Assistant names the computer after its first account; automatic
+ * setup skips Setup Assistant, which otherwise leaves 10.4–10.12 with no
+ * Sharing name or Finder sidebar device. Apply the same convention natively
+ * ("name's Mac", Bonjour "names-Mac"), never replacing an existing name. */
+#import <SystemConfiguration/SCPreferencesSetSpecific.h> /* not in 10.4's umbrella header */
+static BOOL NameComputer(NSString *name){
+    SCPreferencesRef prefs=SCPreferencesCreate(NULL,CFSTR("com.virtualintelmac.account"),NULL);
+    if(!prefs)return NO;
+    BOOL good=SCPreferencesLock(prefs,true);
+    if(good){
+        CFStringRef existing=SCDynamicStoreCopyComputerName(NULL,NULL);
+        BOOL named=existing&&CFStringGetLength(existing)>0;
+        if(existing)CFRelease(existing);
+        if(!named){
+            NSString *computer=[NSString stringWithFormat:@"%@%Cs Mac",name,(unichar)0x2019];
+            /* Bonjour names allow no underscore; 10.4 lacks the 10.5 NSString replacement API. */
+            NSMutableString *host=[NSMutableString stringWithFormat:@"%@s-Mac",name];
+            [host replaceOccurrencesOfString:@"_" withString:@"-" options:0 range:NSMakeRange(0,[host length])];
+            good=SCPreferencesSetComputerName(prefs,(CFStringRef)computer,kCFStringEncodingUTF8)&&
+                SCPreferencesSetLocalHostName(prefs,(CFStringRef)host)&&
+                SCPreferencesCommitChanges(prefs)&&SCPreferencesApplyChanges(prefs);
+        }
+        SCPreferencesUnlock(prefs);
+    }
+    CFRelease(prefs);
+    return good;
+}
 static NSString *SHA(NSData *data){
     unsigned char hash[CC_SHA256_DIGEST_LENGTH];CC_SHA256_CTX context;CC_SHA256_Init(&context);
     CC_SHA256_Update(&context,[data bytes],(CC_LONG)[data length]);CC_SHA256_Final(hash,&context);
     NSMutableString *result=[NSMutableString string];
     for(unsigned i=0;i<sizeof(hash);i++)[result appendFormat:@"%02x",hash[i]];return result;
 }
+static const unsigned char LoginKey[]={0x7d,0x89,0x52,0x23,0xd2,0xbc,0xdd,0xea,0xa3,0xb9,0x1f};
+static BOOL LoginCredentialMatches(NSData *encoded,NSData *plain){
+    NSUInteger length=[plain length];
+    if([encoded length]<=length)return NO;
+    const unsigned char *bytes=[encoded bytes],*requested=[plain bytes];
+    unsigned char difference=bytes[length]^LoginKey[length%sizeof(LoginKey)];
+    for(NSUInteger i=0;i<length;i++)difference|=bytes[i]^LoginKey[i%sizeof(LoginKey)]^requested[i];
+    return difference==0;
+}
 static BOOL LoginOnce(NSString *name,NSString *password,NSMutableDictionary *journal,NSString *path,BOOL allowPendingSync){
     // Actual Mavericks logind (13F1911), function 0x1000025b6: NUL-terminated
     // UTF-8, random padding to the NEXT multiple of 12, XOR repeating 11 bytes.
     // This is Apple's reversible root-only login handoff, NOT encryption. It
     // is removed after our first verified desktop. No OS instruction is patched.
-    static const unsigned char key[]={0x7d,0x89,0x52,0x23,0xd2,0xbc,0xdd,0xea,0xa3,0xb9,0x1f};
-    BOOL present=[[NSFileManager defaultManager] fileExistsAtPath:@"/etc/kcpassword"];
-    if(present&&(![journal objectForKey:@"AutoLoginSHA256"]||!Owned(@"/etc/kcpassword",NO)))return NO;
-    NSData *existing=present?[NSData dataWithContentsOfFile:@"/etc/kcpassword"]:nil;
-    if(existing&&![[journal objectForKey:@"AutoLoginSHA256"] isEqual:SHA(existing)])return NO;
-    if(!existing){
-        NSData *plain=[password dataUsingEncoding:NSUTF8StringEncoding];NSUInteger count=([plain length]/12+1)*12;
+    NSString *credential=@"/etc/kcpassword";
+    struct stat st;BOOL present=lstat([credential fileSystemRepresentation],&st)==0;
+    if(!present&&errno!=ENOENT)return NO;
+    NSString *loginUser=VIMOpenGLLoginUser();
+    if(loginUser&&![loginUser isEqual:name])return NO;
+    NSData *plain=[password dataUsingEncoding:NSUTF8StringEncoding];
+    if(present){
+        if(!Owned(credential,NO)||st.st_size>4096)return NO;
+        // The caller has checked the transaction's account GUID, UID and
+        // native password. Compare what loginwindow decodes, not random
+        // padding or an earlier write's digest. Do not replace a different
+        // credential or claim an orphan file without our publication intent.
+        if(!loginUser&&![[journal objectForKey:@"FirstLoginPolicyPrepared"] boolValue])return NO;
+        NSData *existing=[NSData dataWithContentsOfFile:credential];
+        if(!LoginCredentialMatches(existing,plain))return NO;
+        // The digest is solely a compare-before-delete guard for the desktop
+        // finalizer, which intentionally has no access to the password.
+        NSString *digest=SHA(existing);
+        if(![[journal objectForKey:@"AutoLoginSHA256"] isEqual:digest]){
+            [journal setObject:digest forKey:@"AutoLoginSHA256"];
+            if(!Save(journal,path))return NO;
+        }
+    }else{
+        NSUInteger count=([plain length]/12+1)*12;
         NSMutableData *encoded=[NSMutableData dataWithLength:count];unsigned char *bytes=[encoded mutableBytes];arc4random_buf(bytes,count);
         memcpy(bytes,[plain bytes],[plain length]);bytes[[plain length]]=0;
-        for(NSUInteger i=0;i<count;i++)bytes[i]^=key[i%sizeof(key)];
+        for(NSUInteger i=0;i<count;i++)bytes[i]^=LoginKey[i%sizeof(LoginKey)];
         [journal setObject:SHA(encoded) forKey:@"AutoLoginSHA256"];
         if(![[journal objectForKey:@"Phase"] isEqual:@"autologin-armed"])
             [journal setObject:@"login-credential-prepared" forKey:@"Phase"];
-        if(!Save(journal,path)||![encoded writeToFile:@"/etc/kcpassword" options:NSDataWritingAtomic error:NULL]||chmod("/etc/kcpassword",0600))return NO;
+        if(!Save(journal,path)||![encoded writeToFile:credential options:NSDataWritingAtomic error:NULL]||chmod([credential fileSystemRepresentation],0600))return NO;
         [encoded resetBytesInRange:NSMakeRange(0,count)];
     }
     return VIMOpenGLSetLoginUserWithPendingPublication(name,allowPendingSync);
@@ -323,14 +376,20 @@ int main(int argc,char **argv) {@autoreleasepool {
         uid_t consoleUID=0;
         CFStringRef console=SCDynamicStoreCopyConsoleUser(NULL,&consoleUID,NULL);
         if(console)CFRelease(console);
-        if(!record||!journal||![[ownership objectForKey:@"Guest"] isEqual:@"sierra"]||
+        if(!record||!journal||![[ownership objectForKey:@"Guest"] isEqual:VIMOpenGLGuestForSystemVersion(version)]||
            ![First(record,kODAttributeTypeGUID) isEqual:[journal objectForKey:@"GeneratedUID"]]||
            [First(record,kODAttributeTypeUniqueID) intValue]!=[[journal objectForKey:@"UID"] intValue]||
-           !VIMSierraLoginHandoffMissing(version,ownership,journal,boot,consoleUID))return 75;
+           !VIMLoginHandoffNeedsRecovery(version,ownership,journal,boot,consoleUID))return 75;
         if(![record verifyPassword:password error:NULL])return Failure("verifying the first-login account");
+        if(![[journal objectForKey:@"LoginHandoffRecoveryPending"] boolValue]){
+            [journal setObject:[NSNumber numberWithBool:YES] forKey:@"LoginHandoffRecoveryPending"];
+            if(!Save(journal,journalPath))return Failure("recording the automatic login recovery");
+        }
+        errno=0;
+        if(!LoginOnce(name,password,journal,journalPath,YES))
+            return errno==EAGAIN?75:Failure("restoring automatic login after the first restart");
+        [journal removeObjectForKey:@"LoginHandoffRecoveryPending"];
         [journal setObject:[NSNumber numberWithBool:YES] forKey:@"LoginHandoffRecovered"];
-        if(!Save(journal,journalPath)||!LoginOnce(name,password,journal,journalPath,NO))
-            return Failure("restoring automatic login after the first restart");
         [journal setObject:boot forKey:@"FirstLoginPolicyBootSessionUUID"];
         if(!Save(journal,journalPath))return Failure("saving the repaired first-login handoff");
         puts("{\"RestartRequired\":true}");close(lock);return 0;
@@ -405,8 +464,15 @@ int main(int argc,char **argv) {@autoreleasepool {
     if(Run(@"/usr/sbin/createhomedir",[NSArray arrayWithObjects:@"-c",@"-u",name,nil]))return Failure("creating the home folder");
     NSString *home=[@"/Users/" stringByAppendingString:name];struct stat homeInfo;
     if(lstat([home fileSystemRepresentation],&homeInfo)||!S_ISDIR(homeInfo.st_mode)||homeInfo.st_uid!=(uid_t)[uid intValue])return Failure("verifying home ownership");
-    [journal setObject:@"account-created" forKey:@"Phase"];
-    if(!Save(journal,journalPath))return Failure("saving account completion");
+    if(![[journal objectForKey:@"ComputerNameConfigured"] boolValue]){
+        if(!NameComputer(name))return Failure("naming the computer");
+        [journal setObject:[NSNumber numberWithBool:YES] forKey:@"ComputerNameConfigured"];
+        if(!Save(journal,journalPath))return Failure("saving the computer name");
+    }
+    if([[journal objectForKey:@"Phase"] isEqual:@"planned"]){
+        [journal setObject:@"account-created" forKey:@"Phase"];
+        if(!Save(journal,journalPath))return Failure("saving account completion");
+    }
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1050
     if([[ownership objectForKey:@"FileSharing"] boolValue]&&![[journal objectForKey:@"FileSharingConfigured"] boolValue]){
         int ready=VIMOpenGLFileSharingReadiness();
@@ -546,7 +612,19 @@ int main(int argc,char **argv) {@autoreleasepool {
         if(!Save(journal,journalPath))return Failure("saving native first-login policy");
     }
     errno=0;
-    if(!LoginOnce(name,password,journal,journalPath,[version hasPrefix:@"10.13."]))
+    // Cold 10.11–10.13 installs can reach this owned handoff before
+    // cfprefsd confirms publication. Continue to require the safe native
+    // preference and exact account on disk, but let the coordinator retry
+    // pending publication instead of requiring a user-initiated restart.
+    BOOL waitForLoginPreferences=[version hasPrefix:@"10.11."]||
+        [version hasPrefix:@"10.12."]||[version hasPrefix:@"10.13."];
+#ifdef VIM_MODERN_ACCOUNT_SETUP
+    // Big Sur's cold cfprefsd also reports a failed synchronization on the
+    // first installed boot (autoLoginUser not yet published), which failed
+    // setup outright. Mojave through Big Sur retry the same way.
+    waitForLoginPreferences=YES;
+#endif
+    if(!LoginOnce(name,password,journal,journalPath,waitForLoginPreferences))
         return errno==EAGAIN?75:Failure("preparing the first desktop login");
     int marker=open("/var/db/.AppleSetupDone",O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW,0644);
     if(marker>=0)close(marker);else if(errno!=EEXIST)return Failure("completing native Setup Assistant policy");

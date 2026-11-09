@@ -158,6 +158,12 @@
     NSUInteger newGuestConfiguration=[arguments indexOfObject:@"--configure-new-guest"];
     if(newGuestConfiguration!=NSNotFound&&newGuestConfiguration+1<arguments.count)
         [VIMNewMachineWindow showConfigurationForGuest:arguments[newGuestConfiguration+1]];
+    // Unattended acceptance: the same Create as the configuration step. The
+    // password comes from the environment, never the argument list.
+    NSUInteger newGuestCreation=[arguments indexOfObject:@"--create-new-guest"];
+    if(newGuestCreation!=NSNotFound&&newGuestCreation+1<arguments.count)
+        [VIMNewMachineWindow createGuest:arguments[newGuestCreation+1]
+                  automaticSetupPassword:NSProcessInfo.processInfo.environment[@"VIM_DEVELOPMENT_GUEST_PASSWORD"]];
     NSUInteger installerDownload=[arguments indexOfObject:@"--download-installer"];
     if(installerDownload!=NSNotFound&&installerDownload+1<arguments.count)
         [VIMNewMachineWindow downloadInstallerForGuest:arguments[installerDownload+1]];

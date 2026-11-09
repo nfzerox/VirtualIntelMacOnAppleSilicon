@@ -1,0 +1,41 @@
+diff --git a/framework/platform/osx/tcuOSXPlatform.cpp b/framework/platform/osx/tcuOSXPlatform.cpp
+index f146e27..58a45fa 100644
+--- a/framework/platform/osx/tcuOSXPlatform.cpp
++++ b/framework/platform/osx/tcuOSXPlatform.cpp
+@@ -119,7 +119,7 @@ CGLRenderContext::CGLRenderContext (const glu::RenderConfig& config, CGLContextO
+ {
+ 	try
+ 	{
+-		const CGLPixelFormatAttribute attribs[] =
++		CGLPixelFormatAttribute attribs[] =
+ 		{
+ 			kCGLPFAAccelerated,
+ 			kCGLPFAOpenGLProfile, (CGLPixelFormatAttribute)getCGLProfile(config.type),
+@@ -129,8 +129,26 @@ CGLRenderContext::CGLRenderContext (const glu::RenderConfig& config, CGLContextO
+ 		CGLPixelFormatObj	pixelFormat = DE_NULL;
+ 		int					numVScreens = 0;
+ 
+-		if (CGLChoosePixelFormat(&attribs[0], &pixelFormat, &numVScreens) != kCGLNoError || !pixelFormat)
++		CGLError formatError = CGLChoosePixelFormat(&attribs[0], &pixelFormat, &numVScreens);
++		// Mavericks can expose GL4.1 only through its GL3 core selector. Do
++		// not downgrade a test: the actual version check below still requires
++		// the requested API. Later systems keep their explicit GL4 selector.
++		if ((formatError != kCGLNoError || !pixelFormat || numVScreens < 1) &&
++			getCGLProfile(config.type) == kCGLOGLPVersion_GL4_Core)
++		{
++			if (pixelFormat)
++				CGLReleasePixelFormat(pixelFormat);
++			pixelFormat = DE_NULL;
++			numVScreens = 0;
++			attribs[2] = (CGLPixelFormatAttribute)kCGLOGLPVersion_GL3_Core;
++			formatError = CGLChoosePixelFormat(&attribs[0], &pixelFormat, &numVScreens);
++		}
++		if (formatError != kCGLNoError || !pixelFormat || numVScreens < 1)
++		{
++			if (pixelFormat)
++				CGLReleasePixelFormat(pixelFormat);
+ 			throw NotSupportedError("No compatible pixel formats found");
++		}
+ 
+ 		try
+ 		{

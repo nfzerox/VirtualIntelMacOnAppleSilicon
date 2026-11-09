@@ -235,9 +235,9 @@ static GLenum DGSurfaceSnapshotCopyTexture(struct DGHostContext *c,
         glDrawBuffer(GL_COLOR_ATTACHMENT0_EXT);
         good=good && destination && glCheckFramebufferStatusEXT(GL_DRAW_FRAMEBUFFER_EXT)==GL_FRAMEBUFFER_COMPLETE_EXT;
         GLboolean scissor=glIsEnabled(GL_SCISSOR_TEST),srgb=glIsEnabled(GL_FRAMEBUFFER_SRGB_EXT);
-        glDisable(GL_SCISSOR_TEST);glDisable(GL_FRAMEBUFFER_SRGB_EXT);
+        DGSetBlitScissor(c,GL_FALSE);glDisable(GL_FRAMEBUFFER_SRGB_EXT);
         if(good)glBlitFramebufferEXT(0,0,width,height,0,0,width,height,GL_COLOR_BUFFER_BIT,GL_NEAREST);
-        if(scissor)glEnable(GL_SCISSOR_TEST);if(srgb)glEnable(GL_FRAMEBUFFER_SRGB_EXT);
+        if(scissor)DGSetBlitScissor(c,GL_TRUE);if(srgb)glEnable(GL_FRAMEBUFFER_SRGB_EXT);
         // A cached binding must never retain a deleted/redefined consumer.
         if(destination)glFramebufferTexture2DEXT(GL_DRAW_FRAMEBUFFER_EXT,GL_COLOR_ATTACHMENT0_EXT,
             GL_TEXTURE_RECTANGLE_ARB,0,0);
@@ -375,7 +375,7 @@ static struct DGSurfaceSnapshot *DGSurfaceSnapshotCreateLocked(struct DGHostCont
         good=good && f && glCheckFramebufferStatusEXT(GL_DRAW_FRAMEBUFFER_EXT)==GL_FRAMEBUFFER_COMPLETE_EXT;
         glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT,p->framebuffer);
         glGetIntegerv(GL_READ_BUFFER,&source_read);glReadBuffer(GL_COLOR_ATTACHMENT0_EXT);
-        glDisable(GL_SCISSOR_TEST);glDisable(GL_FRAMEBUFFER_SRGB_EXT);
+        DGSetBlitScissor(c,GL_FALSE);glDisable(GL_FRAMEBUFFER_SRGB_EXT);
         if(good)glBlitFramebufferEXT(0,0,s->width,s->height,0,0,s->width,s->height,GL_COLOR_BUFFER_BIT,GL_NEAREST);
         // A cached binding must detach on success AND failure before restoring
         // the caller's draw binding. Temporary bindings retain their original
@@ -386,7 +386,7 @@ static struct DGSurfaceSnapshot *DGSurfaceSnapshotCreateLocked(struct DGHostCont
         glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT,(GLuint)read);
         glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT,(GLuint)draw);
         glBindTexture(GL_TEXTURE_RECTANGLE_ARB,(GLuint)texture);
-        if(scissor)glEnable(GL_SCISSOR_TEST);if(srgb)glEnable(GL_FRAMEBUFFER_SRGB_EXT);
+        if(scissor)DGSetBlitScissor(c,GL_TRUE);if(srgb)glEnable(GL_FRAMEBUFFER_SRGB_EXT);
         if(good && exported){
             if(v->completion_queue)v->completion=glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE,0);
             good=v->completion_queue && v->completion;

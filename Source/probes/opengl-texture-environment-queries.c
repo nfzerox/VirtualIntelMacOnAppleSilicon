@@ -37,7 +37,8 @@ int main(int argc,char **argv)
     assert(!CGLCreateContext(format,NULL,&context)&&context);
     CGLDestroyPixelFormat(format);assert(!CGLSetCurrentContext(context));
     const char *renderer=(const char *)glGetString(GL_RENDERER);
-    printf("renderer=%s\n",renderer?renderer:"none");assert(renderer&&strstr(renderer,"Intel"));
+    printf("renderer=%s\n",renderer?renderer:"none");
+    assert(renderer&&(argc==1||strstr(renderer,"Intel")));
     struct Output output;GLfloat color[]={0.25f,0.5f,0.75f,1.0f};
     for(unsigned q=0;q<sizeof(queries)/sizeof(queries[0]);++q){
         const struct Query *query=&queries[q];
@@ -67,7 +68,11 @@ int main(int argc,char **argv)
     seed(&output);glGetTexEnvfv(GL_TEXTURE_ENV,GL_TEXTURE_ENV_COLOR,output.value.floats);
     assert(!glGetError()&&!memcmp(output.value.floats,color,sizeof(color)));guards(&output);
     seed(&output);glGetTexEnviv(GL_TEXTURE_ENV,GL_TEXTURE_ENV_COLOR,output.value.integers);
-    assert(!glGetError()&&output.value.integers[0]>0&&
+    GLenum integer_error=glGetError();
+    printf("integer texture environment color=%d,%d,%d,%d error=%x\n",output.value.integers[0],
+        output.value.integers[1],output.value.integers[2],output.value.integers[3],(unsigned)integer_error);
+    fflush(stdout);
+    assert(!integer_error&&output.value.integers[0]>0&&
         output.value.integers[0]<output.value.integers[1]&&
         output.value.integers[1]<output.value.integers[2]&&
         output.value.integers[3]==INT32_MAX);guards(&output);

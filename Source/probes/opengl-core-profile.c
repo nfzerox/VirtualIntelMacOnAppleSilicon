@@ -4,7 +4,10 @@
 #include <OpenGL/gl3.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <dlfcn.h>
 static int failures;
+static int trace_high_sierra_record;
 static void check(int good,const char *name)
 { printf("%s %s\n",good?"PASS":"FAIL",name);failures+=!good;fflush(stdout); }
 __attribute__((noinline)) void VIMProfileBeforeCreate(unsigned profile)
@@ -17,10 +20,20 @@ static CGLContextObj make(CGLOpenGLProfile profile,CGLContextObj share,int requi
     CGLError e=CGLChoosePixelFormat(attrs,&pf,&count);
     if(!e && (!pf || count<1))e=kCGLBadPixelFormat;
     if(!e)e=CGLDescribePixelFormat(pf,0,kCGLPFAOpenGLProfile,&selected);
+    if(!e && trace_high_sierra_record){
+        /* Read-only 17G14033 diagnostic: its CGLCreateContext loads this
+         * byte, shifts bits 4/5 to the GLI family's bits 3/4. */
+        unsigned header=((const unsigned char *)pf)[3];
+        printf("PROFILE record request=%x byte3=%02x GLI-family=%02x\n",
+            profile,header,(header>>1)&0x18u);
+    }
     if(!e) { VIMProfileBeforeCreate(profile);e=CGLCreateContext(pf,share,&c); }
     printf("PROFILE request=%x selected=%x count=%d share=%d result=%d\n",profile,selected,count,share!=NULL,e);
     if(pf)CGLDestroyPixelFormat(pf);
-    if(required)check(!e && c,"requested accelerated context created");
+    if(required){
+        check(!e && c,"requested accelerated context created");
+        check(!e && selected==(GLint)profile,"CGL describes the actual requested selector");
+    }
     return c;
 }
 static GLuint shader(GLenum type,const char *source)
@@ -30,7 +43,7 @@ static GLuint shader(GLenum type,const char *source)
     if(!good) { char log[2048];glGetShaderInfoLog(name,sizeof(log),NULL,log);fprintf(stderr,"shader: %s\n",log); }
     check(good,"GLSL 150 compile");return name;
 }
-static void draw(CGLContextObj c,CGLContextObj legacy)
+static void draw(CGLContextObj c,CGLContextObj legacy,CGLOpenGLProfile profile)
 {
     if(!c)return;
     check(!CGLSetCurrentContext(c),"core context made current");
@@ -42,6 +55,25 @@ static void draw(CGLContextObj c,CGLContextObj legacy)
     GLint extensions=-1;glGetIntegerv(GL_NUM_EXTENSIONS,&extensions);
     check(extensions>=0,"core extension count");
     for(GLint i=0;i<extensions && i<8;++i)check(glGetStringi(GL_EXTENSIONS,i)!=NULL,"indexed core extension string");
+    const struct {const char *extension,*symbol;} public_api[]={
+        {"GL_ARB_texture_storage","glTexStorage2D"},
+        {"GL_ARB_transform_feedback2","glGenTransformFeedbacks"},
+        {"GL_ARB_transform_feedback3","glBeginQueryIndexed"},
+        {"GL_ARB_shader_subroutine","glUniformSubroutinesuiv"},
+        {"GL_ARB_gpu_shader_fp64","glUniform1d"}
+    };
+    void *library=dlopen("/System/Library/Frameworks/OpenGL.framework/Versions/A/Libraries/libGL.dylib",RTLD_LAZY|RTLD_LOCAL);
+    for(unsigned p=0;p<sizeof(public_api)/sizeof(*public_api);++p){
+        int advertised=0;
+        for(GLint i=0;i<extensions;++i){
+            const char *name=(const char *)glGetStringi(GL_EXTENSIONS,i);
+            if(name&&!strcmp(name,public_api[p].extension)){advertised=1;break;}
+        }
+        int callable=library&&dlsym(library,public_api[p].symbol);
+        printf("PUBLIC extension=%s advertised=%d callable=%d\n",public_api[p].extension,advertised,callable);
+        check(!advertised||callable,"advertised extension has its public libGL entry point");
+    }
+    if(library)dlclose(library);
     check(!glGetError(),"core extension enumeration leaves no error");
     check(!glGetStringi(GL_EXTENSIONS,(GLuint)extensions) && glGetError()==GL_INVALID_VALUE,"indexed extension upper bound rejected");
     check(!glGetString(GL_EXTENSIONS) && glGetError()==GL_INVALID_ENUM,"removed core extension query rejected");
@@ -80,7 +112,7 @@ static void draw(CGLContextObj c,CGLContextObj legacy)
     GLint64 maximum=0;glGetInteger64v(GL_MAX_SERVER_WAIT_TIMEOUT,&maximum);
     e=glGetError();printf("SYNC maximum-server-wait=%llx error=%x\n",maximum,e);
     check(!e,"64-bit server wait limit query");
-    CGLContextObj shared=make(kCGLOGLPVersion_3_2_Core,c,1);
+    CGLContextObj shared=make(profile,c,1);
     if(shared) {
         CGLSetCurrentContext(shared);
         check(glIsTexture(tex) && glIsBuffer(vbo) && glIsProgram(program),"shared core texture/buffer/program objects");
@@ -88,12 +120,12 @@ static void draw(CGLContextObj c,CGLContextObj legacy)
         check(!glGetError(),"shared core context starts without GL error");
         CGLSetCurrentContext(c);CGLDestroyContext(shared);
     }
-    CGLContextObj parent=make(kCGLOGLPVersion_3_2_Core,NULL,1);
+    CGLContextObj parent=make(profile,NULL,1);
     if(parent) {
         CGLSetCurrentContext(parent);
         GLsync survivor=glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE,0);glFlush();
         check(glIsSync(fence) && !glGetError(),"live sync namespace visible from unrelated context");
-        CGLContextObj child=make(kCGLOGLPVersion_3_2_Core,parent,1);
+        CGLContextObj child=make(profile,parent,1);
         if(child) {
             CGLSetCurrentContext(child);CGLDestroyContext(parent);parent=NULL;
             check(survivor && glIsSync(survivor),"sync survives creating context destruction");
@@ -104,7 +136,7 @@ static void draw(CGLContextObj c,CGLContextObj legacy)
         } else if(survivor)glDeleteSync(survivor);
         CGLSetCurrentContext(c);if(parent)CGLDestroyContext(parent);
     }
-    CGLContextObj incompatible=make(kCGLOGLPVersion_3_2_Core,legacy,0);
+    CGLContextObj incompatible=make(profile,legacy,0);
     check(!incompatible,"legacy/core share rejected");if(incompatible)CGLDestroyContext(incompatible);
     glDeleteSync(fence);check(!glIsSync(fence) && !glGetError(),"deleted sync becomes invalid");
     glDeleteSync(NULL);printf("SYNC delete-null-error=%x\n",glGetError());
@@ -112,15 +144,30 @@ static void draw(CGLContextObj c,CGLContextObj legacy)
     glDeleteProgram(program);glDeleteShader(vertex);glDeleteShader(fragment);
     glDeleteFramebuffers(1,&fbo);glDeleteTextures(1,&tex);
 }
-int main(void)
+int main(int argc,char **argv)
 {
+    int require_fourth=argc>1 && !strcmp(argv[1],"--require-gl4");
+    trace_high_sierra_record=argc>2 && !strcmp(argv[2],"--trace-17G14033-record");
     CGLContextObj legacy=make(kCGLOGLPVersion_Legacy,NULL,1);
     if(legacy) { CGLSetCurrentContext(legacy);printf("LEGACY version=%s\n",glGetString(GL_VERSION)); }
-    CGLContextObj core=make(kCGLOGLPVersion_3_2_Core,NULL,1);draw(core,legacy);
+    CGLContextObj core=make(kCGLOGLPVersion_3_2_Core,NULL,1);draw(core,legacy,kCGLOGLPVersion_3_2_Core);
     // Native Mavericks can return success with no candidates for GL4's
     // explicit selector even when the GL3 selector delivers actual GL4.1.
-    CGLContextObj fourth=make(kCGLOGLPVersion_GL4_Core,NULL,0);
-    if(fourth) { CGLSetCurrentContext(fourth);printf("CORE4 renderer=%s version=%s\n",glGetString(GL_RENDERER),glGetString(GL_VERSION)); }
+    CGLContextObj fourth=make(kCGLOGLPVersion_GL4_Core,NULL,require_fourth);
+    if(fourth) {
+        CGLSetCurrentContext(fourth);printf("CORE4 renderer=%s version=%s\n",glGetString(GL_RENDERER),glGetString(GL_VERSION));
+        GLint major=0,minor=0;glGetIntegerv(GL_MAJOR_VERSION,&major);glGetIntegerv(GL_MINOR_VERSION,&minor);
+        check((major>4 || (major==4 && minor>=1)) && !glGetError(),"explicit GL4 reports a real GL 4.1+ context");
+        draw(fourth,legacy,kCGLOGLPVersion_GL4_Core);
+        if(core){
+            CGLContextObj core4share=make(kCGLOGLPVersion_GL4_Core,core,0);
+            CGLContextObj core3share=make(kCGLOGLPVersion_3_2_Core,fourth,0);
+            printf("CORE34 cross-share core4-with-core3=%d core3-with-core4=%d\n",!!core4share,!!core3share);
+            if(require_fourth)check(!core4share&&!core3share,"different core selectors cannot share");
+            if(core4share)CGLDestroyContext(core4share);
+            if(core3share)CGLDestroyContext(core3share);
+        }
+    }
     CGLSetCurrentContext(NULL);if(fourth)CGLDestroyContext(fourth);if(core)CGLDestroyContext(core);if(legacy)CGLDestroyContext(legacy);
     printf("core profile failures=%d\n",failures);return failures?1:0;
 }

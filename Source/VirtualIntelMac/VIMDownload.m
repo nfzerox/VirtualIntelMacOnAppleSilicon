@@ -107,7 +107,11 @@ static NSError *DownloadError(NSString *message) {
     NSURL *actual=[VIMInstallerCatalog downloadURLForAppleURL:self.sourceURL];
     NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:actual cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:30];
     [request setValue:@"identity" forHTTPHeaderField:@"Accept-Encoding"];
-    NSDictionary *headers=[VIMInstallerSource headersForURL:self.sourceURL error:&error];
+    // A debug loopback mirror serves already cached bytes, so it neither
+    // needs nor should receive an Apple recovery token. The original source
+    // remains authoritative for approval, resumability and digest checking.
+    NSDictionary *headers=[actual isEqual:self.sourceURL]?
+        [VIMInstallerSource headersForURL:self.sourceURL error:&error]:@{};
     if(!headers){[self finish:nil error:error];return;}
     for(NSString *key in headers)[request setValue:headers[key] forHTTPHeaderField:key];
     if(self.received) {

@@ -17,7 +17,8 @@
 @property uint64_t fingerprint;
 @property uint64_t regionFingerprint;
 @property CFTimeInterval presentedAt;
-@property CFTimeInterval submittedAt;
+@property CFTimeInterval offeredAt, submittedAt, completionObservedAt;
+@property BOOL directSurface;
 @property NSUInteger epoch, generation, width, height;
 @property uint32_t marker;
 @end
@@ -37,6 +38,7 @@
 // the final version merely because the preceding blit has not completed.
 @property(nonatomic) id<MTLTexture> pendingSurfaceTexture;
 @property(nonatomic) NSUInteger pendingSurfaceWidth,pendingSurfaceHeight,pendingSurfaceEpoch;
+@property CFTimeInterval pendingSurfaceOfferedAt;
 @property(nonatomic,copy) void (^pendingSurfaceCompletion)(BOOL);
 @property NSUInteger displayEpoch;
 @property NSUInteger displayPowerUpdates;
@@ -60,6 +62,7 @@
 @property NSUInteger fingerprintFrames, distinctFrames, duplicateFrames, fingerprintFailures, fingerprintReordered;
 @property NSUInteger fingerprintGeneration, fingerprintUnpresented;
 @property NSMutableArray *fingerprintTrace;
+@property NSMutableArray *fingerprintPipelineTrace;
 @property NSMutableArray *fingerprintUnpresentedTrace;
 @property NSUInteger fingerprintTraceDropped;
 @property(nonatomic) NSRect fingerprintMarkerRect;
@@ -188,6 +191,8 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
             NSMutableDictionary *d=[result[@"DistinctPresentationTiming"] mutableCopy];
             d[@"Trace"]=self.fingerprintTrace.copy;d[@"TraceDropped"]=@(self.fingerprintTraceDropped);
             d[@"TraceColumns"]=@[@"PresentedAt",@"RGBFingerprint",@"Changed",@"MarkerX",@"MarkerY",@"RegionRGBFingerprint"];
+            d[@"PipelineTrace"]=self.fingerprintPipelineTrace.copy;
+            d[@"PipelineTraceColumns"]=@[@"OfferedToViewAt",@"MetalCommitAt",@"CompletionObservedAt",@"PresentedAt",@"DirectIOSurface"];
             d[@"UnpresentedTrace"]=self.fingerprintUnpresentedTrace.copy;
             d[@"UnpresentedTraceColumns"]=@[@"SubmittedAt",@"ResolvedAt",@"RGBFingerprint",@"MarkerX",@"MarkerY",@"RegionRGBFingerprint",@"GPUValid"];
             result[@"DistinctPresentationTiming"]=d;
@@ -234,6 +239,7 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
 - (void)setFingerprintTraceEnabled:(BOOL)enabled {
     NSAssert(NSThread.isMainThread,@"Trace is main-thread owned");
     self.fingerprintTrace=enabled?[NSMutableArray array]:nil;self.fingerprintTraceDropped=0;
+    self.fingerprintPipelineTrace=enabled?[NSMutableArray array]:nil;
     self.fingerprintUnpresentedTrace=enabled?[NSMutableArray array]:nil;
 }
 - (void)setFingerprintMarkerRect:(NSRect)rect {
@@ -279,8 +285,12 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
     self.lastFingerprint=frame.fingerprint;self.lastFingerprintAt=frame.presentedAt;
     self.fingerprintWidth=frame.width;self.fingerprintHeight=frame.height;
     if(self.fingerprintTrace){
-        if(self.fingerprintTrace.count<4096)[self.fingerprintTrace addObject:@[@(frame.presentedAt),@(frame.fingerprint),@(changed),
-            frame.marker==UINT32_MAX?@(-1):@(frame.marker&65535),frame.marker==UINT32_MAX?@(-1):@(frame.marker>>16),@(frame.regionFingerprint)]];
+        if(self.fingerprintTrace.count<4096){
+            [self.fingerprintTrace addObject:@[@(frame.presentedAt),@(frame.fingerprint),@(changed),
+                frame.marker==UINT32_MAX?@(-1):@(frame.marker&65535),frame.marker==UINT32_MAX?@(-1):@(frame.marker>>16),@(frame.regionFingerprint)]];
+            [self.fingerprintPipelineTrace addObject:@[@(frame.offeredAt),@(frame.submittedAt),
+                @(frame.completionObservedAt),@(frame.presentedAt),@(frame.directSurface)]];
+        }
         else self.fingerprintTraceDropped++;
     }
 }
@@ -712,11 +722,13 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
 }
 - (void)presentWidth:(NSUInteger)width height:(NSUInteger)height stride:(NSUInteger)stride
     completion:(void (^)(BOOL))completion {
-    [self presentWidth:width height:height stride:stride sourceTexture:nil completion:completion];
+    CFTimeInterval offered=self.fingerprintTrace?CACurrentMediaTime():0;
+    [self presentWidth:width height:height stride:stride sourceTexture:nil offered:offered completion:completion];
 }
 - (void)presentSurface:(IOSurfaceRef)surface width:(NSUInteger)width height:(NSUInteger)height
     completion:(void (^)(BOOL))completion {
     NSAssert(NSThread.isMainThread, @"Presentation is main-thread owned");
+    CFTimeInterval offered=self.fingerprintTrace?CACurrentMediaTime():0;
     if(!surface || width<320 || height<200 || width>8192 || height>8192 ||
        IOSurfaceGetPixelFormat(surface)!=0x42475241 || IOSurfaceGetPlaneCount(surface)!=0 ||
        IOSurfaceGetBytesPerElement(surface)!=4 || IOSurfaceGetWidth(surface)<width ||
@@ -728,12 +740,13 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
     descriptor.usage=MTLTextureUsageShaderRead;
     id<MTLTexture> texture=[self.device newTextureWithDescriptor:descriptor iosurface:surface plane:0];
     if(!texture){completion(NO);return;}
-    [self presentWidth:width height:height stride:0 sourceTexture:texture completion:completion];
+    [self presentWidth:width height:height stride:0 sourceTexture:texture offered:offered completion:completion];
 }
 - (void)cancelPendingSurface {
     void (^completion)(BOOL)=self.pendingSurfaceCompletion;
     self.pendingSurfaceCompletion=nil;self.pendingSurfaceTexture=nil;
     self.pendingSurfaceWidth=self.pendingSurfaceHeight=self.pendingSurfaceEpoch=0;
+    self.pendingSurfaceOfferedAt=0;
     if(completion)completion(NO);
 }
 - (void)drainPendingSurface {
@@ -741,14 +754,16 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
     if(self.frameInFlight || !self.pendingSurfaceCompletion)return;
     id<MTLTexture> texture=self.pendingSurfaceTexture;
     NSUInteger width=self.pendingSurfaceWidth,height=self.pendingSurfaceHeight,epoch=self.pendingSurfaceEpoch;
+    CFTimeInterval offered=self.pendingSurfaceOfferedAt;
     void (^completion)(BOOL)=self.pendingSurfaceCompletion;
     self.pendingSurfaceCompletion=nil;self.pendingSurfaceTexture=nil;
     self.pendingSurfaceWidth=self.pendingSurfaceHeight=self.pendingSurfaceEpoch=0;
+    self.pendingSurfaceOfferedAt=0;
     if(epoch!=self.displayEpoch){completion(NO);return;}
-    [self presentWidth:width height:height stride:0 sourceTexture:texture completion:completion];
+    [self presentWidth:width height:height stride:0 sourceTexture:texture offered:offered completion:completion];
 }
 - (void)presentWidth:(NSUInteger)width height:(NSUInteger)height stride:(NSUInteger)stride
-    sourceTexture:(id<MTLTexture>)sourceTexture completion:(void (^)(BOOL))completion {
+    sourceTexture:(id<MTLTexture>)sourceTexture offered:(CFTimeInterval)offered completion:(void (^)(BOOL))completion {
     NSAssert(NSThread.isMainThread, @"Presentation is main-thread owned");
     if (self.displaySleeping || width < 320 || height < 200 ||
         width > 8192 || height > 8192 || (!sourceTexture && (!self.frameBuffer || stride < width * 4 || stride % 256 ||
@@ -762,6 +777,7 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
         void (^superseded)(BOOL)=self.pendingSurfaceCompletion;
         self.pendingSurfaceTexture=sourceTexture;self.pendingSurfaceWidth=width;self.pendingSurfaceHeight=height;
         self.pendingSurfaceEpoch=self.displayEpoch;self.pendingSurfaceCompletion=completion;
+        self.pendingSurfaceOfferedAt=offered;
         if(superseded)superseded(NO);
         return;
     }
@@ -782,7 +798,7 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
             dispatch_async(dispatch_get_main_queue(),^{
                 if(measure){self.nextDrawableSeconds+=elapsed;self.nextDrawableMaxSeconds=MAX(self.nextDrawableMaxSeconds,elapsed);}
                 [self encodeWidth:width height:height stride:stride sourceTexture:sourceTexture drawable:drawable
-                    acquisitionEpoch:epoch submitted:submitted completion:completion];
+                    acquisitionEpoch:epoch submitted:submitted offered:offered completion:completion];
             });
             }
         });
@@ -793,12 +809,13 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
             self.nextDrawableMaxSeconds=MAX(self.nextDrawableMaxSeconds,elapsed);
         }
         [self encodeWidth:width height:height stride:stride sourceTexture:sourceTexture drawable:drawable
-            acquisitionEpoch:epoch submitted:submitted completion:completion];
+            acquisitionEpoch:epoch submitted:submitted offered:offered completion:completion];
     }
 }
 - (void)encodeWidth:(NSUInteger)width height:(NSUInteger)height stride:(NSUInteger)stride
     sourceTexture:(id<MTLTexture>)sourceTexture drawable:(id<CAMetalDrawable>)drawable
-    acquisitionEpoch:(NSUInteger)acquisitionEpoch submitted:(CFTimeInterval)submitted completion:(void (^)(BOOL))completion {
+    acquisitionEpoch:(NSUInteger)acquisitionEpoch submitted:(CFTimeInterval)submitted offered:(CFTimeInterval)offered
+    completion:(void (^)(BOOL))completion {
     NSAssert(NSThread.isMainThread,@"Frame selection and encoding are main-thread owned");
     if(!drawable || acquisitionEpoch!=self.displayEpoch || self.displaySleeping ||
        !self.window.visible || self.window.miniaturized ||
@@ -815,6 +832,7 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
         sourceTexture=self.pendingSurfaceTexture;completion=self.pendingSurfaceCompletion;
         self.pendingSurfaceTexture=nil;self.pendingSurfaceCompletion=nil;
         self.pendingSurfaceWidth=self.pendingSurfaceHeight=self.pendingSurfaceEpoch=0;
+        offered=self.pendingSurfaceOfferedAt;self.pendingSurfaceOfferedAt=0;
         self.coalescedBeforeEncoding++;
         if(self.measurePresentation)submitted=CACurrentMediaTime();
         superseded(NO);
@@ -847,7 +865,7 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
         if(compute){
             fingerprint=[VIMPresentedFingerprint new];fingerprint.epoch=epoch;fingerprint.width=width;fingerprint.height=height;
             fingerprint.generation=self.fingerprintGeneration;
-            fingerprint.submittedAt=CACurrentMediaTime();
+            fingerprint.offeredAt=offered;fingerprint.directSurface=sourceTexture!=nil;
             fingerprintOutput=self.fingerprintBuffer;
             [compute setComputePipelineState:self.fingerprintPipeline];[compute setTexture:presentedTexture atIndex:0];
             [compute setBuffer:fingerprintOutput offset:0 atIndex:0];
@@ -895,7 +913,7 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
         // Diagnostic only: no GPU query/readback, timer, log or ownership change.
         CFTimeInterval gpuStart=self.measurePresentation?finished.GPUStartTime:0;
         CFTimeInterval gpuEnd=self.measurePresentation?finished.GPUEndTime:0;
-        CFTimeInterval cpuCompleted=self.measurePresentation?CACurrentMediaTime():0;
+        CFTimeInterval cpuCompleted=(self.measurePresentation||fingerprint)?CACurrentMediaTime():0;
         uint64_t hash=UINT64_C(1469598103934665603)^width^((uint64_t)height<<32);
         uint64_t regionHash=hash;
         uint32_t marker=UINT32_MAX;
@@ -928,6 +946,7 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
                 }else self->_presentationTiming.gpuUnavailable++;
             }
             if(fingerprint){fingerprint.fingerprint=hash;fingerprint.regionFingerprint=regionHash;fingerprint.marker=marker;fingerprint.valid=finished.status==MTLCommandBufferStatusCompleted;
+                fingerprint.completionObservedAt=cpuCompleted;
                 fingerprint.gpuReady=YES;[self resolveFingerprint:fingerprint];}
             self.frameInFlight = NO;
             BOOL current=finished.status==MTLCommandBufferStatusCompleted&&epoch==self.displayEpoch&&!self.displaySleeping;
@@ -965,6 +984,7 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
             completion(current);
         });
     }];
+    if(fingerprint)fingerprint.submittedAt=CACurrentMediaTime();
     [command commit];
 }
 @end

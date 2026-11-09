@@ -84,6 +84,15 @@ struct vmsvga_state_s {
 #endif
 
     int invalidated;
+    /* Event scanout after a mode change: VRAM still holds the previous
+     * mode's layout until the guest repaints. Show the previous image,
+     * apply new-mode UPDATEs, and copy VRAM in full only at the deadline. */
+    bool mode_switch_pending;
+    int64_t mode_switch_deadline;
+    int mode_switch_old_pitch;
+    int scanout_pitch; /* VRAM pitch of the mode currently on the surface */
+    int mode_switch_old_width;
+    int mode_switch_old_height;
     int enable;
     int config;
     struct {
@@ -427,6 +436,38 @@ static inline bool vmsvga_verify_rect(DisplaySurface *surface,
     return true;
 }
 
+/*
+ * After a mode change the surface is seeded with the previous image, which
+ * was read from VRAM at the old pitch. While sampled VRAM rows still equal
+ * that image at the old pitch, the guest has not repainted in the new
+ * layout, and any copy (even of a guest-reported rectangle) would shear.
+ * Row 0 is skipped: it has the same address in both layouts.
+ */
+static bool vmsvga_vram_holds_old_mode(struct vmsvga_state_s *s,
+                                       DisplaySurface *surface)
+{
+    int bytes = MIN(s->mode_switch_old_width, surface_width(surface)) * 4;
+    int rows = MIN(s->mode_switch_old_height, surface_height(surface));
+
+    if (!s->mode_switch_old_pitch || bytes <= 0 || rows <= 64) {
+        return false;
+    }
+    for (int k = 0; k < 8; k++) {
+        int y = 32 + (rows - 33) * k / 7;
+        uint64_t offset = (uint64_t)y * s->mode_switch_old_pitch;
+
+        if (offset + bytes > s->vga.vram_size) {
+            continue;
+        }
+        if (memcmp(s->vga.vram_ptr + offset,
+                   surface_data(surface) + y * surface_stride(surface),
+                   bytes)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static inline void vmsvga_update_rect(struct vmsvga_state_s *s,
                                       int x, int y, int w, int h)
 {
@@ -439,6 +480,10 @@ static inline void vmsvga_update_rect(struct vmsvga_state_s *s,
     uint8_t *dst;
 
     if (!vmsvga_verify_rect(surface, __func__, x, y, w, h)) {
+        if (s->mode_switch_pending) {
+            /* A full-screen VRAM copy now would publish old-mode rows. */
+            return;
+        }
         /* go for a fullscreen update as fallback */
         x = 0;
         y = 0;
@@ -453,8 +498,15 @@ static inline void vmsvga_update_rect(struct vmsvga_state_s *s,
     src = s->vga.vram_ptr + surface_bytes_per_pixel(surface) * x + src_bypl * y;
     dst = surface_data(surface) + start;
 
+    if (s->mode_switch_pending && vmsvga_vram_holds_old_mode(s, surface)) {
+        return;
+    }
     for (line = h; line > 0; line--, src += src_bypl, dst += bypl) {
         memcpy(dst, src, width);
+    }
+    if (x == 0 && y == 0 && w == surface_width(surface) &&
+        h == surface_height(surface)) {
+        s->mode_switch_pending = false;
     }
     qemu_console_update(s->vga.con, x, y, w, h);
 }
@@ -1404,13 +1456,39 @@ static inline bool vmsvga_check_size(struct vmsvga_state_s *s)
              * pixels, not an alias of VRAM that the next guest frame can
              * overwrite before the asynchronous app listener copies it.
              * GPU-primary scanout still bypasses this software fallback. */
+            DisplaySurface *previous = qemu_console_surface(s->vga.con);
+            s->mode_switch_old_pitch = 0;
+            if (previous && !surface_is_placeholder(previous) &&
+                surface_bits_per_pixel(previous) == 32) {
+                /* With an unchanged pitch, old rows cannot shear. */
+                s->mode_switch_old_pitch =
+                    s->scanout_pitch != stride ? s->scanout_pitch : 0;
+                s->mode_switch_old_width = surface_width(previous);
+                s->mode_switch_old_height = surface_height(previous);
+            }
             surface = qemu_create_displaysurface(s->new_width, s->new_height);
+            /* Seed with the image already on screen, not old-layout VRAM. */
+            if (previous && !surface_is_placeholder(previous) &&
+                surface_bits_per_pixel(previous) == 32) {
+                int w = MIN(surface_width(previous), s->new_width);
+                int h = MIN(surface_height(previous), s->new_height);
+                for (int line = 0; line < h; line++) {
+                    memcpy(surface_data(surface) + line * surface_stride(surface),
+                           surface_data(previous) + line * surface_stride(previous),
+                           w * 4);
+                }
+            }
+            s->mode_switch_pending = true;
+            /* Snow Leopard repaints about 1.0-1.2 s after a mode change. */
+            s->mode_switch_deadline =
+                qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + 3000;
         } else {
             surface = qemu_create_displaysurface_from(s->new_width, s->new_height,
                                                      format, stride,
                                                      s->vga.vram_ptr);
         }
         qemu_console_set_surface(s->vga.con, surface);
+        s->scanout_pitch = stride;
         s->invalidated = 1;
     }
     return true;
@@ -1439,10 +1517,24 @@ static bool vmsvga_update_display(void *opaque)
              * owned scanout; update_rect_flush intentionally drops old-mode
              * rectangles while invalidated. */
             DisplaySurface *surface = qemu_console_surface(s->vga.con);
-            vmsvga_update_rect(s, 0, 0, surface_width(surface), surface_height(surface));
+            if (s->mode_switch_pending) {
+                qemu_console_update(s->vga.con, 0, 0, surface_width(surface),
+                                    surface_height(surface));
+            } else {
+                vmsvga_update_rect(s, 0, 0, surface_width(surface),
+                                   surface_height(surface));
+            }
         } else {
             qemu_console_update_full(s->vga.con);
         }
+    } else if (s->mode_switch_pending &&
+               qemu_clock_get_ms(QEMU_CLOCK_REALTIME) >= s->mode_switch_deadline) {
+        /* The guest has had time to repaint in the new layout. Also covers
+         * guests which draw VRAM without ever sending UPDATE. */
+        DisplaySurface *surface = qemu_console_surface(s->vga.con);
+        s->mode_switch_pending = false;
+        s->mode_switch_old_pitch = 0;
+        vmsvga_update_rect(s, 0, 0, surface_width(surface), surface_height(surface));
     }
 
     return true;
@@ -1454,6 +1546,8 @@ static void vmsvga_reset(DeviceState *dev)
     struct vmsvga_state_s *s = &pci->chip;
 
     vmsvga_passthrough_opengl_reset(s);
+    s->mode_switch_pending = false;
+    s->scanout_pitch = 0;
 
     s->legacy_panel_generation = s->legacy_panel_ack = 0;
     s->legacy_panel_request_width = s->legacy_panel_request_height = 0;
@@ -1501,6 +1595,8 @@ static int vmsvga_post_load(void *opaque, int version_id)
     struct vmsvga_state_s *s = opaque;
 
     s->invalidated = 1;
+    s->mode_switch_pending = false;
+    s->scanout_pitch = 0;
     if (s->config) {
         s->fifo = (uint32_t *) s->fifo_ptr;
     }

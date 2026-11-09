@@ -5,15 +5,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/mman.h>
-#include <time.h>
 #include <unistd.h>
-
-static double seconds(void)
-{
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    return t.tv_sec + t.tv_nsec * 1e-9;
-}
+#include "tcg-probe-clock.h"
 
 static __attribute__((noinline)) uintptr_t chase(uintptr_t p, unsigned n)
 {
@@ -37,6 +30,10 @@ int main(int argc, char **argv)
         fprintf(stderr, "count must be a multiple of 32 in 32..100000000\n");
         return 64;
     }
+    if (tcg_probe_clock_init()) {
+        fputs("Monotonic clock unavailable\n", stderr);
+        return 1;
+    }
     const size_t strides[] = {64, 4096, 1048576};
     const char *names[] = {"one-guest-page", "32-adjacent-pages",
                            "32-conflicting-pages"};
@@ -54,9 +51,9 @@ int main(int argc, char **argv)
         }
         if (chase((uintptr_t)base, 3200) != (uintptr_t)base) { return 2; }
         for (unsigned trial = 0; trial < 3; ++trial) {
-            double start = seconds();
+            uint64_t start = tcg_probe_ticks();
             uintptr_t end = chase((uintptr_t)base, n);
-            double elapsed = seconds() - start;
+            double elapsed = tcg_probe_seconds(start, tcg_probe_ticks());
             printf("%s trial=%u sec=%.6f ns/load=%.2f correct=%d\n",
                    names[c], trial, elapsed, elapsed * 1e9 / n,
                    end == (uintptr_t)base);

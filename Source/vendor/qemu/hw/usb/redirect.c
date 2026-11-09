@@ -120,6 +120,12 @@ struct USBRedirDevice {
     CharFrontend cs;
     bool enable_streams;
     bool bulk_only;
+    /* The host OS may already have configured the device (and restores that
+     * configuration across resets). A newly attached or reset device must
+     * look unconfigured to the guest until the guest configures it itself;
+     * otherwise drivers that skip SET_CONFIGURATION when the current value
+     * already matches never get interface nubs (e.g. usbmuxd and iPhone). */
+    bool guest_configured;
     bool suppress_remote_wake;
     bool in_write;
     uint8_t debug;
@@ -530,6 +536,7 @@ static void usbredir_handle_reset(USBDevice *udev)
         dev->endpoint[i].high_speed_tail_len = 0;
     }
     DPRINTF("reset device\n");
+    dev->guest_configured = false;
     usbredirparser_send_reset(dev->parser);
     usbredirparser_do_write(dev->parser);
 }
@@ -1108,6 +1115,13 @@ static void usbredir_set_config(USBRedirDevice *dev, USBPacket *p,
 static void usbredir_get_config(USBRedirDevice *dev, USBPacket *p)
 {
     DPRINTF("get config id %"PRIu64"\n", p->id);
+
+    if (!dev->guest_configured) {
+        dev->dev.data_buf[0] = 0;
+        p->actual_length = 1;
+        p->status = USB_RET_SUCCESS;
+        return;
+    }
 
     usbredirparser_send_get_configuration(dev->parser, p->id);
     usbredirparser_do_write(dev->parser);
@@ -1772,6 +1786,7 @@ static void usbredir_device_connect(void *priv,
 
     dev->dev.speedmask = (1 << dev->dev.speed) | dev->compatible_speedmask;
     dev->device_info = *device_connect;
+    dev->guest_configured = false;
     if (dev->bulk_only && dev->device_info.speed == usb_redir_speed_super &&
         !(dev->dev.port->speedmask & USB_SPEED_MASK_SUPER)) {
         usbredir_setup_usb_eps(dev);
@@ -1966,6 +1981,10 @@ static void usbredir_configuration_status(void *priv, uint64_t id,
     DPRINTF("set config status %d config %d id %"PRIu64"\n",
             config_status->status, config_status->configuration, id);
 
+    if (config_status->status == usb_redir_success &&
+        !(dev->dev.setup_buf[0] & USB_DIR_IN)) {
+        dev->guest_configured = true;
+    }
     p = usbredir_find_packet_by_id(dev, 0, id);
     if (p) {
         if (dev->dev.setup_buf[0] & USB_DIR_IN) {

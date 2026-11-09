@@ -43,7 +43,7 @@ static GLenum DGSurfaceCopyRegionsMode(struct DGHostContext *c,struct DGSurfaceL
         good=good && f && glCheckFramebufferStatusEXT(GL_READ_FRAMEBUFFER_EXT)==GL_FRAMEBUFFER_COMPLETE_EXT;
         glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT,p->framebuffer);
         glGetIntegerv(GL_DRAW_BUFFER,&destination_draw);glDrawBuffer(GL_COLOR_ATTACHMENT0_EXT);
-        glDisable(GL_SCISSOR_TEST);glDisable(GL_FRAMEBUFFER_SRGB_EXT);
+        DGSetBlitScissor(c,GL_FALSE);glDisable(GL_FRAMEBUFFER_SRGB_EXT);
         error=glGetError();if(!good && !error)error=GL_INVALID_OPERATION;
         int wrote=0;
         for(unsigned i=0;i<count && !error;++i) {
@@ -56,7 +56,7 @@ static GLenum DGSurfaceCopyRegionsMode(struct DGHostContext *c,struct DGSurfaceL
         glDrawBuffer(destination_draw);
         glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT,read);glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT,draw);
         glBindTexture(GL_TEXTURE_RECTANGLE_ARB,texture);
-        if(scissor)glEnable(GL_SCISSOR_TEST);if(srgb)glEnable(GL_FRAMEBUFFER_SRGB_EXT);
+        if(scissor)DGSetBlitScissor(c,GL_TRUE);if(srgb)glEnable(GL_FRAMEBUFFER_SRGB_EXT);
         if(f)glDeleteFramebuffersEXT(1,&f);
         GLenum cleanup=glGetError();if(!error)error=cleanup;
         /* The compound path's seal submits this SAME producer prefix, with

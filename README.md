@@ -4,7 +4,7 @@
 
 For the first time ever, run every Intel version of macOS between Mac OS X Tiger 10.4 and macOS Big Sur 11 on Apple silicon with graphics acceleration, so you can run older 32-bit and 64-bit Intel apps like iWork ’09, iLife ’11, Aperture, Final Cut Pro 7, and Front Row, or PowerPC apps like AppleWorks, and re-experience iconic Aqua desktop effects like the translucent menu bar, reflective blurred Dock, and water ripple animation in Dashboard. This marks an exciting new chapter in the preservation of the history of Mac.
 <p align="center">
-  <a href="https://github.com/nfzerox/VirtualIntelMacOnAppleSilicon/releases/download/2.0/VirtualIntelMac.2.0.zip"><img width="250" src="Source/screenshots/assets/download.svg" alt="Download Virtual Intel Mac"></a>
+  <a href="https://github.com/nfzerox/VirtualIntelMacOnAppleSilicon/releases/download/2.1/VirtualIntelMac.2.1.zip"><img width="250" src="Source/screenshots/assets/download.svg" alt="Download Virtual Intel Mac"></a>
 </p>
 
 Virtual Intel Mac seamlessly integrates many technical breakthroughs into an intuitive Mac app. It supports Metal and OpenGL acceleration, 32-bit and 64-bit Intel apps, PowerPC apps, Retina resolution, live resizing, automatic setup, USB and audio passthrough, shared and bridged networking, file sharing, remote login, clipboard sync, and more.

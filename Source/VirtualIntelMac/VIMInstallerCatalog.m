@@ -1,5 +1,13 @@
 #import "VIMInstallerCatalog.h"
 #import "VIMInstallerSource.h"
+/* Catalog-supplied service URLs: HTTPS on the expected host, no credentials,
+ * port, query or fragment. The host remains an allowlist; the location is data. */
+static NSURL *CatalogServiceURL(id value,NSString *host) {
+    if(![value isKindOfClass:NSString.class]||[value length]>2048)return nil;
+    NSURL *URL=[NSURL URLWithString:value];
+    return [URL.scheme isEqual:@"https"]&&[URL.host isEqual:host]&&!URL.user&&!URL.password&&
+        !URL.port&&!URL.query&&!URL.fragment?URL:nil;
+}
 static NSError *CatalogError(NSString *text) {
     return [NSError errorWithDomain:@"VirtualIntelMac.Installers" code:1 userInfo:@{NSLocalizedDescriptionKey:text}];
 }
@@ -42,6 +50,14 @@ static NSError *CatalogError(NSString *text) {
             ![@[@"split-legacy",@"assistant-pkg",@"installer-dmg",@"recovery-esd",@"restore-dvd"] containsObject:assembly?:@""] || ![entry[@"Files"] isKindOfClass:NSArray.class]) { valid=NO;break; }
         NSString *expectedRecipe=@{@"tiger":@"restore-dvd",@"leopard":@"restore-dvd",@"snowleopard":@"restore-dvd",@"lion":@"installer-dmg",@"mountainlion":@"installer-dmg",@"mavericks":@"recovery-esd",@"yosemite":@"installer-dmg",@"elcapitan":@"installer-dmg",@"sierra":@"installer-dmg",@"mojave":@"split-legacy",@"catalina":@"split-legacy",@"bigsur":@"assistant-pkg",@"highsierra":@"split-legacy"}[guest];
         if(![assembly isEqual:expectedRecipe]){valid=NO;break;}
+        // Optional page for "this disc isn't supported"; an approved image URL.
+        if(entry[@"ReleaseURL"]&&(![entry[@"ReleaseURL"] isKindOfClass:NSString.class]||
+            ![VIMInstallerSource isApprovedURL:[NSURL URLWithString:entry[@"ReleaseURL"]]])){valid=NO;break;}
+        // Apple's recovery authorization endpoints for the Mavericks ESD.
+        // Optional for older catalogs; the download requires them.
+        if(entry[@"Recovery"]&&(![entry[@"Recovery"] isKindOfClass:NSDictionary.class]||
+            !CatalogServiceURL(entry[@"Recovery"][@"SessionURL"],@"osrecovery.apple.com")||
+            !CatalogServiceURL(entry[@"Recovery"][@"PayloadURL"],@"osrecovery.apple.com"))){valid=NO;break;}
         NSMutableSet *roles=[NSMutableSet set];
         for(id file in entry[@"Files"]) {
             if(![file isKindOfClass:NSDictionary.class] || ![file[@"URL"] isKindOfClass:NSString.class]) { valid=NO;break; }
@@ -64,7 +80,11 @@ static NSError *CatalogError(NSString *text) {
         [supported addObject:entry];
     }
     if(!valid || supported.count!=13) { if(error)*error=CatalogError(@"The installer catalog is invalid or incompatible.");return nil; }
-    VIMInstallerCatalog *catalog=[self new];catalog->_revision=[object[@"Revision"] unsignedIntegerValue];
+    NSURL *update=nil;
+    if(object[@"UpdateURL"]&&!(update=CatalogServiceURL(object[@"UpdateURL"],@"raw.githubusercontent.com"))) {
+        if(error)*error=CatalogError(@"The installer catalog is invalid or incompatible.");return nil;
+    }
+    VIMInstallerCatalog *catalog=[self new];catalog->_revision=[object[@"Revision"] unsignedIntegerValue];catalog->_updateURL=update;
     catalog->_supportedInstallers=[supported copy];return catalog;
 }
 + (instancetype)currentCatalogWithError:(NSError **)error {
@@ -83,6 +103,17 @@ static NSError *CatalogError(NSString *text) {
             for(NSDictionary *file in installer[@"Files"])if([file[@"Role"] isEqual:role])return file;
     return nil;
 }
++ (NSDictionary *)installerForGuest:(NSString *)guest {
+    for(NSDictionary *installer in [self currentCatalogWithError:NULL].supportedInstallers)
+        if([installer[@"Guest"] isEqual:guest])return installer;
+    return nil;
+}
++ (NSDictionary *)installerForURL:(NSURL *)URL {
+    for(NSDictionary *installer in [self currentCatalogWithError:NULL].supportedInstallers)
+        for(NSDictionary *file in installer[@"Files"])
+            if([file[@"URL"] isEqual:URL.absoluteString])return installer;
+    return nil;
+}
 + (NSDictionary *)fileForURL:(NSURL *)URL {
     for(NSDictionary *installer in [self currentCatalogWithError:NULL].supportedInstallers)
         for(NSDictionary *file in installer[@"Files"])
@@ -90,7 +121,13 @@ static NSError *CatalogError(NSString *text) {
     return nil;
 }
 + (void)refreshWithCompletion:(void (^)(VIMInstallerCatalog *,NSError *))completion {
-    NSURL *url=[NSURL URLWithString:@"https://raw.githubusercontent.com/nfzerox/VirtualIntelMacOnAppleSilicon/refs/heads/main/Source/VirtualIntelMac/InstallerCatalog.plist"];
+    NSURL *url=[self currentCatalogWithError:NULL].updateURL;
+    if(!url) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            completion([self currentCatalogWithError:NULL],CatalogError(@"The installer catalog has no update location. The bundled catalog is still available."));
+        });
+        return;
+    }
     NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:20];
     [request setValue:@"VirtualIntelMac/1" forHTTPHeaderField:@"User-Agent"];
     [[NSURLSession.sharedSession dataTaskWithRequest:request completionHandler:^(NSData *data,NSURLResponse *response,NSError *error){

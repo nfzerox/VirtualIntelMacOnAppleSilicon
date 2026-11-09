@@ -1,5 +1,21 @@
 #import <Foundation/Foundation.h>
 
+// Apple's standalone packages can replace SystemVersion.plist and the boot
+// cache in place, with no installer boot target. That pre-reboot report can
+// select software video, but cannot authorize replacing any guest files.
+static inline BOOL VIMPendingInPlaceUpdate(NSDictionary *observation,NSString *guest,NSDictionary *baseline) {
+    if(!baseline||![observation[@"PrivilegedAgentVerified"] isEqual:@YES]||
+       ![observation[@"Report"] isKindOfClass:NSDictionary.class])return NO;
+    NSDictionary *report=observation[@"Report"];
+    NSString *build=report[@"ProductBuildVersion"],*session=report[@"BootSessionUUID"];
+    return [report[@"Guest"] isEqual:guest]&&[report[@"InstalledSystemCandidate"] isEqual:@YES]&&
+        [report[@"LiveRoot"] isEqual:@YES]&&[report[@"KernelMatchesSystem"] isEqual:@NO]&&
+        [report[@"VolumeUUID"] isEqual:baseline[@"VolumeUUID"]]&&
+        [report[@"KernelBuild"] isEqual:baseline[@"PreviousBuild"]]&&
+        [build isKindOfClass:NSString.class]&&build.length&&![build isEqual:baseline[@"PreviousBuild"]]&&
+        [session isKindOfClass:NSString.class]&&[[NSUUID alloc] initWithUUIDString:session]!=nil;
+}
+
 // Pure evidence checks shared by update authorization and journal retirement.
 // An old *verified* transaction is not an uncertain new write merely because
 // a macOS update removed its legacy /var/tmp verifier. Never replay that write.

@@ -74,12 +74,14 @@ if not a.pkg_config:
     else:
         # Older dependency caches configured pkgconf in its extracted source
         # directory. Reconfigure that derived copy in place instead of failing
-        # an out-of-tree build; the vendored archive remains untouched.
+        # an out-of-tree build; the vendored archive remains untouched. Clean
+        # after configuring: make otherwise keeps binaries linked against the
+        # old prefix's libpkgconf, which no longer exists.
         build = a.sources/'pkgconf' if (a.sources/'pkgconf/config.status').is_file() else a.output/'pkgconf-host'
         prefix = a.output/'Tools'
         build.mkdir(exist_ok=True)
         with (a.output/'pkgconf.log').open('w') as log:
-            for command in ([str(a.sources/'pkgconf/configure'), '--prefix='+str(prefix)],
+            for command in ([str(a.sources/'pkgconf/configure'), '--prefix='+str(prefix)], ['make', 'clean'],
                             ['make', '-j', str(a.jobs)], ['make', 'install']):
                 subprocess.run(command, cwd=build, stdout=log, stderr=subprocess.STDOUT, check=True)
         a.pkg_config = prefix/'bin/pkgconf'

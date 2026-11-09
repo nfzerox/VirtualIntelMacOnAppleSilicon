@@ -1,0 +1,17 @@
+diff --git a/external/openglcts/modules/gl/gl4cGPUShaderFP64Tests.cpp b/external/openglcts/modules/gl/gl4cGPUShaderFP64Tests.cpp
+--- a/external/openglcts/modules/gl/gl4cGPUShaderFP64Tests.cpp
++++ b/external/openglcts/modules/gl/gl4cGPUShaderFP64Tests.cpp
+@@ -3287,8 +3287,11 @@ void GPUShaderFP64Test2::deinit()
+ 	if (0 != m_texture_id)
+ 	{
+ 		gl.bindTexture(GL_TEXTURE_2D, 0);
+-		gl.bindImageTexture(0 /* unit */, 0 /* texture */, 0 /* level */, GL_FALSE /* layered */, 0 /* layer */,
+-							GL_READ_ONLY, GL_RGBA8);
++		/* Image units are used only by the optional compute branch. This GL
++		 * 4.0 test must not call a missing GL 4.2 function during cleanup. */
++		if (0 != m_pDispatchCompute)
++			gl.bindImageTexture(0 /* unit */, 0 /* texture */, 0 /* level */, GL_FALSE /* layered */, 0 /* layer */,
++								GL_READ_ONLY, GL_RGBA8);
+ 		gl.deleteTextures(1, &m_texture_id);
+ 		m_texture_id = 0;
+ 	}

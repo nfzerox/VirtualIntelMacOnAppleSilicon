@@ -1,0 +1,44 @@
+diff --git a/external/openglcts/modules/gl/gl3cTextureSwizzleTests.cpp b/external/openglcts/modules/gl/gl3cTextureSwizzleTests.cpp
+--- a/external/openglcts/modules/gl/gl3cTextureSwizzleTests.cpp
++++ b/external/openglcts/modules/gl/gl3cTextureSwizzleTests.cpp
+@@ -2484,6 +2484,11 @@ tcu::TestNode::IterateResult SmokeTest::iterate()
+ 
+ 	/*  */
+ 	testInit();
++	const glw::Functions& gl = m_context.getRenderContext().getFunctions();
++	m_context.getTestContext().getLog() << tcu::TestLog::Message
++		<< "GL vendor: " << (const char*)gl.getString(GL_VENDOR)
++		<< "; renderer: " << (const char*)gl.getString(GL_RENDERER)
++		<< "; version: " << (const char*)gl.getString(GL_VERSION) << tcu::TestLog::EndMessage;
+ 
+ 	if (false == isTargetSupported(tgt_idx))
+ 	{
+@@ -2497,6 +2502,9 @@ tcu::TestNode::IterateResult SmokeTest::iterate()
+ 		TCU_FAIL("Failed to prepare source texture");
+ 	}
+ 
++	/* Each completed combination makes forward progress. A full exhaustive
++	 * iteration can legitimately exceed the watchdog's 30-second interval. */
++	size_t completed_cases = 0;
+ 	/* Iterate over all cases */
+ 	for (size_t access_idx = 0; access_idx < n_texture_access; ++access_idx)
+ 	{
+@@ -2528,6 +2536,8 @@ tcu::TestNode::IterateResult SmokeTest::iterate()
+ 														   source_channel_sizes[2], source_channel_sizes[3] } };
+ 
+ 							executeTestCase(test_case);
++							++completed_cases;
++							m_context.getTestContext().touchWatchdog();
+ 
+ 							deinitOutputTexture();
+ 						} /* iteration over channels */
+@@ -2535,6 +2545,9 @@ tcu::TestNode::IterateResult SmokeTest::iterate()
+ 				}
+ 			}
+ 		}
++		m_context.getTestContext().getLog() << tcu::TestLog::Message
++			<< "Completed swizzle combinations: " << completed_cases
++			<< "; access index: " << access_idx << tcu::TestLog::EndMessage;
+ 	} /* iteration over access routines */
+ 
+ 	/* Set result - exceptions are thrown in case of any error */

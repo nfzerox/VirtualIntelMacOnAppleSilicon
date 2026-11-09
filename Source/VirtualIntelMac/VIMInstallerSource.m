@@ -89,7 +89,10 @@ static NSData *RecoveryRequest(NSURLSession *session,NSMutableURLRequest *reques
     config.HTTPShouldSetCookies=NO;config.URLCache=nil;
     NSURLSession *session=[NSURLSession sessionWithConfiguration:config];
     NSHTTPURLResponse *response=nil;
-    NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://osrecovery.apple.com/"]];
+    NSDictionary *recovery=[VIMInstallerCatalog installerForURL:URL][@"Recovery"];
+    NSURL *sessionURL=[NSURL URLWithString:recovery[@"SessionURL"]?:@""],*payloadURL=[NSURL URLWithString:recovery[@"PayloadURL"]?:@""];
+    if(!sessionURL||!payloadURL){[session invalidateAndCancel];SourceFailure(error,@"The installer catalog has no recovery service for this download.");return nil;}
+    NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:sessionURL];
     if(!RecoveryRequest(session,request,&response,error)){[session invalidateAndCancel];return nil;}
     NSString *server=nil;
     for(NSHTTPCookie *cookie in [NSHTTPCookie cookiesWithResponseHeaderFields:response.allHeaderFields forURL:request.URL])
@@ -105,7 +108,7 @@ static NSData *RecoveryRequest(NSURLSession *session,NSMutableURLRequest *reques
     NSMutableData *key=[client mutableCopy];[key appendData:challenge];[key appendData:Unhex(@"003EE1E6AC14")];
     [key appendData:SHA([[serial stringByAppendingString:board] dataUsingEncoding:NSUTF8StringEncoding])];
     const unsigned char suffix[10]={0xcc,0xcc,0xcc,0xcc,0xcc,0xcc,0xcc,0xcc,0xcc,0xcc};[key appendBytes:suffix length:sizeof(suffix)];
-    request=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://osrecovery.apple.com/InstallationPayload/OSInstaller"]];
+    request=[NSMutableURLRequest requestWithURL:payloadURL];
     request.HTTPMethod=@"POST";[request setValue:@"text/plain" forHTTPHeaderField:@"Content-Type"];
     [request setValue:[@"session=" stringByAppendingString:server] forHTTPHeaderField:@"Cookie"];
     request.HTTPBody=[[NSString stringWithFormat:@"cid=%@\nsn=%@\nbid=%@\nk=%@",Hex(client),serial,board,Hex(SHA(key))] dataUsingEncoding:NSUTF8StringEncoding];

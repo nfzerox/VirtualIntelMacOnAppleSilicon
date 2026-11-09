@@ -16,8 +16,10 @@ def journal():
                   DuplicateFrames=20, Trace=[], Error='')
     after = dict(before, PresentedFingerprintFrames=103, DistinctFrames=82,
                  DuplicateFrames=21, Trace=[[1, 10, True], [2, 11, True], [3, 11, False]])
-    return {'MeasurementBefore': {'Frame': {'DistinctPresentationTiming': before}},
-            'MeasurementAfter': {'Frame': {'DistinctPresentationTiming': after},
+    frame = dict(PixelWidth=2560, PixelHeight=1600, ViewWidth=1280, ViewHeight=800,
+                 BackingScale=2, WindowOcclusionVisible=1)
+    return {'MeasurementBefore': {'Frame': dict(frame, DistinctPresentationTiming=before)},
+            'MeasurementAfter': {'Frame': dict(frame, DistinctPresentationTiming=after),
                                  'MeasurementEnabledAfter': False},
             'Actions': [{'ExitCode': 0}], 'Failure': None, 'MeasurementMayRemainArmed': False}
 
@@ -50,6 +52,17 @@ class EvidenceTests(unittest.TestCase):
         data = journal();data['Actions'][0]['ExitCode'] = 1
         self.assertFalse(evidence.summarize(data)['MeasurementValid'])
         self.assertFalse(evidence.summarize({})['MeasurementValid'])
+
+    def test_rejects_hidden_resized_and_unpresented_trials(self):
+        for key, value in [('WindowOcclusionVisible', 0), ('Sleeping', True), ('PixelWidth', 1280)]:
+            data = journal()
+            data['MeasurementAfter']['Frame'][key] = value
+            self.assertFalse(evidence.summarize(data)['MeasurementValid'])
+        data = journal()
+        first = data['MeasurementBefore']['Frame']['DistinctPresentationTiming']
+        data['MeasurementAfter']['Frame']['DistinctPresentationTiming'] = dict(first, Unpresented=3)
+        self.assertIn('No image was actually presented during the workload.',
+                      evidence.summarize(data)['Issues'])
 
     def test_does_not_mutate_raw_evidence(self):
         data = journal();before = copy.deepcopy(data)

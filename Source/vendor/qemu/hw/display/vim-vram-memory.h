@@ -16,6 +16,12 @@
 #include <unistd.h>
 #include <stdio.h>
 #define VIM_VRAM_MEMORY_LIMIT (16ull*1024*1024*1024)
+/* Main guest RAM is exported whole (with its guest-physical ranges), so it
+ * must not inherit the VRAM bound: guests above 16 GB otherwise fail to boot.
+ * 1 TiB matches the default 40-bit guest physical address width; this is a
+ * sanity bound only, since the export shares existing pages and copies none. */
+#define VIM_SHARED_RAM_MEMORY_LIMIT (1ull<<40)
+#define VIMSharedMemoryLimit(region_count) ((region_count)?VIM_SHARED_RAM_MEMORY_LIMIT:VIM_VRAM_MEMORY_LIMIT)
 #define VIM_VRAM_MEMORY_REQUEST 0x56494d56
 #define VIM_SHARED_RAM_REGIONS 16
 struct VIMSharedRAMRange { uint64_t guest,offset,bytes; };
@@ -101,7 +107,7 @@ static inline struct VIMVRAMMemoryServer *VIMVRAMMemoryServerStartWithRanges(
     const struct VIMSharedRAMRange *ranges,unsigned count)
 {
     if(!service || !*service || strlen(service)>=BOOTSTRAP_MAX_NAME_LEN || consumer<=0 ||
-       !address || !bytes || bytes>VIM_VRAM_MEMORY_LIMIT ||
+       !address || !bytes || bytes>VIMSharedMemoryLimit(count) ||
        ((uintptr_t)address&(vm_page_size-1)) || (bytes&(vm_page_size-1)) ||
        (count && !ranges) || !VIMSharedRAMRangesValid(ranges,count,bytes))return NULL;
     struct VIMVRAMMemoryServer *s=calloc(1,sizeof(*s));if(!s)return NULL;
@@ -166,7 +172,7 @@ static inline kern_return_t VIMVRAMMemoryImport(const char *service,pid_t produc
             int valid=m->header.msgh_size==sizeof(*m) && m->header.msgh_id==VIM_VRAM_MEMORY_REQUEST+1 &&
                 (m->header.msgh_bits&MACH_MSGH_BITS_COMPLEX) && m->body.msgh_descriptor_count==1 &&
                 m->memory.type==MACH_MSG_PORT_DESCRIPTOR && m->memory.disposition==MACH_MSG_TYPE_PORT_SEND &&
-                m->version==2 && !m->reserved && !m->padding && m->bytes && m->bytes<=VIM_VRAM_MEMORY_LIMIT &&
+                m->version==2 && !m->reserved && !m->padding && m->bytes && m->bytes<=VIMSharedMemoryLimit(m->region_count) &&
                 VIMSharedRAMRangesValid(m->regions,m->region_count,m->bytes) &&
                 !(m->bytes&(vm_page_size-1)) && VIMVRAMMemoryPeer(&m->header,geteuid(),producer);
             kr=valid?mach_vm_map(mach_task_self(),&out->address,m->bytes,16383,VM_FLAGS_ANYWHERE,

@@ -1,9 +1,9 @@
-/* GL 2.1 GetUniform returns one scalar/vector/matrix ARRAY ELEMENT, at most
+/* GetUniform returns one scalar/vector/matrix ARRAY ELEMENT, at most
  * 16 components, not the entire array. Discover its type using real native
  * reflection; never infer adjacent uniform locations. Reference:
  * KhronosGroup/OpenGL-Refpages gl2.1/glGetUniform.xml. */
-/* These core-3.2 sampler enums are in the target SDK's gl3.h, not its compatibility
- * gl.h/glext.h. Do not include both incompatible API declaration headers. */
+/* These core sampler and FP64 enums are in the target SDK's gl3.h, not its
+ * compatibility gl.h/glext.h. Do not include both declaration headers. */
 enum {DG_SAMPLER_2D_MS=0x9108,DG_INT_SAMPLER_2D_MS=0x9109,DG_UINT_SAMPLER_2D_MS=0x910a,
     DG_SAMPLER_2D_MS_ARRAY=0x910b,DG_INT_SAMPLER_2D_MS_ARRAY=0x910c,DG_UINT_SAMPLER_2D_MS_ARRAY=0x910d};
 static void DGForgetUniformShapes(struct DGHostContext *c,GLuint program)
@@ -17,7 +17,7 @@ static void DGForgetUniformShapes(struct DGHostContext *c,GLuint program)
 static unsigned DGUniformComponents(GLenum type)
 {
     switch(type){
-    case GL_FLOAT:case GL_INT:case GL_BOOL:case GL_UNSIGNED_INT:
+    case GL_FLOAT:case GL_DOUBLE:case GL_INT:case GL_BOOL:case GL_UNSIGNED_INT:
     case GL_SAMPLER_1D:case GL_SAMPLER_2D:case GL_SAMPLER_3D:case GL_SAMPLER_CUBE:
     case GL_SAMPLER_1D_SHADOW:case GL_SAMPLER_2D_SHADOW:
     case GL_SAMPLER_2D_RECT_ARB:case GL_SAMPLER_2D_RECT_SHADOW_ARB:
@@ -31,14 +31,15 @@ static unsigned DGUniformComponents(GLenum type)
     case GL_SAMPLER_BUFFER_EXT:case GL_INT_SAMPLER_BUFFER_EXT:case GL_UNSIGNED_INT_SAMPLER_BUFFER_EXT:
     case DG_SAMPLER_2D_MS:case DG_INT_SAMPLER_2D_MS:case DG_UINT_SAMPLER_2D_MS:
     case DG_SAMPLER_2D_MS_ARRAY:case DG_INT_SAMPLER_2D_MS_ARRAY:case DG_UINT_SAMPLER_2D_MS_ARRAY:return 1;
-    case GL_FLOAT_VEC2:case GL_INT_VEC2:case GL_BOOL_VEC2:case GL_UNSIGNED_INT_VEC2_EXT:return 2;
-    case GL_FLOAT_VEC3:case GL_INT_VEC3:case GL_BOOL_VEC3:case GL_UNSIGNED_INT_VEC3_EXT:return 3;
-    case GL_FLOAT_VEC4:case GL_INT_VEC4:case GL_BOOL_VEC4:case GL_UNSIGNED_INT_VEC4_EXT:case GL_FLOAT_MAT2:return 4;
-    case GL_FLOAT_MAT2x3:case GL_FLOAT_MAT3x2:return 6;
-    case GL_FLOAT_MAT2x4:case GL_FLOAT_MAT4x2:return 8;
-    case GL_FLOAT_MAT3:return 9;
-    case GL_FLOAT_MAT3x4:case GL_FLOAT_MAT4x3:return 12;
-    case GL_FLOAT_MAT4:return 16;
+    case GL_FLOAT_VEC2:case GL_INT_VEC2:case GL_BOOL_VEC2:case GL_UNSIGNED_INT_VEC2_EXT:case 0x8ffc:return 2;
+    case GL_FLOAT_VEC3:case GL_INT_VEC3:case GL_BOOL_VEC3:case GL_UNSIGNED_INT_VEC3_EXT:case 0x8ffd:return 3;
+    case GL_FLOAT_VEC4:case GL_INT_VEC4:case GL_BOOL_VEC4:case GL_UNSIGNED_INT_VEC4_EXT:
+    case GL_FLOAT_MAT2:case 0x8ffe:case 0x8f46:return 4;
+    case GL_FLOAT_MAT2x3:case GL_FLOAT_MAT3x2:case 0x8f49:case 0x8f4b:return 6;
+    case GL_FLOAT_MAT2x4:case GL_FLOAT_MAT4x2:case 0x8f4a:case 0x8f4d:return 8;
+    case GL_FLOAT_MAT3:case 0x8f47:return 9;
+    case GL_FLOAT_MAT3x4:case GL_FLOAT_MAT4x3:case 0x8f4c:case 0x8f4e:return 12;
+    case GL_FLOAT_MAT4:case 0x8f48:return 16;
     default:return 0;
     }
 }
@@ -76,17 +77,23 @@ finished:
 }
 static int DGUniformQuery(struct DGHostContext *c,struct DGMessage *m,struct DGReply *reply)
 {
-    if(m->flags!=(DG_REPLY|DG_OUTPUT_ONLY)||m->bytes!=16*sizeof(GLfloat)||m->args[0]>UINT32_MAX||m->args[2]>1)return -1;
+    if(m->flags!=(DG_REPLY|DG_OUTPUT_ONLY)||m->args[0]>UINT32_MAX||m->args[2]>DG_UNIFORM_DOUBLE)return -1;
+    size_t element=m->args[2]==DG_UNIFORM_DOUBLE?sizeof(GLdouble):sizeof(GLfloat);
+    if(m->bytes!=16*element)return -1;
     if(m->args[1]!=(uint64_t)(int64_t)(GLint)m->args[1])return -1;
     for(unsigned i=4;i<sizeof(m->args)/sizeof(m->args[0]);++i)if(m->args[i])return -1;
     void *out=DGHostPointer(m,3,m->bytes);if(!out)return -1;
     if(c->inside_begin){reply->error=GL_INVALID_OPERATION;return 0;}
     GLuint program=(GLuint)m->args[0];GLint location=(GLint)m->args[1];
-    union {GLfloat floating[16];GLint integer[16];} value={0};
+    union {GLfloat floating[16];GLint integer[16];GLuint unsigned_integer[16];GLdouble fp64[16];} value={0};
+    if(m->args[2]==DG_UNIFORM_DOUBLE && !dg_core_api.uniform_double){reply->error=GL_INVALID_OPERATION;return 0;}
     GLenum prior=glGetError();if(prior&&!c->error)c->error=prior;
-    if(m->args[2])glGetUniformiv(program,location,value.integer);else glGetUniformfv(program,location,value.floating);
+    if(m->args[2]==DG_UNIFORM_DOUBLE)dg_core_api.uniform_double(program,location,value.fp64);
+    else if(m->args[2]==DG_UNIFORM_UINT)glGetUniformuivEXT(program,location,value.unsigned_integer);
+    else if(m->args[2]==DG_UNIFORM_INT)glGetUniformiv(program,location,value.integer);
+    else glGetUniformfv(program,location,value.floating);
     reply->error=glGetError();if(reply->error)return 0;
     unsigned count=DGUniformComponentCount(c,program,location);GLenum reflected=glGetError();
     if(!count||count>16||reflected){reply->error=reflected?reflected:GL_INVALID_OPERATION;return 0;}
-    memcpy(out,&value,count*sizeof(GLfloat));reply->result=count;return 0;
+    memcpy(out,&value,count*element);reply->result=count;return 0;
 }

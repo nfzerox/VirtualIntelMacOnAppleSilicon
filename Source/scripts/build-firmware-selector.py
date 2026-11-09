@@ -18,6 +18,7 @@ def build(output, tools=None, headers=None):
         if not (root/'MdePkg/Include/Uefi.h').is_file():
             from firmware_source import extract
             root = source/'Build/FirmwareSelector/edk2'
+            root.parent.mkdir(parents=True, exist_ok=True)
             extract(source, root)
         headers = root/'MdePkg/Include'
     headers = Path(headers)

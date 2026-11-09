@@ -4,6 +4,16 @@
 // Included by VIMSession.m so the research harness cannot drift into a second
 // input/display implementation.
 #import <QuartzCore/QuartzCore.h>
+// The production input handler captures the observer when it queues QMP, not
+// when QMP replies. Scope the observer to this one synchronous submission;
+// AppKit mouse moves and focus releases between test events aren't test ACKs.
+static void VIMResearchSendInput(VIMMetalView *view, NSArray *events,
+                                void (^observer)(CFTimeInterval,NSError *)) {
+    NSCAssert(NSThread.isMainThread,@"Diagnostic input is main-thread owned");
+    view.diagnosticInputObserver=observer;
+    view.inputHandler(events);
+    view.diagnosticInputObserver=nil;
+}
 // Shortcuts must not stay held while a file-polling harness waits for its
 // next request. This finite sequence uses the SAME production input owner,
 // 50-ms USB key holds and host-clock metadata. No guest agent/AX/event tap.
@@ -60,7 +70,7 @@ static void VIMResearchKeyWorkload(VIMMetalView *view,NSDictionary *command,
     NSDictionary *before=view.frameDiagnostics;
     CFTimeInterval start=CACurrentMediaTime();
     __block NSString *inputError=nil;
-    view.diagnosticInputObserver=^(CFTimeInterval queued,NSError *error){
+    void (^observer)(CFTimeInterval,NSError *)=^(CFTimeInterval queued,NSError *error){
         [replies addObject:@[@(queued),@(CACurrentMediaTime()),error.localizedDescription?:@""]];
         if(error)inputError=error.localizedDescription;
     };
@@ -74,7 +84,7 @@ static void VIMResearchKeyWorkload(VIMMetalView *view,NSDictionary *command,
             NSString *code=event[@"data"][@"key"][@"data"];
             if([event[@"data"][@"down"] boolValue])[held addObject:code];else [held removeObject:code];
         }
-        view.inputHandler(events);
+        VIMResearchSendInput(view,events,observer);
     };
     void (^complete)(NSString *)=^(NSString *error){
         dispatch_source_cancel(timer);timer=nil;
@@ -87,7 +97,7 @@ static void VIMResearchKeyWorkload(VIMMetalView *view,NSDictionary *command,
         if(!error && replies.count!=inputs.count)error=@"Not every input received an acknowledgement; this trial is invalid.";
         for(NSString *field in @[@"PixelWidth",@"PixelHeight",@"BackingScale"])
             if(!error && ![before[field] isEqual:after[field]])error=@"Display geometry changed during the key sequence; this trial is invalid.";
-        view.diagnosticInputObserver=nil;[view setFingerprintTraceEnabled:NO];
+        [view setFingerprintTraceEnabled:NO];
         if(!wasEnabled)[view setFingerprintMeasurementEnabled:NO];
         NSMutableDictionary *result=[@{@"Workload":workload,@"Cycles":cycles,@"Before":before,@"After":after,
             @"StartedAt":@(start),@"FinishedAt":@(CACurrentMediaTime()),@"Inputs":inputs,@"InputReplies":replies.copy,
@@ -169,7 +179,7 @@ static void VIMResearchPointerWorkload(VIMMetalView *view, NSDictionary *command
     CFTimeInterval start=CACurrentMediaTime(),motionStart=start+1.6,motionEnd=motionStart+seconds;
     NSMutableArray *inputs=[NSMutableArray arrayWithCapacity:(NSUInteger)(seconds*hz)+12];
     NSMutableArray *replies=[NSMutableArray arrayWithCapacity:(NSUInteger)(seconds*hz)+12];
-    view.diagnosticInputObserver=^(CFTimeInterval queued,NSError *error){
+    void (^observer)(CFTimeInterval,NSError *)=^(CFTimeInterval queued,NSError *error){
         [replies addObject:@[@(queued),@(CACurrentMediaTime()),error.localizedDescription?:@""]];
     };
     __block dispatch_source_t timer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_main_queue());
@@ -197,14 +207,13 @@ static void VIMResearchPointerWorkload(VIMMetalView *view, NSDictionary *command
         }
         CFTimeInterval queued=CACurrentMediaTime();
         [inputs addObject:@[@(queued),@(scheduled),@((int)llround(px)),@((int)llround(py)),phase,@(step)]];
-        view.inputHandler(events);
+        VIMResearchSendInput(view,events,observer);
     };
     void (^complete)(NSString *)=^(NSString *error){
         dispatch_source_cancel(timer);timer=nil;
         if(held&&view.inputHandler){send(x,y,@"cancel-release",-1,CACurrentMediaTime(),-1);held=NO;}
         if(modifierHeld&&view.inputHandler)send(x,y,@"command-release",-1,CACurrentMediaTime(),0);
         NSDictionary *after=view.frameDiagnostics;
-        view.diagnosticInputObserver=nil;
         [view setFingerprintTraceEnabled:NO];[view setFingerprintMarkerRect:NSZeroRect];
         if(!wasEnabled)[view setFingerprintMeasurementEnabled:NO];
         NSMutableDictionary *result=[@{@"Pattern":pattern,@"Seconds":@(seconds),@"Hz":@(hz),@"CommandDrag":@(commandDrag),

@@ -27,6 +27,7 @@
 #import "VIMWindowGeometry.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <QuartzCore/QuartzCore.h>
+#import <AVFoundation/AVFoundation.h>
 #include <unistd.h>
 #include <sys/sysctl.h>
 #include <sys/file.h>
@@ -42,6 +43,7 @@
 #import "VIMInstallerCatalog.h"
 #import "VIMImageSlots.h"
 #import "VIMLegacyTabletPolicy.h"
+#import "VIMFirmwareBoot.h"
 
 static NSMutableDictionary<NSString *,VIMSession *> *sessions;
 static NSMutableDictionary<NSString *,NSUUID *> *pendingRosettaStarts;
@@ -220,6 +222,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
 @property BOOL legacyTabletGuest;
 @property BOOL legacyTabletObserved;
 @property NSUInteger tabletTrim;
+@property BOOL legacyTabletObservationPending;
+@property NSUInteger legacyTabletObservationAttempts;
 @property VIMGuestProgress *guestProgress;
 @property NSData *guestStatusTool;
 @property NSTextField *guestStatus;
@@ -701,15 +705,12 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     // Explicit development qualification of recovery/update environments that
     // do not contain the installed system's graphics support. This never edits
     // the VM receipt or discards its verified graphics transaction.
-    BOOL installerDisplay=self.machine.requiresInstallerDisplay||
+    BOOL installerDisplay=self.machine.requiresInstallerDisplayForBoot||
         [NSProcessInfo.processInfo.arguments containsObject:@"--installer-display"];
-    BOOL openGLDirectDisplay=self.machine.preMetalGuest&&
+    BOOL openGLSVGA=self.machine.preMetalGuest&&
         [self.machine.configuration[@"LegacyDisplayAdapter"] isEqual:@"vmware"]&&
-        self.machine.passthroughOpenGLEnabled;
-    // A VMware adapter alone does not establish hardware cursor delivery.
-    // Recovery can use that adapter for its framebuffer while drawing its
-    // pointer into the scanout. The installed graphics path reports a glyph.
-    self.displayView.softwareCursor=installerDisplay&&!openGLDirectDisplay;
+        !self.machine.requiresStandardVGAForUpdate;
+    BOOL openGLDirectDisplay=openGLSVGA&&self.machine.passthroughOpenGLEnabled;
     NSString *qemu=[root stringByAppendingPathComponent:installerDisplay?
         @"artifacts/host-arm64/qemu-arm64-app-installer":@"artifacts/host-arm64/qemu-arm64-alternate-lookup-v2"];
     NSString *helper=[root stringByAppendingPathComponent:@"artifacts/host-arm64/apple-gfx-helper-app"];
@@ -762,6 +763,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     [self ensureWindow];self.window.title=self.machine.name;self.window.contentView=[NSView new];
     NSView *content=self.window.contentView;
     self.displayView=[[VIMMetalView alloc] initWithFrame:NSZeroRect];self.displayView.translatesAutoresizingMaskIntoConstraints=NO;
+    // Apply this to the new view, not the view from the previous launch.
+    // VGA draws its cursor into the frame and cannot receive PVG power messages.
+    self.displayView.softwareCursor=installerDisplay&&!openGLDirectDisplay;
     self.displayView.nearestNeighborScaling=[self.displayScalingFilter isEqual:@"nearest"];
     self.status=[NSTextField labelWithString:@"Starting…"];self.status.textColor=NSColor.secondaryLabelColor;
     self.guestStatus=[NSTextField labelWithString:@"Waiting for macOS…"];
@@ -891,10 +895,16 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             if(session.task.running&&!session.shutdownRequested)
                 [session showSetupNoticeAutomatic:automatic automaticLogin:automaticLogin restarting:NO];
         };
+        self.openGLSetup.logVerificationFailure=^(NSString *message){
+            [weakSelf.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] %@\n",message]
+                dataUsingEncoding:NSUTF8StringEncoding]];
+        };
     }
     else {
         self.modernSetup=[[VIMModernSetup alloc] initWithMachine:self.machine agent:self.guestAgent];
-        self.modernSetup.progress=^(NSString *message){weakSelf.guestStatus.stringValue=message;};
+        // Progress is only reported while Recovery runs the installer, which
+        // can take most of the install time before any step completes.
+        self.modernSetup.progress=^(NSString *message){weakSelf.guestStatus.stringValue=message;[weakSelf showRecoveryInstallNotice];};
         self.modernSetup.showAccountProgress=^(BOOL automaticLogin){
             VIMSession *session=weakSelf;
             if(!session.task.running||session.shutdownRequested)return;
@@ -1108,6 +1118,14 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         //4GB up front. Keep USB3 and native drivers, not an Apple kext patch.
         [baseArguments addObjectsFromArray:@[@"-fw_cfg",@"name=opt/ovmf/X-PciMmio64Mb,string=0"]];
     }
+    // SDL opens the capture device synchronously during QEMU initialization.
+    // Do not let a pending host microphone permission prevent even QMP from
+    // starting. The existing Microphone settings action can grant access for
+    // a subsequent boot; retain the user's saved routing and enable playback.
+    NSString *audioInput=VIMAudioSelection(config,YES);
+    if(![audioInput isEqual:@"disabled"]&&
+       [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio]!=AVAuthorizationStatusAuthorized)
+        audioInput=@"disabled";
     if(!config[@"AudioEnabled"]||[config[@"AudioEnabled"] boolValue]) {
         NSMutableString *audio=[NSMutableString stringWithString:@"sdl,id=audio0"];
         // QEMU otherwise fixes its mixer at 44.1 kHz even on a 48 kHz host.
@@ -1116,8 +1134,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         [audio appendFormat:@",out.frequency=%lu",(unsigned long)VIMHostOutputSampleRate(VIMAudioSelection(config,NO))];
         // Capture also follows its selected physical device, independently of
         // output. Avoid SDL's native-input -> 44.1 kHz -> guest-rate chain.
-        [audio appendFormat:@",in.frequency=%lu",(unsigned long)VIMHostInputSampleRate(VIMAudioSelection(config,YES))];
-        if([VIMAudioSelection(config,YES) isEqual:@"disabled"])[audio appendString:@",in.voices=0"];
+        [audio appendFormat:@",in.frequency=%lu",(unsigned long)VIMHostInputSampleRate(audioInput)];
+        if([audioInput isEqual:@"disabled"])[audio appendString:@",in.voices=0"];
         if([VIMAudioSelection(config,NO) isEqual:@"disabled"])[audio appendString:@",out.voices=0"];
         [baseArguments addObjectsFromArray:@[@"-audiodev",audio]];
         // Keep this in the original PCI-device order so existing network
@@ -1185,6 +1203,16 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         [mediaArguments addObjectsFromArray:@[@"-trace",@"enable=e1000_*",@"-trace",@"enable=e1000x_link_negotiation_*"]];
     if([NSProcessInfo.processInfo.arguments containsObject:@"--trace-cursor"])
         [mediaArguments addObjectsFromArray:@[@"-trace",@"enable=vmware_cursor_define"]];
+    // Explicit development diagnosis of AHCI stalls: command issue/completion
+    // and interrupt delivery only, written to its own file, not session.log.
+    if([NSProcessInfo.processInfo.arguments containsObject:@"--trace-storage"]) {
+        for(NSString *event in @[@"process_ncq_command",@"ncq_finish",@"execute_ncq_command_*",@"ahci_cmd_done",
+                                 @"ahci_start_dma",@"ahci_trigger_irq",@"ahci_check_irq",@"ahci_irq_*",
+                                 @"ahci_reset",@"ahci_reset_port",@"handle_cmd_busy",@"ahci_dma_prepare_buf_fail",
+                                 @"ahci_populate_sglist_*",@"handle_cmd_bad*"])
+            [mediaArguments addObjectsFromArray:@[@"-trace",[@"enable=" stringByAppendingString:event]]];
+        [mediaArguments addObjectsFromArray:@[@"-D",[self.machine.URL.path stringByAppendingPathComponent:@"State/storage-trace.log"]]];
+    }
     if([NSProcessInfo.processInfo.arguments containsObject:@"--trace-image-enumeration"])
         [mediaArguments addObjectsFromArray:@[@"-trace",@"enable=usb_msd_maxlun"]];
     if([NSProcessInfo.processInfo.arguments containsObject:@"--firmware-diagnostics"])
@@ -1257,11 +1285,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         NSMutableArray *arguments=[self.task.arguments mutableCopy];
         if(installerDisplay) {
             NSUInteger vga=[arguments indexOfObject:@"-vga"];
-            // Research-only surface-provider bring-up. Never changes the
-            // supported guests' installer adapter or pretends this is PVG.
-            BOOL openGLSVGA=self.machine.preMetalGuest&&[config[@"LegacyDisplayAdapter"] isEqual:@"vmware"];
             arguments[vga+1]=openGLSVGA?@"vmware":@"std";
-            if(openGLSVGA&&self.machine.passthroughOpenGLEnabled) {
+            if(openGLDirectDisplay) {
                 [arguments addObjectsFromArray:@[@"-global",@"vmware-svga.passthrough-opengl-bridge=on",
                     @"-global",@"vmware-svga.vgamem_mb=512",
                     // This research layout's SVGA/EHCI use native GSI21.
@@ -1290,7 +1315,15 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             NSUInteger pvg=[arguments indexOfObject:@"apple-gfx-pci"];
             [arguments removeObjectsInRange:NSMakeRange(pvg-1,2)];
         }
-        if(config[@"InstallerMedia"]) [arguments addObjectsFromArray:@[@"-drive",[NSString stringWithFormat:@"id=installer,if=none,format=raw,%@,file=%@",
+        // After startosinstall staged the install, attached installer media
+        // gives OpenCore a Recovery entry to fall back to, and it sometimes
+        // does, despite efi-boot-device selecting the staged installer.
+        // Leave the media off those boots; Recovery is no longer needed.
+        NSDictionary *nativeSetup=[NSDictionary dictionaryWithContentsOfURL:[self.machine.URL URLByAppendingPathComponent:@"State/NativeSetup.plist"]];
+        BOOL stagedInstall=!self.machine.preMetalGuest&&[nativeSetup[@"InstallDispatched"] isEqual:@YES]&&
+            VIMFirmwareHasStagedInstallAtURL([self.machine.URL URLByAppendingPathComponent:config[@"NVRAM"]]);
+        if(stagedInstall)[self.log writeData:[@"\n[Virtual Intel Mac] Staged macOS install: installer media left off this boot.\n" dataUsingEncoding:NSUTF8StringEncoding]];
+        if(config[@"InstallerMedia"]&&!stagedInstall) [arguments addObjectsFromArray:@[@"-drive",[NSString stringWithFormat:@"id=installer,if=none,format=raw,%@,file=%@",
             [config[@"InstallerMediaKind"] isEqual:@"disk"]?@"snapshot=on":@"readonly=on",path(@"InstallerMedia")],
             @"-device",[config[@"InstallerMediaKind"] isEqual:@"disk"]?
                 @"ide-hd,bus=ide.2,unit=0,drive=installer,bootindex=3,rotation_rate=1":
@@ -1314,7 +1347,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     [environment removeObjectForKey:@"VIM_AUDIO_OUTPUT_DEVICE"];
     [environment removeObjectForKey:@"VIM_AUDIO_INPUT_DEVICE"];
     for(NSNumber *input in @[@NO,@YES]) {
-        NSString *uid=VIMAudioSelection(config,input.boolValue);
+        NSString *uid=input.boolValue?audioInput:VIMAudioSelection(config,NO);
         if([@[@"default",@"disabled"] containsObject:uid])continue;
         NSArray *devices=VIMHostAudioDevices(input.boolValue);NSDictionary *choice=nil;
         for(NSDictionary *device in devices)if([device[@"UID"] isEqual:uid])choice=device;
@@ -1353,7 +1386,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     if(installerDisplay) {
         [environment removeObjectForKey:@"PVG_APP_DISPLAY_SOCKET"];
         environment[@"VIM_INSTALLER_DISPLAY_SOCKET"]=self.displayConnection.socketPath;
-        if(self.machine.preMetalGuest&&self.machine.passthroughOpenGLEnabled) {
+        if(openGLDirectDisplay) {
             // The ordinary embedded display defaults to a 30-ms poll. That
             // caps the accelerated research scanout at ~33 Hz before any
             // rendering/ACK cost. This does not change supported guest paths.
@@ -1489,7 +1522,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         // Seed the known installed/installer range before delivering input;
         // the later bound-driver observation can still override it.
         session.legacyTabletGuest=VIMUsesLegacyTabletCalibration(session.machine.guest);
-        session.legacyTabletObserved=NO;
+        session.legacyTabletObserved=NO;session.legacyTabletObservationAttempts=0;
         session.tabletTrim=VIMInitialTabletTrim(session.machine.guest,classicInstaller);
         if(!failure)session.displayView.inputHandler=^(NSArray *events){
             if([weakSelf.lastRunState isEqual:@"suspended"]) {
@@ -2098,8 +2131,52 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         if(failure||![result[@"exitcode"] isEqual:@0])session.sleepDisabledBoot=nil;
     }];
 }
+/*
+ * The first installed boot after a classic installer still has the
+ * installer attached (InstallState "installing"), so the session starts
+ * with the installer's 15% fallback. The installed 10.5-10.9 driver binds
+ * the tablet with an explicit zero, and Setup Assistant never reaches the
+ * desktop check: input was squeezed into the middle 85% (issues #2, #21).
+ * Read the bound driver once per boot as soon as the guest agent answers.
+ */
+- (void)observeLegacyTabletDuringSetup {
+    if(!self.legacyTabletGuest||self.legacyTabletObserved||self.legacyTabletObservationPending)return;
+    self.legacyTabletObservationPending=YES;
+    __weak VIMSession *weakSelf=self;
+    VIMGuestAgent *agent=self.guestAgent;
+    [agent connectWithCompletion:^(NSError *error){
+        VIMSession *session=weakSelf;
+        if(!session||session.guestAgent!=agent||!session.task.running){if(session)session.legacyTabletObservationPending=NO;return;}
+        if(error){session.legacyTabletObservationPending=NO;return;}
+        [session observeLegacyTabletWithAgent:agent completion:^{weakSelf.legacyTabletObservationPending=NO;}];
+    }];
+}
+- (void)observeLegacyTabletWithAgent:(VIMGuestAgent *)agent completion:(void (^)(void))completion {
+    // Bounded per boot: the tablet binds early, and polling is every few seconds.
+    if(++self.legacyTabletObservationAttempts>40){self.legacyTabletObserved=YES;completion();return;}
+    __weak VIMSession *weakSelf=self;
+    [agent runExecutable:@"/usr/sbin/ioreg"
+        arguments:@[@"-r",@"-c",@"IOHIDEventDriver",@"-d",@"1",@"-l",@"-w",@"0"] timeout:0
+        completion:^(NSDictionary *reply,NSError *ignored){
+            VIMSession *live=weakSelf;if(!live||live.guestAgent!=agent||!live.task.running){completion();return;}
+            if(!ignored&&[reply[@"exitcode"] isEqual:@0]){
+                NSString *registry=[[NSString alloc] initWithData:reply[@"stdout"]?:NSData.data encoding:NSUTF8StringEncoding];
+                // Conclusive only once the QEMU tablet's event driver is bound.
+                // Without an explicit override (installer safe-boot driver),
+                // keep the seeded fallback.
+                if([registry containsString:@"\"Product\" = \"QEMU USB Tablet\""]) {
+                    live.legacyTabletObserved=YES;
+                    NSNumber *trim=VIMObservedTabletTrim(registry);
+                    if(trim)live.tabletTrim=trim.unsignedIntegerValue;
+                    [live.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] Tablet range removal: %@ (applied %lu%%)\n",
+                        trim?:@"none",(unsigned long)live.tabletTrim] dataUsingEncoding:NSUTF8StringEncoding]];
+                }
+            }
+            completion();
+        }];
+}
 - (void)refreshGuestStatus {
-    if(self.guestPending||self.preparing||self.shutdownRequested||!self.task.running)return;
+    if(self.guestPending||self.preparing||self.shutdownRequested||self.relaunchForGraphics||!self.task.running)return;
     if(self.diagnosticPending||self.clipboardPending||self.bootPolicyPending) {
         // A one-shot status timer may fire during a diagnostic command. Keep
         // the normal production readiness/verification loop alive afterward.
@@ -2121,6 +2198,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         // display and agent available while inspecting a cold native service.
         // Explicit --resume-setup enters the unchanged production coordinator.
         if(self.developmentSetupDeferred){self.guestStatus.stringValue=@"Automatic setup paused for diagnostics";return;}
+        [self observeLegacyTabletDuringSetup];
         [self refreshOpenGLSetup];return;
     }
     if(!self.guestStatusTool.length) {
@@ -2135,22 +2213,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             VIMGuestAgent *agent=session.guestAgent;
             [agent collectInstalledOpenGLDesktopStatus:^(NSDictionary *report,NSError *failure){
                 VIMSession *current=weakSelf;if(current.guestAgent!=agent||!current.task.running)return;
-                if(failure||!current.legacyTabletGuest||current.legacyTabletObserved||
-                   ![report[@"DesktopRunning"] boolValue]){[current finishGuestStatus:report error:failure];return;}
-                // The installer uses its own fallback. At the installed
-                // desktop, inspect the bound driver once on this boot.
-                current.legacyTabletObserved=YES;
-                [agent runExecutable:@"/usr/sbin/ioreg"
-                    arguments:@[@"-r",@"-c",@"IOHIDEventDriver",@"-d",@"1",@"-l",@"-w",@"0"] timeout:0
-                    completion:^(NSDictionary *reply,NSError *ignored){
-                        VIMSession *live=weakSelf;if(live.guestAgent!=agent||!live.task.running)return;
-                        if(!ignored&&[reply[@"exitcode"] isEqual:@0]){
-                            NSString *registry=[[NSString alloc] initWithData:reply[@"stdout"]?:NSData.data encoding:NSUTF8StringEncoding];
-                            NSNumber *trim=VIMObservedTabletTrim(registry);
-                            if(trim)live.tabletTrim=trim.unsignedIntegerValue;
-                        }
-                        [live finishGuestStatus:report error:nil];
-                    }];
+                if(failure||!current.legacyTabletGuest||current.legacyTabletObserved){[current finishGuestStatus:report error:failure];return;}
+                [current observeLegacyTabletWithAgent:agent completion:^{[weakSelf finishGuestStatus:report error:nil];}];
             }];return;
         }
         [session.guestAgent collectStatusWithTool:session.guestStatusTool completion:^(NSDictionary *report,NSError *failure) {
@@ -2185,6 +2249,10 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             @"Keep your virtual Mac running while the graphics drivers install. This may take up to 30 minutes. If a restart is needed, you’ll be asked first.";
     }
     [self showSetupNoticeWithTitle:title detail:detail];
+}
+- (void)showRecoveryInstallNotice {
+    [self showSetupNoticeWithTitle:@"Installing macOS Automatically…"
+        detail:@"Please do not interact with macOS Utilities or the installer. The macOS installer is running in the background, and the macOS Utilities window may stay visible meanwhile.\n\nYour virtual Mac will restart several times on its own. Installation may take up to 2 hours."];
 }
 - (void)showSetupNoticeWithTitle:(NSString *)heading detail:(NSString *)message {
     if(self.previewSetupNotice&&(self.setupNotice||self.closedSetupNoticeHeading))return;
@@ -2528,6 +2596,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             if(failure){[session dismissSetupNotice];session.guestStatus.stringValue=failure.localizedDescription;VIMPresentError(failure,session.window);return;}
             if([outcome[@"Handled"] isEqual:@YES]){
                 session.guestStatus.stringValue=outcome[@"Message"]?:@"Installing macOS…";
+                // Recovery's macOS Utilities stays on screen while startosinstall
+                // stages the install behind it. Say so, as Automatic Setup does.
+                if([outcome[@"RecoveryInstall"] isEqual:@YES])[session showRecoveryInstallNotice];
                 if([outcome[@"Restart"] isEqual:@YES]){
                     [session handoffToGraphics];
                     // First-boot shutdown may wait for native cache/service
@@ -2882,18 +2953,18 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
 - (void)handoffToGraphics {
     // A late installation/status callback must not override an explicit user
     // shutdown/close or revive an emulator that has already stopped.
-    if(self.shutdownRequested||self.closeAfterShutdown||!self.task.running)return;
+    if(self.shutdownRequested||self.closeAfterShutdown||self.relaunchForGraphics||!self.task.running)return;
     self.automaticInstallation=NO;self.relaunchForGraphics=YES;
     self.guestStatus.stringValue=@"Graphics support installed — restarting this Mac…";
     __weak VIMSession *weakSelf=self;
     // Changing emulated display hardware needs a new QEMU process, not an
     // in-guest reboot. Never force termination if macOS cannot shut down.
     self.handoffTimer=[NSTimer scheduledTimerWithTimeInterval:180 repeats:NO block:^(NSTimer *timer){
-        VIMSession *session=weakSelf;session.relaunchForGraphics=NO;
-        if(session.task.running) {
-            session.guestStatus.stringValue=@"Shutdown is taking longer than expected. Shut down this Mac, then open it again to finish setup.";
-            [session refreshGuestStatus];
-        }
+        VIMSession *session=weakSelf;
+        // A TCG guest can still be finalizing its startup files. Elapsed
+        // time is not a failed shutdown: keep waiting for the normal exit.
+        if(session.task.running&&session.relaunchForGraphics)
+            session.guestStatus.stringValue=@"macOS is still shutting down. This Mac will restart when it’s ready.";
     }];
     [self.guestAgent runExecutable:@"/sbin/shutdown" arguments:@[@"-h",@"now"] timeout:20
         completion:^(NSDictionary *result,NSError *error){
@@ -3471,9 +3542,13 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         alert.informativeText=@"Eject the image in the virtual Mac, then choose Disconnect before connecting a different image.";
         [alert addButtonWithTitle:@"OK"];VIMPresentAlert(alert,window,nil);return;
     }
-    NSOpenPanel *panel=[NSOpenPanel openPanel];panel.allowedContentTypes=@[[UTType typeWithFilenameExtension:@"iso"],[UTType typeWithFilenameExtension:@"cdr"],[UTType typeWithFilenameExtension:@"dmg"]];
+    NSOpenPanel *panel=[NSOpenPanel openPanel];// QEMU reads these as raw 2048-byte CD/DVD sectors (ISO, CDR, Toast) or
+    // through its read-only UDIF driver (DMG). The container is still
+    // identified from its contents, not this extension, before connecting.
+    panel.allowedContentTypes=@[[UTType typeWithFilenameExtension:@"iso"],[UTType typeWithFilenameExtension:@"cdr"],
+        [UTType typeWithFilenameExtension:@"toast"],[UTType typeWithFilenameExtension:@"dmg"]];
     panel.allowsMultipleSelection=slot==NSNotFound;panel.prompt=@"Connect";
-    panel.message=@"Choose ISO, CDR or supported unencrypted DMG images. Each image connects to its own read-only drive, without copying or conversion.";
+    panel.message=@"Choose ISO, CDR, Toast or unencrypted DMG images. Each image connects to its own read-only drive, without copying or conversion.";
     [panel beginSheetModalForWindow:window completionHandler:^(NSModalResponse response){
         if(response!=NSModalResponseOK)return;
         NSArray<NSURL *> *URLs=panel.URLs;

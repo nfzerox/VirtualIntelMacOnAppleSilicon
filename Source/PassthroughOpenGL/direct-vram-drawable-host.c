@@ -369,7 +369,7 @@ static int DGVRAMTransfer(struct DGHostContext *c,const struct DGMessage *m,stru
     glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT,publish?b->framebuffer:c->framebuffer);
     glGetIntegerv(GL_READ_BUFFER,&sourceRead);glGetIntegerv(GL_DRAW_BUFFER,&destinationDraw);
     glReadBuffer(GL_COLOR_ATTACHMENT0_EXT);glDrawBuffer(GL_COLOR_ATTACHMENT0_EXT);
-    glDisable(GL_SCISSOR_TEST);glDisable(GL_FRAMEBUFFER_SRGB_EXT);
+    DGSetBlitScissor(c,GL_FALSE);glDisable(GL_FRAMEBUFFER_SRGB_EXT);
     GLint x=(GLint)m->args[5],y=(GLint)m->args[6],w=(GLint)m->args[7],h=(GLint)m->args[8],flip=(GLint)m->args[9];
     int copied=1,copy_completed=0;
 #ifdef VIM_VRAM_COMPLETION_EXPERIMENT
@@ -403,7 +403,7 @@ static int DGVRAMTransfer(struct DGHostContext *c,const struct DGMessage *m,stru
     good=copy_completed || DGVRAMWait();good=glGetError()==GL_NO_ERROR && good && copied;
     glReadBuffer((GLenum)sourceRead);glDrawBuffer((GLenum)destinationDraw);
     glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT,(GLuint)read);glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT,(GLuint)draw);
-    if(scissor)glEnable(GL_SCISSOR_TEST);if(srgb)glEnable(GL_FRAMEBUFFER_SRGB_EXT);
+    if(scissor)DGSetBlitScissor(c,GL_TRUE);if(srgb)glEnable(GL_FRAMEBUFFER_SRGB_EXT);
     }
 #ifdef VIM_VRAM_COMPLETION_EXPERIMENT
     if(vim_vram_cache_flush)sys_dcache_flush((void *)(uintptr_t)((b->kind?b->alias.address:dg_vram.address)+b->offset),(size_t)b->length);

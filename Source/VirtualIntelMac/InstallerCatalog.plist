@@ -2,15 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>FormatVersion</key><integer>1</integer>
-<key>Revision</key><integer>8</integer>
+<key>Revision</key><integer>9</integer>
+<key>UpdateURL</key><string>https://raw.githubusercontent.com/nfzerox/VirtualIntelMacOnAppleSilicon/refs/heads/main/Source/VirtualIntelMac/InstallerCatalog.plist</string>
 <key>Installers</key><array>
-<dict><key>Guest</key><string>tiger</string><key>Name</key><string>Mac OS X Tiger</string><key>Version</key><string>10.4.10</string><key>Assembly</key><string>restore-dvd</string><key>Files</key><array>
+<dict><key>Guest</key><string>tiger</string><key>ReleaseURL</key><string>https://archive.org/download/10.4.10-8-r-4088-acdt/10.4.10-8R4088-iMac7%2C1-Disc-1.dmg</string><key>Name</key><string>Mac OS X Tiger</string><key>Version</key><string>10.4.10</string><key>Assembly</key><string>restore-dvd</string><key>Files</key><array>
 <dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://dn720202.ca.archive.org/0/items/10.4.10-8-r-4088-acdt/10.4.10-8R4088-iMac7%2C1-Disc-1.dmg</string></dict>
 </array></dict>
-<dict><key>Guest</key><string>leopard</string><key>Name</key><string>Mac OS X Leopard</string><key>Version</key><string>10.5.7</string><key>Assembly</key><string>restore-dvd</string><key>Files</key><array>
+<dict><key>Guest</key><string>leopard</string><key>ReleaseURL</key><string>https://archive.org/download/10.5.7-9-j-3050/10.5.7-9J3050.dmg</string><key>Name</key><string>Mac OS X Leopard</string><key>Version</key><string>10.5.7</string><key>Assembly</key><string>restore-dvd</string><key>Files</key><array>
 <dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://archive.org/download/10.5.7-9-j-3050/10.5.7-9J3050.dmg</string></dict>
 </array></dict>
-<dict><key>Guest</key><string>snowleopard</string><key>Name</key><string>Mac OS X Snow Leopard</string><key>Version</key><string>10.6.7</string><key>Assembly</key><string>restore-dvd</string><key>Files</key><array>
+<dict><key>Guest</key><string>snowleopard</string><key>ReleaseURL</key><string>https://archive.org/download/macosx-snowleopard-archive/10.6.7-10J3250-MBP8X-OSX.dmg</string><key>Name</key><string>Mac OS X Snow Leopard</string><key>Version</key><string>10.6.7</string><key>Assembly</key><string>restore-dvd</string><key>Files</key><array>
 <dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://archive.org/download/macosx-snowleopard-archive/10.6.7-10J3250-MBP8X-OSX.dmg</string></dict>
 </array></dict>
 <dict><key>Guest</key><string>lion</string><key>Name</key><string>Mac OS X Lion</string><key>Version</key><string>10.7.5</string><key>Assembly</key><string>installer-dmg</string><key>Files</key><array>
@@ -19,7 +20,7 @@
 <dict><key>Guest</key><string>mountainlion</string><key>Name</key><string>OS X Mountain Lion</string><key>Version</key><string>10.8.5</string><key>Assembly</key><string>installer-dmg</string><key>Files</key><array>
 <dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://updates.cdn-apple.com/2021/macos/031-0627-20210614-90D11F33-1A65-42DD-BBEA-E1D9F43A6B3F/InstallMacOSX.dmg</string><key>SHA256</key><string>B006A6D63F20D0B369493469699D42D5CBCA91C295B40B273F6FE9EECA3484CE</string></dict>
 </array></dict>
-<dict><key>Guest</key><string>mavericks</string><key>Name</key><string>OS X Mavericks</string><key>Version</key><string>10.9</string><key>Assembly</key><string>recovery-esd</string><key>Files</key><array>
+<dict><key>Guest</key><string>mavericks</string><key>Recovery</key><dict><key>SessionURL</key><string>https://osrecovery.apple.com/</string><key>PayloadURL</key><string>https://osrecovery.apple.com/InstallationPayload/OSInstaller</string></dict><key>Name</key><string>OS X Mavericks</string><key>Version</key><string>10.9</string><key>Assembly</key><string>recovery-esd</string><key>Files</key><array>
 <dict><key>Role</key><string>esd</string><key>URL</key><string>http://oscdn.apple.com/content/downloads/33/62/031-10295/gho4r94w66f5v4ujm0sz7k1m0hua68i6oo/OSInstaller/InstallESD.dmg</string><key>SHA256</key><string>C861FD59E82BF777496809A0D2A9B58F66691EE56738031F55874A3FE1D7C3FF</string></dict>
 </array></dict>
 <dict><key>Guest</key><string>yosemite</string><key>Name</key><string>OS X Yosemite</string><key>Version</key><string>10.10.5</string><key>Assembly</key><string>installer-dmg</string><key>Files</key><array>

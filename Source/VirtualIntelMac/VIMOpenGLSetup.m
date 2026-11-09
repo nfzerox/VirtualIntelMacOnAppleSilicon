@@ -29,6 +29,8 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
 @property NSString *bootUUID;
 @property BOOL testedGraphics;
 @property BOOL audioInitialized;
+@property NSUInteger audioDeviceWaits;
+@property BOOL audioDefaultsSkipped;
 @property BOOL fileSharingChecked;
 @property BOOL tigerGraphicsPrepared;
 @property BOOL tigerAudioPrepared;
@@ -37,7 +39,7 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
 @property BOOL bundledGraphicsChecked;
 @property BOOL initialGraphicsInstallAttempted;
 @property BOOL payloadRestartRequired;
-@property BOOL refreshingSierraLoginSupport;
+@property BOOL refreshingFirstLoginSupport;
 @property BOOL updatingCompletedGuest;
 @property NSURL *payloadMediaDirectory;
 @property NSURL *payloadMedia;
@@ -102,14 +104,13 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
     BOOL installed=[graphics[@"Phase"] isEqual:@"installed"]&&[graphics[@"ProductBuildVersion"] isEqual:report[@"ProductBuildVersion"]];
     BOOL matches=VIMOpenGLBundledSupportMatches(self.machine.guest,report,self.bundledGraphics);
     self.updatingCompletedGuest=[self.machine.configuration[@"InstallState"] isEqual:@"installed"];
-    // Let an already interrupted Sierra install recover with an updated app
-    // too. Use the existing scoped support-disc refresh once, not a new
-    // guest service or a reinstall of the operating system.
-    self.refreshingSierraLoginSupport=matches&&[self.machine.guest isEqual:@"sierra"]&&
+    // Let an interrupted El Capitan or Sierra install recover with an updated
+    // app. Refresh the owned helper once through the existing support disc.
+    self.refreshingFirstLoginSupport=matches&&[@[@"elcapitan",@"sierra"] containsObject:self.machine.guest]&&
         [self.machine.configuration[@"InstallState"] isEqual:@"patching"]&&[self.profile[@"AutomaticLogin"] boolValue]&&
         [report[@"Account"][@"Phase"] isEqual:@"autologin-armed"]&&[report[@"ConsoleUID"] isEqual:@0]&&
-        ![report[@"SierraLoginHandoffVersion"] isEqual:@1];
-    if(!installed||(matches&&!self.refreshingSierraLoginSupport)) {
+        ![report[@"LoginHandoffRecoveryVersion"] isEqual:@2];
+    if(!installed||(matches&&!self.refreshingFirstLoginSupport)) {
         self.bundledGraphicsChecked=YES;[self advance:completion];return;
     }
     if(self.showProgress&&!self.updatingCompletedGuest&&![self.profile[@"Enabled"] boolValue]&&[report[@"DesktopRunning"] boolValue])
@@ -168,12 +169,12 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
                 [self readStatus:^(NSDictionary *report,NSError *failure){
                     NSDictionary *graphics=report[@"Graphics"];
                     if(failure||![graphics[@"Phase"] isEqual:@"installed"]||![report[@"GraphicsRestartEvidenceVersion"] isEqual:@1]||
-                       (self.refreshingSierraLoginSupport&&![report[@"SierraLoginHandoffVersion"] isEqual:@1])||
+                       (self.refreshingFirstLoginSupport&&![report[@"LoginHandoffRecoveryVersion"] isEqual:@2])||
                        ![graphics[@"EngineSHA256"] isEqual:self.bundledGraphics[@"EngineSHA256"]]||
                        ![graphics[@"BackendSHA256"] isEqual:self.bundledGraphics[@"BackendSHA256"]]){
                         completion(nil,failure?:SetupError(@"The updated graphics files couldn’t be confirmed."));return;
                     }
-                    self.bundledGraphicsChecked=YES;self.payloadRestartRequired=!self.refreshingSierraLoginSupport;self.testedGraphics=NO;
+                    self.bundledGraphicsChecked=YES;self.payloadRestartRequired=!self.refreshingFirstLoginSupport;self.testedGraphics=NO;
                     [self.agent runExecutable:@"/usr/sbin/diskutil" arguments:@[@"eject",mount] timeout:0 completion:^(NSDictionary *ejected,NSError *ejectError){
                         if(ejectError||![ejected[@"exitcode"] isEqual:@0]){completion(nil,ejectError?:SetupError(@"Graphics support was updated, but its disc is still in use. Eject it normally before restarting."));return;}
                         [self.control execute:@"eject" arguments:@{@"id":@"setup-support-device"} completion:^(id ignored,NSError *removeError){
@@ -317,6 +318,18 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
 }
 - (void)tool:(NSString *)name arguments:(NSArray *)arguments input:(NSData *)input completion:(void (^)(NSDictionary *,NSError *))completion {
     [self.agent runExecutable:[GuestTools stringByAppendingPathComponent:name] arguments:arguments standardInput:input timeout:0 completion:completion];
+}
+- (void)logFailedVerification:(NSString *)name reply:(NSDictionary *)reply error:(NSError *)error {
+    if(!self.logVerificationFailure)return;
+    NSMutableString *message=[NSMutableString stringWithFormat:@"%@ exit=%@ error=%@",name,
+        reply[@"exitcode"]?:@"unavailable",error?@(error.code):@0];
+    for(NSString *stream in @[@"stdout",@"stderr"]){
+        NSData *data=reply[stream];if(!data.length)continue;
+        if(data.length>2048)data=[data subdataWithRange:NSMakeRange(0,2048)];
+        NSString *detail=[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+        if(detail.length)[message appendFormat:@"\n%@: %@",stream,detail];
+    }
+    self.logVerificationFailure(message);
 }
 - (void)runAccountToolForSharingRepair:(BOOL)repair input:(NSData *)input completion:(void (^)(NSDictionary *,NSError *))completion {
     if(!repair){[self tool:@"opengl-create-account" arguments:@[@"--create"] input:input completion:completion];return;}
@@ -528,7 +541,7 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
     NSDictionary *account=report[@"Account"];
     BOOL automatic=[self.profile[@"Enabled"] boolValue];NSString *phase=account[@"Phase"];
     BOOL needsFirstLoginPolicy=[phase isEqual:@"autologin-armed"]&&![account[@"FirstLoginPolicyPrepared"] boolValue];
-    BOOL recoverLogin=[self.machine.guest isEqual:@"sierra"]&&[report[@"AutoLoginHandoffMissing"] isEqual:@YES];
+    BOOL recoverLogin=[@[@"elcapitan",@"sierra"] containsObject:self.machine.guest]&&[report[@"AutoLoginHandoffMissing"] isEqual:@YES];
     BOOL needsSharingCredential=[self.machine.guest isEqual:@"leopard"]&&[self.profile[@"FileSharing"] boolValue]&&
         [@[@"autologin-armed",@"complete"] containsObject:phase?:@""]&&[account[@"FileSharingAccountPrepared"] boolValue]&&
         [account[@"FileSharingCredentialVersion"] integerValue]<1;
@@ -591,7 +604,10 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
     // and engine. Setup Assistant's pre-restart session may still use stock GL.
     if(!self.testedGraphics) {
         [self tool:@"opengl-graphics-check" arguments:@[@"--desktop"] input:nil completion:^(NSDictionary *reply,NSError *failure){
-            if(failure||![reply[@"exitcode"] isEqual:@0]){completion(nil,failure?:SetupError(@"The real accelerated graphics check did not pass. The installer and original graphics backup were retained."));return;}
+            if(failure||![reply[@"exitcode"] isEqual:@0]){
+                [self logFailedVerification:@"Graphics verification" reply:reply error:failure];
+                completion(nil,failure?:SetupError(@"The real accelerated graphics check did not pass. The installer and original graphics backup were retained."));return;
+            }
             self.testedGraphics=YES;[self advanceReport:report completion:completion];
         }];return;
     }
@@ -635,15 +651,26 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
     BOOL routed=[previous[@"GuestReport"][@"AudioInitialized"] boolValue]&&
         [previous[@"GuestReport"][@"VolumeUUID"] isEqual:report[@"VolumeUUID"]];
     if(routed)self.audioInitialized=YES;
-    if(!self.audioInitialized&&(!self.machine.configuration[@"AudioEnabled"]||[self.machine.configuration[@"AudioEnabled"] boolValue])) {
+    if(!self.audioInitialized&&!self.audioDefaultsSkipped&&(!self.machine.configuration[@"AudioEnabled"]||[self.machine.configuration[@"AudioEnabled"] boolValue])) {
         [self tool:@"opengl-audio-defaults" arguments:@[@"--set-defaults"] input:nil completion:^(NSDictionary *reply,NSError *failure){
             // IOAudioDevice publication also precedes coreaudiod's initial
             // endpoint discovery on Tiger. Only the explicit missing-device
             // result is pending; preserve real API/routing failures.
-            if(!failure&&[self.machine.guest isEqual:@"tiger"]&&[reply[@"exitcode"] isEqual:@3]){
+            // Some guests never publish an input device (Tiger's VoodooHDA
+            // exposes only the output), so exit 3 may never clear. Wait about
+            // two minutes (15 s polls) for a late device, then finish setup
+            // without default routing instead of blocking it on any guest.
+            if(!failure&&[reply[@"exitcode"] isEqual:@3]&&++self.audioDeviceWaits<=8){
                 completion(@{@"Phase":@"audio-busy"},nil);return;
             }
-            if(failure||![reply[@"exitcode"] isEqual:@0]){completion(nil,failure?:SetupError(@"The virtual Mac’s sound devices are not ready. Graphics setup is preserved; the audio diagnostic state was retained."));return;}
+            if(!failure&&[reply[@"exitcode"] isEqual:@3]){
+                NSLog(@"Sound defaults left unchanged: %@",[[NSString alloc] initWithData:reply[@"stdout"]?:NSData.data encoding:NSUTF8StringEncoding]);
+                self.audioDefaultsSkipped=YES;[self advanceReport:report completion:completion];return;
+            }
+            if(failure||![reply[@"exitcode"] isEqual:@0]){
+                [self logFailedVerification:@"Audio routing verification" reply:reply error:failure];
+                completion(nil,failure?:SetupError(@"The virtual Mac’s sound devices are not ready. Graphics setup is preserved; the audio diagnostic state was retained."));return;
+            }
             self.audioInitialized=YES;[self advanceReport:report completion:completion];
         }];return;
     }

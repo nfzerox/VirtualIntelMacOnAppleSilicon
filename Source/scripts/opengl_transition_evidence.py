@@ -11,14 +11,27 @@ from pathlib import Path
 
 COUNTERS = ('PresentedFingerprintFrames', 'DistinctFrames', 'DuplicateFrames',
             'Failures', 'Reordered', 'TraceDropped', 'Unpresented')
+GEOMETRY = ('PixelWidth', 'PixelHeight', 'ViewWidth', 'ViewHeight', 'BackingScale')
+
+
+def visible_frame(frame):
+    return (frame.get('WindowOcclusionVisible') == 1
+            and not any(frame.get(key) for key in ('Sleeping', 'GuestDisplaySleeping', 'PresentationHidden'))
+            and all(frame.get(key, 0) > 0 for key in GEOMETRY))
 
 
 def summarize(journal):
     issues = []
     counts = {}
     try:
-        before = journal['MeasurementBefore']['Frame']['DistinctPresentationTiming']
-        after = journal['MeasurementAfter']['Frame']['DistinctPresentationTiming']
+        first_frame = journal['MeasurementBefore']['Frame']
+        last_frame = journal['MeasurementAfter']['Frame']
+        if not (visible_frame(first_frame) and visible_frame(last_frame)):
+            issues.append('The guest window was hidden, asleep or had no display at a measurement boundary.')
+        if any(first_frame.get(key) != last_frame.get(key) for key in GEOMETRY):
+            issues.append('Display geometry changed during the workload.')
+        before = first_frame['DistinctPresentationTiming']
+        after = last_frame['DistinctPresentationTiming']
         generation = before['Generation']
         if type(generation) is not int or generation < 0 or generation != after['Generation']:
             issues.append('Measurement generation changed during the workload.')
@@ -33,6 +46,8 @@ def summarize(journal):
         trace = after['Trace'][len(earlier_trace):]
         if len(trace) != counts['PresentedFingerprintFrames']:
             issues.append('The trace does not contain every presentation in this measurement.')
+        if not trace:
+            issues.append('No image was actually presented during the workload.')
         changed = sum(row[2] is True for row in trace)
         if changed != counts['DistinctFrames']:
             issues.append('Changed trace entries do not match the distinct-frame delta.')

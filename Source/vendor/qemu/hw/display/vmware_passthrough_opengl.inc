@@ -100,7 +100,7 @@ static void vmsvga_legacy_export_ram(struct vmsvga_state_s *s, const char *servi
     RCU_READ_LOCK_GUARD();
     FlatView *view = address_space_to_flatview(&address_space_memory);
     flatview_for_each_range(view, vmsvga_legacy_find_main_ram, &m);
-    if (m.base && m.bytes && m.bytes <= VIM_VRAM_MEMORY_LIMIT) {
+    if (m.base && m.bytes && m.bytes <= VIM_SHARED_RAM_MEMORY_LIMIT) {
         flatview_for_each_range(view, vmsvga_legacy_main_ram_ranges, &m);
         char *name = g_strdup_printf("%s.ram", service);
         if (m.count && m.count <= VIM_SHARED_RAM_REGIONS) {

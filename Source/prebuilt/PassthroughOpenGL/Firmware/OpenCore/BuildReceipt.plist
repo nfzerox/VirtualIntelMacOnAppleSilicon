@@ -7,7 +7,7 @@
 	<key>Files</key>
 	<dict>
 		<key>OpenCore.efi</key>
-		<string>830472810f45d1104020822292eb121da30ab28cc1abbec593e215bcaeef67d3</string>
+		<string>44a26204ad19a3a3144a89346f73f9a4112d20f1c9c2386f65e61a4b8b419e02</string>
 		<key>OpenHfsPlus.efi</key>
 		<string>ade93555c4436d4ae8898ee37d8a3927a40f642070ef1559d7482e5083774492</string>
 	</dict>
@@ -39,7 +39,7 @@
 		<key>scripts/build-guest-firmware.py</key>
 		<string>ae9e9eac7311b113fc9880af3054ec9eeaecc996d7a426cfe586bdc6d6f83f64</string>
 		<key>scripts/build-opengl-opencore.py</key>
-		<string>65df1e9e693a22ae683189d082a6234c440a22ea28f7b4438ff9fbf25e5d5748</string>
+		<string>e4c279bb30e7587cd18be304b380e6d3d973accf40fde1a0602e04a3a6810778</string>
 		<key>scripts/build_signing.py</key>
 		<string>d0032bddd4615b0f07dfb4110058c85b7b9f72d707650d2a4d50d71cd5288a1c</string>
 		<key>scripts/firmware-host-compiler.py</key>
@@ -52,6 +52,8 @@
 		<string>8fe5a85fd5caa0f4bd779d6bd79349925431beaf559ba22c8cfeab7f11420801</string>
 		<key>vendor/opengl-opencore-source.tar.xz</key>
 		<string>db8dd7d1659e49187f94b3e2a5e0707f1d65fa51358af4635ef92cf423ac1289</string>
+		<key>vendor/patches/opencore-dmg-chunk-cache.patch</key>
+		<string>0353e06a45ecb8016372000c19e916debe73427e8856020b7d813fdd62dbee9a</string>
 		<key>vendor/patches/opencore-hfs-overflow-extents.patch</key>
 		<string>f3d8cc24d882d6534b1da3af8aa45a84814dda2ddd1089dae052463385ebe016</string>
 		<key>vendor/patches/opencore-installer-graphics-isolation.patch</key>

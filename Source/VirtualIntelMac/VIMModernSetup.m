@@ -86,7 +86,31 @@ static NSError *SetupError(NSString *text){return [NSError errorWithDomain:@"Vir
     }
     if([self.state[@"Phase"] isEqual:@"failed"]){completion(nil,SetupError(self.state[@"Error"]?:@"Automatic installation could not finish. Its diagnostic files were retained."));return;}
     if([report[@"RecoveryToolsPresent"] isEqual:@YES]){
-        if(self.state[@"InstallDispatched"]){completion(@{@"Handled":@YES,@"Message":@"Installing macOS…"},nil);return;}
+        if(self.state[@"InstallDispatched"]){
+            // startosinstall staged the install, but the guest's own reboot
+            // can still come back up in the installer media's Recovery; a
+            // fresh restart then boots the staged installer. Only a later boot
+            // running from that same Recovery volume is not progress. Big
+            // Sur's staged installer also reports Recovery tools, but from its
+            // own staged volume, and must be left to run.
+            NSString *dispatched=self.state[@"DispatchBootSessionUUID"];
+            NSString *recoveryVolume=self.state[@"DispatchRecoveryVolumeUUID"];
+            if([dispatched isKindOfClass:NSString.class]&&![dispatched isEqual:boot]&&
+               [recoveryVolume isKindOfClass:NSString.class]&&[recoveryVolume isEqual:report[@"VolumeUUID"]]&&
+               ![self.state[@"RecoveryRestartBootSessionUUID"] isEqual:boot]) {
+                NSUInteger attempts=[self.state[@"RecoveryRestarts"] unsignedIntegerValue];
+                if(attempts>=2){
+                    completion(nil,SetupError(@"The macOS installer did not start after restarting. Its prepared installation was kept; restart this Mac to try again."));return;
+                }
+                self.state[@"RecoveryRestarts"]=@(attempts+1);self.state[@"RecoveryRestartBootSessionUUID"]=boot;
+                NSError *issue=nil;if(![self savePhase:self.state[@"Phase"] error:&issue]){completion(nil,issue);return;}
+                if(self.progress)self.progress(@"Restarting into the macOS installer…");
+                [self.agent requestRestartWithCompletion:^(NSError *ignored){
+                    completion(@{@"Handled":@YES,@"RecoveryInstall":@YES,@"Message":@"Restarting into the macOS installer…"},nil);
+                }];return;
+            }
+            completion(@{@"Handled":@YES,@"RecoveryInstall":@YES,@"Message":@"Installing macOS…"},nil);return;
+        }
         [self withHelpersForBoot:boot completion:^(NSError *error){
             if(error){completion(nil,error);return;}
             NSMutableDictionary *request=[[self requestForReport:report] mutableCopy];request[@"VolumeUUID"]=target;
@@ -97,6 +121,8 @@ static NSError *SetupError(NSString *text){return [NSError errorWithDomain:@"Vir
                     completion(nil,failure?:SetupError(detail.length?detail:@"The native installer could not confirm Macintosh HD."));return;
                 }
                 self.state[@"InstallDispatched"]=@YES;self.state[@"InstallerPlan"]=plan;
+                self.state[@"DispatchBootSessionUUID"]=boot;
+                if([report[@"VolumeUUID"] isKindOfClass:NSString.class])self.state[@"DispatchRecoveryVolumeUUID"]=report[@"VolumeUUID"];
                 NSError *issue=nil;if(![self savePhase:@"install-dispatched" error:&issue]){completion(nil,issue);return;}
                 request[@"LicenseAccepted"]=@YES;
                 if(self.progress)self.progress(@"Preparing macOS installation…");
@@ -106,14 +132,14 @@ static NSError *SetupError(NSString *text){return [NSError errorWithDomain:@"Vir
                     self.agent.processPollInterval=previousPoll;
                     // A real guest reboot closes this observer. Its durable
                     // dispatch record is intentionally not permission to retry.
-                    if(problem){completion(@{@"Handled":@YES,@"Message":@"Waiting for macOS installation to restart…"},nil);return;}
+                    if(problem){completion(@{@"Handled":@YES,@"RecoveryInstall":@YES,@"Message":@"Waiting for macOS installation to restart…"},nil);return;}
                     if(![result[@"exitcode"] isEqual:@0]){
                         NSString *detail=[[NSString alloc] initWithData:result[@"stderr"]?:NSData.data encoding:NSUTF8StringEncoding];
                         self.state[@"Error"]=detail.length?detail:@"The native macOS installer reported a failure.";
                         NSError *saveError=nil;[self savePhase:@"failed" error:&saveError];completion(nil,saveError?:SetupError(self.state[@"Error"]));return;
                     }
                     NSError *saveError=nil;[self savePhase:@"install-prepared" error:&saveError];
-                    completion(@{@"Handled":@YES,@"Message":@"Installing macOS…"},saveError);
+                    completion(@{@"Handled":@YES,@"RecoveryInstall":@YES,@"Message":@"Installing macOS…"},saveError);
                 }];
             }];
         }];return;

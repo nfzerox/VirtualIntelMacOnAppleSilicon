@@ -84,6 +84,7 @@ class VoodooHDADevice : public IOAudioDevice
 
 public:
 	IOLock *mLock;
+	IOLock *mCodecCommandLock;
 	IOWorkLoop *mWorkLoop;
 
 	IOCommandGate::Action mActionHandler;

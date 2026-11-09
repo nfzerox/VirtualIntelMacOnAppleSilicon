@@ -24,7 +24,7 @@ static int DGCopyFlippedAlias(struct DGHostContext *c,struct DGAlias *alias)
     glDrawBuffer(GL_COLOR_ATTACHMENT0_EXT);
     int good=c->alias_framebuffer &&
         glCheckFramebufferStatusEXT(GL_DRAW_FRAMEBUFFER_EXT)==GL_FRAMEBUFFER_COMPLETE_EXT;
-    glDisable(GL_SCISSOR_TEST);glDisable(GL_FRAMEBUFFER_SRGB_EXT);
+    DGSetBlitScissor(c,GL_FALSE);glDisable(GL_FRAMEBUFFER_SRGB_EXT);
     // Native Intel cropped private views start at the full drawable's
     // upper row, not at the upper row of a bottom-left subrectangle.
     if(good)glBlitFramebufferEXT(0,c->drawable->height-alias->height,alias->width,c->drawable->height,
@@ -35,7 +35,7 @@ static int DGCopyFlippedAlias(struct DGHostContext *c,struct DGAlias *alias)
     glReadBuffer((GLenum)source_read);
     glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT,(GLuint)read);
     glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT,(GLuint)draw);
-    if(scissor)glEnable(GL_SCISSOR_TEST);if(srgb)glEnable(GL_FRAMEBUFFER_SRGB_EXT);
+    if(scissor)DGSetBlitScissor(c,GL_TRUE);if(srgb)glEnable(GL_FRAMEBUFFER_SRGB_EXT);
     GLenum error=glGetError();if(error){if(!c->error)c->error=error;good=0;}
     if(good)alias->copied_serial=c->drawable->write_serial;
     return good;

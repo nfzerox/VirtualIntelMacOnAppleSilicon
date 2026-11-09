@@ -22,7 +22,7 @@ import shlex
 import subprocess
 import sys
 import time
-from legacy_transition_evidence import summarize
+from opengl_transition_evidence import summarize
 
 
 def main():

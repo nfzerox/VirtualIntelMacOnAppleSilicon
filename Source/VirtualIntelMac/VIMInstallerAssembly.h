@@ -1,5 +1,9 @@
 #import <Foundation/Foundation.h>
 NS_ASSUME_NONNULL_BEGIN
+/// A Tiger–Snow Leopard restore disc other than the qualified dot release.
+/// userInfo carries VIMSupportedReleaseURLKey: the supported image to download.
+extern NSString *const VIMInstallerReleaseErrorDomain;
+extern NSString *const VIMSupportedReleaseURLKey;
 /// Extracts trusted Apple installer inputs without executing their installer scripts.
 /// The caller supplies a new job directory on its capacity-checked scratch volume.
 @interface VIMInstallerAssembly : NSObject

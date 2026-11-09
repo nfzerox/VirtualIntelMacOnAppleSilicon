@@ -25,6 +25,7 @@
 #include <OpenGL/CGLIOSurface.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOSurface/IOSurface.h>
+#include "iosurface-view-pitch-host.h"
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
@@ -35,6 +36,9 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <math.h>
+#include "passthrough-opengl-shader-compile.h"
+#include "passthrough-opengl-mipmap-host.h"
+#include "passthrough-opengl-automatic-mipmap-host.h"
 #include "pixel-format-host.h"
 #include "passthrough-opengl-endian.h"
 #ifdef VIM_PASSTHROUGH_OPENGL_COMMAND_TIMING
@@ -99,6 +103,8 @@ static int DGMachHostTransfer(void *buffer,size_t bytes,int writing)
 #endif
 #include "passthrough-opengl-surface-regions.h"
 #include "direct-layout.h"
+_Static_assert(sizeof(struct DGHelloFeatures)<=sizeof(DG_LAYOUT),"HELLO features fit in the layout span");
+#include "direct-opcodes.h"
 #include "private-textures-host.c"
 /* These aliases apply only to renderer internals. Public GL commands resolve
  * their native functions separately and cannot delete our private objects. */
@@ -114,21 +120,41 @@ static uint64_t dg_gather_stats[4]; // initialized resources, input bytes, pendi
 #endif
 #endif
 struct DGHostContext {
-    CGLContextObj cgl;GLuint framebuffer,color,back,depth;
+    CGLContextObj cgl,stipple_query_context;GLuint framebuffer,color,back,depth;
     struct DGPrivateTextureWatch color_watch,back_watch,spare_watches[4];
     IOSurfaceRef color_storage,back_storage;
     GLint depth_bits,stencil_bits,double_buffer,client_storage;GLenum error,read_mode,draw_mode;
     unsigned profile,client_features;
     // Executor-owned native array enables, never speculative guest GL state.
     // VAO switches/deletes and client-stack restores invalidate this witness.
-    uint32_t array_enable_mask;unsigned array_enable_valid;
+    uint64_t array_enable_mask,element_vbo_mask;
+    unsigned array_enable_valid,primitive_restart;
+    GLenum list_mode; /* Native witness refreshed only at NewList/EndList. */
+    uint32_t element_vbo_limit;
+    /* PPC ArrayElement consumes packed raw components captured before Begin.
+     * No native buffer remains mapped and Intel arrays keep the native path. */
+    struct { struct DGVertexArray array;unsigned char *data; } element_snapshots[DG_VERTEX_SLOTS];
+    unsigned element_snapshot_count;
+    uint32_t element_snapshot_first,element_snapshot_vertices;
+    GLenum element_snapshot_error;
+    struct { void *data;uint32_t words; } render_buffers[2];
+    GLenum render_mode;
+    const void *render_staged;
+    uint32_t render_staged_words,render_stage_next;
     GLint native_screen_count,native_hardware_screen;
     GLint native_deferred_draw,native_deferred_read;
     unsigned native_drawable_deferred;
     unsigned pbo_writes_pending;
-    GLint max_draw_buffers;
+    unsigned char *texture_read_stage;
+    size_t texture_read_bytes,texture_read_offset,texture_read_reserved_bytes;
+    unsigned buffer_transfer_mode;GLenum buffer_transfer_target,buffer_transfer_usage;
+    GLintptr buffer_transfer_offset;
+    GLint max_draw_buffers,weight_units;
+    unsigned weight_array_seen,point_array_seen;
+    int point_sizes,purgeability;
     uint64_t surface_read_count,surface_read_fallbacks;
     unsigned inside_begin,diagnostic_errors,draw_debug_count,texture_debug_count,frame_debug_count,track_damage;
+    unsigned indexed_scissor;
     unsigned program_debug_count,alias_debug_count,surface_debug_count,read_debug_count;uint64_t traced_program_states[256];
     GLint traced_immediate_program;unsigned immediate_vertex_budget;
     struct DGFenceName *fences;
@@ -137,9 +163,7 @@ struct DGHostContext {
     struct DGSurfaceLease *surface_leases;
     struct DGSharedSurface *shared_surface;
     struct DGAliasGroup *alias_group;
-#ifdef VIM_VRAM_RENDER_TARGET_EXPERIMENT
     struct DGHostContext *alias_member_next;
-#endif
     GLuint *sampled_storage,*sampled_textures,*rectangle_bindings;GLint texture_units;
     uint64_t alias_generation;int alias_bindings_dirty,alias_mappings_dirty;
     GLuint alias_framebuffer;
@@ -207,12 +231,35 @@ struct DGCoreAPI {
     void (*bind)(GLuint);void (*generate)(GLsizei,GLuint *);
     void (*remove)(GLsizei,const GLuint *);GLboolean (*is_array)(GLuint);
     void (*divisor)(GLuint,GLuint);
+    void (*vertex_attrib_lpointer)(GLuint,GLint,GLenum,GLsizei,const void *);
     void (*arrays_instanced)(GLenum,GLint,GLsizei,GLsizei);
     void (*elements_instanced)(GLenum,GLsizei,GLenum,const void *,GLsizei);
+    void (*elements_base)(GLenum,GLsizei,GLenum,const void *,GLint);
+    void (*range_elements_base)(GLenum,GLuint,GLuint,GLsizei,GLenum,const void *,GLint);
+    void (*instanced_elements_base)(GLenum,GLsizei,GLenum,const void *,GLsizei,GLint);
+    void (*multi_arrays)(GLenum,const GLint *,const GLsizei *,GLsizei);
+    void (*draw_feedback)(GLenum,GLuint);
+    void (*draw_feedback_stream)(GLenum,GLuint,GLuint);
+    void (*draw_arrays_indirect)(GLenum,const void *);
+    void (*draw_elements_indirect)(GLenum,GLenum,const void *);
+    void (*multi_elements)(GLenum,const GLsizei *,GLenum,const void *const *,GLsizei);
+    void (*multi_base)(GLenum,const GLsizei *,GLenum,const void *const *,GLsizei,const GLint *);
     void (*buffer_parameter64)(GLenum,GLenum,GLint64 *);
     void (*copy_buffer)(GLenum,GLenum,GLintptr,GLintptr,GLsizeiptr);
     void *(*map_range)(GLenum,GLintptr,GLsizeiptr,GLbitfield);
     void (*flush_range)(GLenum,GLintptr,GLsizeiptr);
+    void (*signed_result)(GLuint,GLenum,GLint64EXT *);
+    void (*unsigned_result)(GLuint,GLenum,GLuint64EXT *);
+    void (*signed_result_ext)(GLuint,GLenum,GLint64EXT *);
+    void (*unsigned_result_ext)(GLuint,GLenum,GLuint64EXT *);
+    void (*query_counter)(GLuint,GLenum);
+    void (*uniform_indices)(GLuint,GLsizei,const GLchar *const *,GLuint *);
+    void (*uniform_block_iv)(GLuint,GLuint,GLenum,GLint *);
+    void (*active_subroutine_iv)(GLuint,GLenum,GLuint,GLenum,GLint *);
+    void (*uniform_double)(GLuint,GLint,GLdouble *);
+    void (*enable_indexed)(GLenum,GLuint),(*disable_indexed)(GLenum,GLuint);
+    int gl4_profile;
+    int samplers;
 };
 static struct DGCoreAPI dg_core_api;
 static pthread_once_t dg_core_once=PTHREAD_ONCE_INIT;
@@ -223,12 +270,62 @@ static void DGLoadCoreAPI(void)
     dg_core_api.remove=dlsym(RTLD_DEFAULT,"glDeleteVertexArrays");
     dg_core_api.is_array=dlsym(RTLD_DEFAULT,"glIsVertexArray");
     dg_core_api.divisor=dlsym(RTLD_DEFAULT,"glVertexAttribDivisor");
+    dg_core_api.vertex_attrib_lpointer=dlsym(RTLD_DEFAULT,"glVertexAttribLPointer");
     dg_core_api.arrays_instanced=dlsym(RTLD_DEFAULT,"glDrawArraysInstanced");
     dg_core_api.elements_instanced=dlsym(RTLD_DEFAULT,"glDrawElementsInstanced");
+    dg_core_api.elements_base=dlsym(RTLD_DEFAULT,"glDrawElementsBaseVertex");
+    dg_core_api.range_elements_base=dlsym(RTLD_DEFAULT,"glDrawRangeElementsBaseVertex");
+    dg_core_api.instanced_elements_base=dlsym(RTLD_DEFAULT,"glDrawElementsInstancedBaseVertex");
+    dg_core_api.multi_arrays=dlsym(RTLD_DEFAULT,"glMultiDrawArrays");
+    dg_core_api.draw_feedback=dlsym(RTLD_DEFAULT,"glDrawTransformFeedback");
+    dg_core_api.draw_feedback_stream=dlsym(RTLD_DEFAULT,"glDrawTransformFeedbackStream");
+    dg_core_api.draw_arrays_indirect=dlsym(RTLD_DEFAULT,"glDrawArraysIndirect");
+    dg_core_api.draw_elements_indirect=dlsym(RTLD_DEFAULT,"glDrawElementsIndirect");
+    dg_core_api.multi_elements=dlsym(RTLD_DEFAULT,"glMultiDrawElements");
+    dg_core_api.multi_base=dlsym(RTLD_DEFAULT,"glMultiDrawElementsBaseVertex");
     dg_core_api.buffer_parameter64=dlsym(RTLD_DEFAULT,"glGetBufferParameteri64v");
     dg_core_api.copy_buffer=dlsym(RTLD_DEFAULT,"glCopyBufferSubData");
     dg_core_api.map_range=dlsym(RTLD_DEFAULT,"glMapBufferRange");
     dg_core_api.flush_range=dlsym(RTLD_DEFAULT,"glFlushMappedBufferRange");
+    dg_core_api.signed_result=dlsym(RTLD_DEFAULT,"glGetQueryObjecti64v");
+    dg_core_api.unsigned_result=dlsym(RTLD_DEFAULT,"glGetQueryObjectui64v");
+    dg_core_api.signed_result_ext=dlsym(RTLD_DEFAULT,"glGetQueryObjecti64vEXT");
+    dg_core_api.unsigned_result_ext=dlsym(RTLD_DEFAULT,"glGetQueryObjectui64vEXT");
+    dg_core_api.query_counter=dlsym(RTLD_DEFAULT,"glQueryCounter");
+    dg_core_api.uniform_indices=dlsym(RTLD_DEFAULT,"glGetUniformIndices");
+    dg_core_api.uniform_block_iv=dlsym(RTLD_DEFAULT,"glGetActiveUniformBlockiv");
+    dg_core_api.active_subroutine_iv=dlsym(RTLD_DEFAULT,"glGetActiveSubroutineUniformiv");
+    dg_core_api.uniform_double=dlsym(RTLD_DEFAULT,"glGetUniformdv");
+    dg_core_api.enable_indexed=dlsym(RTLD_DEFAULT,"glEnablei");
+    dg_core_api.disable_indexed=dlsym(RTLD_DEFAULT,"glDisablei");
+    static const char *const sampler_symbols[]={
+        "glGenSamplers","glDeleteSamplers","glIsSampler","glBindSampler",
+        "glSamplerParameteri","glSamplerParameteriv","glSamplerParameterf","glSamplerParameterfv",
+        "glSamplerParameterIiv","glSamplerParameterIuiv","glGetSamplerParameteriv","glGetSamplerParameterfv",
+        "glGetSamplerParameterIiv","glGetSamplerParameterIuiv",
+    };
+    dg_core_api.samplers=1;
+    for(unsigned i=0;i<sizeof(sampler_symbols)/sizeof(sampler_symbols[0]);++i)
+        if(!dlsym(RTLD_DEFAULT,sampler_symbols[i])){dg_core_api.samplers=0;break;}
+    // A distinct selector, not a claim based on GL_VERSION in a 3.2 context.
+    CGLPixelFormatAttribute attrs[8]={kCGLPFAAccelerated,kCGLPFAAllowOfflineRenderers,
+        kCGLPFAOpenGLProfile,(CGLPixelFormatAttribute)DG_CGL_PROFILE_GL4,0};
+    if(dg_reference_renderer){attrs[4]=kCGLPFARendererID;attrs[5]=(CGLPixelFormatAttribute)dg_reference_renderer;
+        attrs[6]=kCGLPFASupportsAutomaticGraphicsSwitching;}
+    CGLPixelFormatObj format=NULL;GLint count=0;
+    CGLError result=CGLChoosePixelFormat(attrs,&format,&count);
+    dg_core_api.gl4_profile=!result && format && count>0;
+    if(format)CGLDestroyPixelFormat(format);
+}
+/* Clear and blit use only viewport zero's scissor. The unindexed API
+ * toggles every viewport, which would destroy independently set enables. */
+static void DGSetBlitScissor(struct DGHostContext *c,GLboolean enable)
+{
+    if(c->indexed_scissor){
+        void (*indexed)(GLenum,GLuint)=enable?dg_core_api.enable_indexed:dg_core_api.disable_indexed;
+        if(indexed && c->profile!=kCGLOGLPVersion_Legacy){indexed(GL_SCISSOR_TEST,0);return;}
+    }
+    if(enable)glEnable(GL_SCISSOR_TEST);else glDisable(GL_SCISSOR_TEST);
 }
 static void DGBindHostVertexArray(struct DGHostContext *c,GLuint name)
 { c->array_enable_valid=0;if(c->profile==kCGLOGLPVersion_Legacy)glBindVertexArrayAPPLE(name);else dg_core_api.bind(name); }
@@ -307,6 +404,7 @@ static void DGDestroySyncs(struct DGAliasGroup *);
 static void DGDestroyMappings(struct DGAliasGroup *);
 static void DGRefreshFlippedAliases(struct DGHostContext *,int);
 #include "passthrough-opengl-alias-host.c"
+#include "passthrough-opengl-purgeable-host.c"
 #include "direct-uniform-query-host.c"
 #include "direct-iosurface-texture-host.c"
 #include "direct-iosurface-writes-host.c"
@@ -326,7 +424,9 @@ static void DGMarkDrawableDamage(struct DGHostContext *c)
     GLint framebuffer=0;glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING_EXT,&framebuffer);
     if((GLuint)framebuffer!=c->framebuffer) return;
     GLint box[4]={0,0,c->drawable->width,c->drawable->height};
-    if(glIsEnabled(GL_SCISSOR_TEST)) glGetIntegerv(GL_SCISSOR_BOX,box);
+    // A geometry shader can send draws outside viewport zero. Once the
+    // app uses indexed scissors, keep damage conservative without queries.
+    if(!c->indexed_scissor && glIsEnabled(GL_SCISSOR_TEST)) glGetIntegerv(GL_SCISSOR_BOX,box);
     int64_t right=(int64_t)box[0]+box[2],top=(int64_t)box[1]+box[3];
     int left=box[0]>0 ? box[0] : 0,bottom=box[1]>0 ? box[1] : 0;
     if(right>c->drawable->width) right=c->drawable->width;
@@ -345,7 +445,10 @@ static void DGMarkDrawableDamage(struct DGHostContext *c)
 #include "passthrough-opengl-draw-witness.c"
 #endif
 #include "passthrough-opengl-arrays-host.c"
+static GLenum DGHostBitmapPBO(struct DGHostContext *,GLint,GLint,GLsizei,GLsizei,
+    GLenum,uint64_t,GLuint,const struct DGPixelState *);
 #include "passthrough-opengl-pbo-host.c"
+#include "passthrough-opengl-retained-render-host.c"
 /* Only retired, unshared allocations may enter this bounded cache. Guest
  * texture aliases retain their original contents after drawable deletion;
  * an alias in ANY context of this share group therefore vetoes reuse. */
@@ -434,12 +537,12 @@ static int DGClearDrawableTexture(struct DGHostContext *c,GLuint texture)
         GL_TEXTURE_RECTANGLE_ARB,texture,0);
     glDrawBuffer(GL_COLOR_ATTACHMENT0_EXT);
     int good=framebuffer && glCheckFramebufferStatusEXT(GL_DRAW_FRAMEBUFFER_EXT)==GL_FRAMEBUFFER_COMPLETE_EXT;
-    glDisable(GL_SCISSOR_TEST);glColorMaskIndexedEXT(0,GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+    DGSetBlitScissor(c,GL_FALSE);glColorMaskIndexedEXT(0,GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
     if(discard)glDisable(GL_RASTERIZER_DISCARD_EXT);
     glClearColor(0,0,0,0);if(good)glClear(GL_COLOR_BUFFER_BIT);
     glClearColor(color[0],color[1],color[2],color[3]);
     glColorMaskIndexedEXT(0,mask[0],mask[1],mask[2],mask[3]);
-    if(scissor)glEnable(GL_SCISSOR_TEST);
+    if(scissor)DGSetBlitScissor(c,GL_TRUE);
     if(discard)glEnable(GL_RASTERIZER_DISCARD_EXT);
     glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT,(GLuint)draw);
     if(framebuffer)glDeleteFramebuffersEXT(1,&framebuffer);
@@ -457,12 +560,17 @@ static IOSurfaceRef DGDrawableStorage(struct DGHostContext *c,int width,int heig
     if(width<1 || height<1 || (unsigned)width>DG_DISPLAY_MAX_DIMENSION ||
        (unsigned)height>DG_DISPLAY_MAX_DIMENSION)return NULL;
     IOSurfaceRef surface=NULL;unsigned best=4;size_t best_bytes=SIZE_MAX;int best_exact=0,reused_texture=0;
+    // The drawable texture and its aliases are logical-size views of this
+    // storage. Where the driver assumes its own view pitch, only storage with
+    // that exact bytesPerRow (or the exact width) may serve this drawable.
+    size_t view_pitch=dg_storage_reuse?DGIOSurfaceViewPitch(c->cgl):0;
     for(unsigned i=0;dg_storage_reuse && i<4;++i) {
         IOSurfaceRef spare=c->spare_storage[i];if(!spare)continue;
         size_t bytes=IOSurfaceGetAllocSize(spare);
         int exact=dg_drawable_texture_reuse && c->spare_textures[i] &&
             c->spare_widths[i]==width && c->spare_heights[i]==height;
         if(IOSurfaceGetWidth(spare)>=(size_t)width && IOSurfaceGetHeight(spare)>=(size_t)height &&
+           DGIOSurfaceViewPitchMatches(spare,(size_t)width,view_pitch) &&
            (best==4 || exact>best_exact || (exact==best_exact && bytes<best_bytes)))
             {best=i;best_bytes=bytes;best_exact=exact;}
     }
@@ -478,6 +586,7 @@ static IOSurfaceRef DGDrawableStorage(struct DGHostContext *c,int width,int heig
     size_t capacity_width=(size_t)width,capacity_height=(size_t)height;
     if(dg_storage_reuse) {
         size_t w=(capacity_width+127)&~(size_t)127,h=(capacity_height+127)&~(size_t)127;
+        w=DGIOSurfaceViewCapacityWidth(capacity_width,w,4,view_pitch);
         if(w*h*4<=DG_DISPLAY_MAX_BYTES) { capacity_width=w;capacity_height=h; }
     }
     size_t row=(capacity_width*4+63)&~(size_t)63,bytes=row*capacity_height;
@@ -1080,6 +1189,8 @@ static void DGDestroyDrawables(struct DGHostContext *c)
     DGVRAMDelete(c);
     if(c->vram_copy_context)CGLDestroyContext(c->vram_copy_context);
     c->vram_copy_context=NULL;c->vram_copy_framebuffer=0;
+    if(c->stipple_query_context)CGLDestroyContext(c->stipple_query_context);
+    c->stipple_query_context=NULL;
     c->vram_copy_width=c->vram_copy_height=0;
 #ifdef VIM_VRAM_RENDER_TARGET_EXPERIMENT
     if(c->vram_render_framebuffer)glDeleteFramebuffersEXT(1,&c->vram_render_framebuffer);
@@ -1121,9 +1232,12 @@ static int DGHostCompressedInput(struct DGHostContext *c,struct DGMessage *m,
     if(m->args[15]>1)return -1;
     if(c->inside_begin){c->error=GL_INVALID_OPERATION;return 0;}
     if(imageSize<0){c->error=GL_INVALID_VALUE;return 0;}
-    if(DGCompressedProxy(target)){*data=NULL;return 1;}
     GLint binding=0;glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING,&binding);
     if(!!binding!=!!m->args[15]){c->error=GL_INVALID_OPERATION;return 0;}
+    if(DGCompressedProxy(target)){
+        if(binding && m->bytes)return -1;
+        *data=binding?(const void *)(uintptr_t)m->args[index]:NULL;return 1;
+    }
     if(!binding){
         *data=DGHostPointer(m,index,imageSize?(size_t)imageSize:1);
         return m->args[index]&&!*data?-1:1;
@@ -1140,6 +1254,152 @@ static int DGHostCompressedInput(struct DGHostContext *c,struct DGMessage *m,
     if(c->pbo_writes_pending){glFinish();c->pbo_writes_pending=0;}
 #endif
     *data=(const void *)(uintptr_t)m->args[index];return 1;
+}
+struct DGImagingPixelScope { GLint saved[5];int pack,active; };
+static const GLenum dg_imaging_store_keys[2][5]={
+    {GL_UNPACK_ALIGNMENT,GL_UNPACK_ROW_LENGTH,GL_UNPACK_SKIP_ROWS,GL_UNPACK_SKIP_PIXELS,GL_UNPACK_ROW_BYTES_APPLE},
+    {GL_PACK_ALIGNMENT,GL_PACK_ROW_LENGTH,GL_PACK_SKIP_ROWS,GL_PACK_SKIP_PIXELS,GL_PACK_ROW_BYTES_APPLE}};
+static void DGHostImagingEnd(struct DGHostContext *c,struct DGImagingPixelScope *scope)
+{
+    if(!scope->active)return;
+    GLenum error=glGetError();if(error&&!c->error)c->error=error;
+    const GLint tight[]={1,0,0,0,0};
+    for(unsigned i=0;i<5;++i)if(scope->saved[i]!=tight[i])
+        glPixelStorei(dg_imaging_store_keys[scope->pack][i],scope->saved[i]);
+    error=glGetError();if(error&&!c->error)c->error=error;
+    scope->active=0;
+}
+static int DGHostImagingTransfer(struct DGHostContext *c,struct DGMessage *m,
+    enum DGImagingTransfer op,GLenum target,GLint width,GLint height,GLint start,
+    GLenum format,GLenum type,int pack,const int indices[2],void *pixels[2],struct DGImagingPixelScope *scope)
+{
+    GLenum error=GL_NO_ERROR;
+    size_t bits=DGImagingPixelBits(format,type);
+    if(c->inside_begin || c->profile!=kCGLOGLPVersion_Legacy)error=GL_INVALID_OPERATION;
+    else if(!DGImagingTargetValid(op,target) || !bits)error=GL_INVALID_ENUM;
+    else if(width<0 || height<0 || start<0 ||
+            (op==DG_IMAGING_TABLE && (width & (width-1))))error=GL_INVALID_VALUE;
+    if(error){if(!c->error)c->error=error;return 0;}
+    if(op==DG_IMAGING_TABLE && DGImagingProxy(target))
+        return (!m->bytes && !m->args[15] && !m->args[indices[0]])?1:-1;
+
+    int compact=m->args[15]==2;
+    if(compact){GLenum prior=glGetError();if(prior&&!c->error)c->error=prior;}
+    GLint binding=0;
+    glGetIntegerv(pack?GL_PIXEL_PACK_BUFFER_BINDING:GL_PIXEL_UNPACK_BUFFER_BINDING,&binding);
+    if(m->args[15]>2)return -1;
+    if(!!binding!=(m->args[15]==1)){
+        if(!c->error)c->error=GL_INVALID_OPERATION;return 0;
+    }
+    if(binding){
+        if(m->bytes)return -1;
+        for(int i=0;i<2 && indices[i]>=0;++i){
+            uint64_t offset=m->args[indices[i]];
+            if(offset>INTPTR_MAX){if(!c->error)c->error=GL_INVALID_OPERATION;return 0;}
+            pixels[i]=(void *)(uintptr_t)offset;
+        }
+        /* Native PBO validation accounts for mapped buffers, alignment and
+         * conservative bounds that can differ from the CPU bytes touched. */
+#if defined(__aarch64__) || defined(__arm64__)
+        if(!pack && c->pbo_writes_pending){glFinish();c->pbo_writes_pending=0;}
+#endif
+        return 1;
+    }
+    if(pack && !DGImagingDimensions(op,target,&width,&height))return 0;
+    if(op==DG_IMAGING_SUBTABLE){
+        GLint extent=0,unused;
+        if(!DGImagingDimensions(op,target,&extent,&unused))return 0;
+        if((int64_t)start+width>extent){if(!c->error)c->error=GL_INVALID_VALUE;return 0;}
+    }
+    struct DGPixelState state={0};DGNativePixelState(&state);
+    uint64_t spans[2];
+    DGImagingSpans(op,width,height,bits,compact?0:state.row_length[pack],compact?1:state.alignment[pack],
+        compact?0:state.skip_rows[pack],compact?0:state.skip_pixels[pack],compact?0:state.row_bytes[pack],spans);
+    for(int i=0;i<2 && indices[i]>=0;++i){
+        if(!spans[i]){if(m->args[indices[i]])return -1;continue;}
+        if(spans[i]>DG_MAX_BYTES)return -1;
+        pixels[i]=DGHostPointer(m,indices[i],(size_t)spans[i]);
+        if(!pixels[i])return -1;
+    }
+    if(compact){
+        scope->pack=pack;scope->saved[0]=state.alignment[pack];scope->saved[1]=state.row_length[pack];
+        scope->saved[2]=state.skip_rows[pack];scope->saved[3]=state.skip_pixels[pack];scope->saved[4]=state.row_bytes[pack];
+        error=glGetError();if(error){if(!c->error)c->error=error;return 0;}
+        scope->active=1;const GLint tight[]={1,0,0,0,0};
+        for(unsigned i=0;i<5;++i)if(scope->saved[i]!=tight[i])glPixelStorei(dg_imaging_store_keys[pack][i],tight[i]);
+        error=glGetError();if(error){if(!c->error)c->error=error;DGHostImagingEnd(c,scope);return 0;}
+    }
+    return 1;
+}
+static int DGHostCompatPixelPointer(struct DGHostContext *c,struct DGMessage *m,
+    uint64_t span,size_t alignment,int index,int pack,GLint binding,void **pointer)
+{
+    if(m->args[15]>1)return -1;
+    if(!!binding!=!!m->args[15])goto invalid_operation;
+    if(!binding){
+        if(!span)return (!m->args[index] && !m->bytes)?1:-1;
+        if(m->args[index]!=1 || m->bytes!=span)return -1;
+        *pointer=DGHostPointer(m,index,(size_t)span);return *pointer?1:-1;
+    }
+    if(m->bytes)return -1;
+    GLenum target=pack?GL_PIXEL_PACK_BUFFER:GL_PIXEL_UNPACK_BUFFER;
+    GLint size=0,mapped=0;
+    glGetBufferParameteriv(target,GL_BUFFER_SIZE,&size);
+    glGetBufferParameteriv(target,GL_BUFFER_MAPPED,&mapped);
+    uint64_t offset=m->args[index];
+    if(mapped || size<0 || offset%alignment || offset>(uint64_t)size ||
+       span>(uint64_t)size-offset)goto invalid_operation;
+#if defined(__aarch64__) || defined(__arm64__)
+    if(!pack && c->pbo_writes_pending){glFinish();c->pbo_writes_pending=0;}
+#endif
+    *pointer=(void *)(uintptr_t)offset;
+    return 1;
+invalid_operation:
+    if(!c->error)c->error=GL_INVALID_OPERATION;
+    return 0;
+}
+/* Pixel maps ignore pixel storage; the native table owns their extent. */
+static int DGHostPixelMapPointer(struct DGHostContext *c,struct DGMessage *m,
+    GLenum map,GLsizei count,size_t element,int index,int pack,void **pointer)
+{
+    if(c->inside_begin || c->profile!=kCGLOGLPVersion_Legacy){
+        if(!c->error)c->error=GL_INVALID_OPERATION;return 0;
+    }
+    GLenum key=DGPixelMapSizeKey(map);
+    if(!key){if(!c->error)c->error=GL_INVALID_ENUM;return 0;}
+    GLint extent=32;
+    if(pack || count>extent)glGetIntegerv(pack?key:GL_MAX_PIXEL_MAP_TABLE,&extent);
+    if(pack)count=extent;
+    else if(!DGPixelMapCountValid(map,count,extent)){if(!c->error)c->error=GL_INVALID_VALUE;return 0;}
+    size_t span=DGArrayBytes(count,element);
+    if(!span || span==SIZE_MAX)return -1;
+    GLint binding=0;
+    glGetIntegerv(pack?GL_PIXEL_PACK_BUFFER_BINDING:GL_PIXEL_UNPACK_BUFFER_BINDING,&binding);
+    return DGHostCompatPixelPointer(c,m,span,element,index,pack,binding,pointer);
+}
+static int DGHostCompatRasterPointer(struct DGHostContext *c,struct DGMessage *m,
+    GLsizei width,GLsizei height,GLenum format,GLenum type,int index,int pack,void **pointer)
+{
+    GLenum error=GL_NO_ERROR;
+    size_t bits=DGRasterPixelBits(format,type);
+    if(c->inside_begin || c->profile!=kCGLOGLPVersion_Legacy)error=GL_INVALID_OPERATION;
+    else if(m->op==DG_OP_draw_pixels && DGDrawPixelsNoInput(width,height,format,type)){
+        /* A rejected command carries no CPU pixels, or just its original
+         * PBO offset. Let native GL validate/record it at the right time. */
+        GLint buffer=0;glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING,&buffer);
+        if(m->args[15]>1 || !!buffer!=!!m->args[15] || m->bytes ||
+           (!buffer && m->args[index]))return -1;
+        *pointer=buffer?(void *)(uintptr_t)m->args[index]:NULL;return 1;
+    }
+    else if(width<0 || height<0)error=GL_INVALID_VALUE;
+    else if(!bits)error=GL_INVALID_ENUM;
+    if(error){if(!c->error)c->error=error;return 0;}
+    struct DGPixelState state={0};DGNativePixelState(&state);
+    uint64_t span=DGPixelLayoutSpan(width,height,bits,state.row_length[pack],
+        state.alignment[pack],state.skip_rows[pack],state.skip_pixels[pack],state.row_bytes[pack]);
+    /* Alignment is one datum, not the entire pixel (e.g. three shorts). */
+    size_t datum=type==GL_BITMAP?1:DGPixelSize(type==0x85ba || type==0x85bb?format:GL_RED,type);
+    return DGHostCompatPixelPointer(c,m,span,datum,index,pack,state.buffers[pack],pointer);
 }
 static const char *DGHostString(struct DGMessage *m,int index)
 {
@@ -1160,6 +1420,40 @@ static size_t DGPixelBytes(struct DGHostContext *context,int w,int h,GLenum form
     glGetIntegerv(pack ? GL_PACK_ROW_BYTES_APPLE : GL_UNPACK_ROW_BYTES_APPLE,&rowbytes);
     return DGPixelSpan(w,h,format,type,row,alignment,skiprows,skippixels,rowbytes);
 }
+static void DGTraceRead(struct DGHostContext *,int,int,GLenum,GLenum,const void *);
+static int DGHostReadPixels(struct DGHostContext *c,struct DGMessage *m,GLint x,GLint y,
+    GLsizei width,GLsizei height,GLenum format,GLenum type)
+{
+    static const GLenum keys[]={GL_PACK_ALIGNMENT,GL_PACK_ROW_LENGTH,GL_PACK_SKIP_ROWS,
+        GL_PACK_SKIP_PIXELS,GL_PACK_ROW_BYTES_APPLE};
+    GLint saved[5]={0};
+    for(unsigned i=0;i<5;++i)glGetIntegerv(keys[i],&saved[i]);
+    size_t span=DGPixelSpan(width,height,format,type,saved[1],saved[0],saved[2],saved[3],saved[4]);
+    unsigned char *pixels=DGHostPointer(m,6,span?span:1);
+    if(!pixels)return -1;
+#if defined(__arm64__)
+    /* Apple Silicon OpenGL honors the row pitch but ignores pack skips on
+     * our IOSurface color attachment (also reproduced in a native CGL probe).
+     * Offset the destination without staging or changing native conversion. */
+    if(span && c->color_storage && type!=GL_BITMAP && format!=GL_DEPTH_COMPONENT && format!=GL_STENCIL_INDEX &&
+       format!=GL_DEPTH_STENCIL && (saved[2] || saved[3])){
+        GLint framebuffer=0;glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING_EXT,&framebuffer);
+        if((GLuint)framebuffer==c->framebuffer){
+            size_t pixel=DGPixelSize(format,type);
+            size_t stride=saved[4]?saved[4]:
+                (((size_t)(saved[1]?saved[1]:width)*pixel+saved[0]-1)/saved[0])*saved[0];
+            size_t offset=(size_t)saved[2]*stride+(size_t)saved[3]*pixel;
+            for(unsigned i=2;i<4;++i)if(saved[i])glPixelStorei(keys[i],0);
+            glReadPixels(x,y,width,height,format,type,pixels+offset);
+            for(unsigned i=2;i<4;++i)if(saved[i])glPixelStorei(keys[i],saved[i]);
+            return 0;
+        }
+    }
+#endif
+    glReadPixels(x,y,width,height,format,type,pixels);
+    DGTraceRead(c,width,height,format,type,pixels);
+    return 0;
+}
 static size_t DGPixelBytes3D(struct DGHostContext *context,int w,int h,int d,GLenum format,GLenum type,int pack)
 {
     (void)context;struct DGPixelState state={0};DGNativePixelState(&state);
@@ -1169,6 +1463,176 @@ static size_t DGPixelBytes3D(struct DGHostContext *context,int w,int h,int d,GLe
     glGetIntegerv(pack?GL_PACK_SKIP_IMAGES:GL_UNPACK_SKIP_IMAGES,&skipimages);
     return DGPixelSpan3D(w,h,d,format,type,state.row_length[pack],state.alignment[pack],
         state.skip_rows[pack],state.skip_pixels[pack],state.row_bytes[pack],imageheight,skipimages);
+}
+#include "passthrough-opengl-compact-texture-host.h"
+static int DGTextureReadDimensions(GLenum target)
+{
+    if(target>=GL_TEXTURE_CUBE_MAP_POSITIVE_X && target<=GL_TEXTURE_CUBE_MAP_NEGATIVE_Z)return 2;
+    switch(target){
+    case GL_TEXTURE_1D:return 1;
+    case GL_TEXTURE_2D:case GL_TEXTURE_RECTANGLE_ARB:case 0x8c18:return 2; /* 1D array */
+    case GL_TEXTURE_3D:case 0x8c1a:case 0x9009:return 3; /* 2D and cube arrays */
+    default:return 0;
+    }
+}
+/* Bound retained native readbacks across connections, not by wire packet
+ * size. No staging GL object is visible in the guest's shared namespace. */
+#define DG_TEXTURE_READ_BUDGET (UINT64_C(1)<<30)
+static uint64_t dg_texture_read_reserved;
+static void DGReleaseTextureRead(struct DGHostContext *c)
+{
+    if(!c->texture_read_stage)return;
+    free(c->texture_read_stage);
+    __atomic_fetch_sub(&dg_texture_read_reserved,c->texture_read_reserved_bytes,__ATOMIC_RELAXED);
+    c->texture_read_stage=NULL;c->texture_read_bytes=0;c->texture_read_offset=0;c->texture_read_reserved_bytes=0;
+    c->buffer_transfer_mode=0;
+}
+static int DGReserveTextureRead(struct DGHostContext *c,size_t bytes)
+{
+    DGReleaseTextureRead(c);
+    uint64_t used=__atomic_load_n(&dg_texture_read_reserved,__ATOMIC_RELAXED);
+    do {
+        if(bytes>DG_TEXTURE_READ_BUDGET-used)return 0;
+    } while(!__atomic_compare_exchange_n(&dg_texture_read_reserved,&used,used+bytes,
+                                          1,__ATOMIC_RELAXED,__ATOMIC_RELAXED));
+    c->texture_read_stage=calloc(1,bytes);
+    if(!c->texture_read_stage){
+        __atomic_fetch_sub(&dg_texture_read_reserved,bytes,__ATOMIC_RELAXED);
+        return 0;
+    }
+    c->texture_read_bytes=c->texture_read_reserved_bytes=bytes;return 1;
+}
+#include "passthrough-opengl-buffer-transfer-host.c"
+#include "passthrough-opengl-raster-read-host.c"
+static int DGHostTextureRead(struct DGHostContext *c,struct DGMessage *m,struct DGReply *r)
+{
+    unsigned mode=(unsigned)m->args[0],compressed=(unsigned)m->args[1];
+    GLenum target=(GLenum)m->args[2],format=(GLenum)m->args[4],type=(GLenum)m->args[5];
+    GLint level=(GLint)m->args[3];
+    if(m->args[0]>DG_TEXTURE_READ_CHUNK || m->args[1]>1 || m->args[2]!=target ||
+        m->args[3]!=(uint64_t)(int64_t)level || m->args[4]!=format || m->args[5]!=type ||
+        m->args[7]>INT_MAX || (compressed && (format || type || m->args[7])))return -1;
+    GLint row_override=(GLint)m->args[7];
+    for(unsigned i=9;i<16;++i)if(m->args[i])return -1;
+    if(mode==DG_TEXTURE_READ_CHUNK){
+        if(m->flags!=(DG_REPLY|DG_OUTPUT_ONLY) || m->args[6]!=1 ||
+            compressed || target || level || format || type || row_override ||
+            !m->bytes || m->bytes>DG_TEXTURE_READ_CHUNK_BYTES)return -1;
+        if(c->buffer_transfer_mode || !c->texture_read_stage || m->args[8]!=c->texture_read_offset ||
+            m->bytes>c->texture_read_bytes-c->texture_read_offset){
+            DGReleaseTextureRead(c);r->error=GL_INVALID_OPERATION;return 0;
+        }
+        memcpy(m+1,c->texture_read_stage+c->texture_read_offset,m->bytes);
+        c->texture_read_offset+=m->bytes;
+        if(c->texture_read_offset==c->texture_read_bytes)DGReleaseTextureRead(c);
+        r->result=m->bytes;return 0;
+    }
+    if(mode==DG_TEXTURE_READ_PBO){
+        if(m->flags || m->bytes || m->args[8])return -1;
+    }else if(mode==DG_TEXTURE_READ_STAGE){
+        if(m->flags!=DG_REPLY || m->bytes || m->args[6] || m->args[8]<=DG_MAX_BYTES)return -1;
+        DGReleaseTextureRead(c);
+    }else if(m->flags!=(DG_REPLY|DG_OUTPUT_ONLY) || m->args[6]!=1 ||
+        (mode==DG_TEXTURE_READ_LAYOUT ? (m->bytes!=sizeof(struct DGTextureReadLayout) || m->args[8]>1)
+                                     : m->args[8]!=0))return -1;
+    if(c->inside_begin){
+        if(mode!=DG_TEXTURE_READ_PBO)r->error=GL_INVALID_OPERATION;
+        else if(!c->error)c->error=GL_INVALID_OPERATION;
+        return 0;
+    }
+    GLenum prior=glGetError();if(prior && !c->error)c->error=prior;
+    GLint binding=0;glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING,&binding);
+    if(mode==DG_TEXTURE_READ_PBO){
+        /* A checked nonzero host binding makes this an offset, never a
+         * process pointer. Native GL validates mapping, range and alignment. */
+        if(binding && m->args[6]<=INTPTR_MAX){
+            void *offset=(void *)(uintptr_t)m->args[6];
+            GLint saved=0;
+            if(row_override){
+                glGetIntegerv(GL_PACK_ROW_BYTES_APPLE,&saved);
+                glPixelStorei(GL_PACK_ROW_BYTES_APPLE,row_override);
+            }
+            if(compressed)glGetCompressedTexImage(target,level,offset);
+            else glGetTexImage(target,level,format,type,offset);
+            GLenum error=glGetError();
+            if(row_override)glPixelStorei(GL_PACK_ROW_BYTES_APPLE,saved);
+            if(error){if(!c->error)c->error=error;}
+            else DGPBOWritten(c);
+        }else if(!c->error)c->error=GL_INVALID_OPERATION;
+        return 0;
+    }
+    if(binding){r->error=GL_INVALID_OPERATION;return 0;}
+    int dimensions=DGTextureReadDimensions(target);
+    if(!dimensions){r->error=GL_INVALID_ENUM;return 0;}
+    struct DGTextureReadLayout layout={0};
+    GLint values[7]={0};
+    static const GLenum keys[]={GL_PACK_ALIGNMENT,GL_PACK_ROW_LENGTH,GL_PACK_SKIP_ROWS,
+        GL_PACK_SKIP_PIXELS,GL_PACK_ROW_BYTES_APPLE,GL_PACK_IMAGE_HEIGHT,GL_PACK_SKIP_IMAGES};
+    const unsigned count=dimensions==3?7:5;
+    if(compressed){
+        GLint is_compressed=0,bytes=0;
+        glGetTexLevelParameteriv(target,level,GL_TEXTURE_COMPRESSED,&is_compressed);
+        r->error=glGetError();if(r->error)return 0;
+        if(!is_compressed){r->error=GL_INVALID_OPERATION;return 0;}
+        glGetTexLevelParameteriv(target,level,GL_TEXTURE_COMPRESSED_IMAGE_SIZE,&bytes);
+        r->error=glGetError();if(r->error)return 0;
+        if(bytes>0)layout=(struct DGTextureReadLayout){.row_bytes=bytes,.rows=1,.images=1};
+    }else{
+        size_t pixel=DGPixelSize(format,type);
+        if(!pixel){r->error=GL_INVALID_ENUM;return 0;}
+        GLint width=0,height=1,depth=1;
+        glGetTexLevelParameteriv(target,level,GL_TEXTURE_WIDTH,&width);
+        if(dimensions>=2)glGetTexLevelParameteriv(target,level,GL_TEXTURE_HEIGHT,&height);
+        if(dimensions==3)glGetTexLevelParameteriv(target,level,GL_TEXTURE_DEPTH,&depth);
+        r->error=glGetError();if(r->error)return 0;
+        if(width>0 && height>0 && depth>0){
+            for(unsigned i=0;i<count;++i)glGetIntegerv(keys[i],&values[i]);
+            r->error=glGetError();if(r->error)return 0;
+            unsigned alignment=values[0];
+            uint64_t row=(uint64_t)(values[1]?values[1]:width)*pixel;
+            GLint row_bytes=row_override?row_override:values[4];
+            layout.row_stride=row_bytes?(uint64_t)row_bytes:(row+alignment-1)&~(uint64_t)(alignment-1);
+            uint64_t image_rows=values[5]?values[5]:height;
+            if(layout.row_stride>UINT64_MAX/image_rows ||
+                (uint64_t)width*pixel>UINT32_MAX){r->error=GL_OUT_OF_MEMORY;return 0;}
+            layout.image_stride=image_rows*layout.row_stride;
+            uint64_t skip=(uint64_t)values[3]*pixel;
+            if(values[2] && layout.row_stride>(UINT64_MAX-skip)/(uint64_t)values[2]){
+                r->error=GL_OUT_OF_MEMORY;return 0;
+            }
+            skip+=(uint64_t)values[2]*layout.row_stride;
+            if(values[6] && layout.image_stride>(UINT64_MAX-skip)/(uint64_t)values[6]){
+                r->error=GL_OUT_OF_MEMORY;return 0;
+            }
+            layout.offset=skip+(uint64_t)values[6]*layout.image_stride;
+            layout.row_bytes=(uint32_t)(width*pixel);layout.rows=height;layout.images=depth;
+        }
+    }
+    uint64_t end=0;size_t bytes=DGTextureReadSize(&layout,&end);
+    if(bytes==SIZE_MAX){r->error=GL_OUT_OF_MEMORY;return 0;}
+    if(mode==DG_TEXTURE_READ_LAYOUT){
+        if(bytes>DG_MAX_BYTES && !m->args[8]){r->error=GL_OUT_OF_MEMORY;return 0;}
+        memcpy(m+1,&layout,sizeof(layout));r->result=sizeof(layout);return 0;
+    }
+    void *output=m+1;
+    if(mode==DG_TEXTURE_READ_STAGE){
+        if(bytes!=m->args[8]){r->error=GL_INVALID_OPERATION;return 0;}
+        if(!DGReserveTextureRead(c,bytes)){r->error=GL_OUT_OF_MEMORY;return 0;}
+        output=c->texture_read_stage;
+    }else if(!bytes || m->bytes!=bytes)return -1;
+    if(compressed)glGetCompressedTexImage(target,level,output);
+    else {
+        /* Send only touched image bytes, keeping byte-swap/format conversion
+         * native. Pack state is restored before any following guest command. */
+        for(unsigned i=0;i<count;++i)if(values[i]!=(i==0))glPixelStorei(keys[i],i==0);
+        glGetTexImage(target,level,format,type,output);
+        r->error=glGetError();
+        for(unsigned i=0;i<count;++i)if(values[i]!=(i==0))glPixelStorei(keys[i],values[i]);
+    }
+    if(!r->error)r->error=glGetError();
+    if(r->error && mode==DG_TEXTURE_READ_STAGE)DGReleaseTextureRead(c);
+    if(!r->error)r->result=bytes;
+    return 0;
 }
 /* Apple's native accelerated volume fast path (also reproduced on physical
  * Mavericks Intel) applies IMAGE_HEIGHT to the initial skip but advances
@@ -1203,11 +1667,11 @@ static void DGHostTexture3D(struct DGHostContext *c,int subimage,GLenum target,G
     }
     struct DGPixelState state={0};DGNativePixelState(&state);GLint skips=0;
     glGetIntegerv(GL_UNPACK_SKIP_IMAGES,&skips);
-    size_t span=DGPixelSpan3D(width,height,depth,format,type,state.row_length[0],state.alignment[0],
+    uint64_t span=DGPixelSpan3DWide(width,height,depth,format,type,state.row_length[0],state.alignment[0],
         state.skip_rows[0],state.skip_pixels[0],state.row_bytes[0],imageheight,skips);
-    if(span==SIZE_MAX) { c->error=GL_INVALID_OPERATION;return; }
-    uint64_t pixel=DGPixelSize(format,type),stride=state.row_bytes[0] ? (uint64_t)state.row_bytes[0] :
-        (((uint64_t)(state.row_length[0]?state.row_length[0]:width)*pixel+state.alignment[0]-1)/state.alignment[0])*state.alignment[0];
+    if(span==UINT64_MAX || (!pbo&&span>DG_MAX_BYTES)) { c->error=GL_INVALID_OPERATION;return; }
+    uint64_t bits=DGRasterPixelBits(format,type),stride=state.row_bytes[0] ? (uint64_t)state.row_bytes[0] :
+        (((((uint64_t)(state.row_length[0]?state.row_length[0]:width)*bits+7)/8)+state.alignment[0]-1)/state.alignment[0])*state.alignment[0];
     /* Rebinding a deleted-but-retained name must not create a new PBO. */
     if(!subimage && pbo && !glIsBuffer(state.buffers[0])) { c->error=GL_INVALID_OPERATION;return; }
     if(!subimage) {
@@ -1275,6 +1739,164 @@ static int DGHostShaderSource(struct DGHostContext *context,struct DGMessage *m,
     const char *s=DGHostPointer(m,2,(size_t)m->args[1]+1);if(!s) return -1;
     GLint length=(GLint)m->args[1];glShaderSource((GLuint)m->args[0],1,&s,&length);return 0;
 }
+static void DGHostCompileShader(struct DGHostContext *context,GLuint shader)
+{
+    GLenum error=DGCompileAdaptedShader(shader,context->inside_begin);
+    if(error&&!context->error)context->error=error;
+}
+static void DGHostGenerateMipmap(struct DGHostContext *context,GLenum target)
+{
+    /* Internal correction commands must not be recorded in a caller's
+     * native list. Leave generation there to the native list executor. */
+    if(context->list_mode){glGenerateMipmapEXT(target);return;}
+    GLenum error=DGGenerateSrgbMipmap(target,context->profile==kCGLOGLPVersion_Legacy,context->inside_begin);
+    if(error&&!context->error)context->error=error;
+}
+static const GLchar *DGHostIncludeString(struct DGMessage *m,int index,GLint length)
+{
+    return length<0?DGHostString(m,index):DGHostPointer(m,index,length?(size_t)length:1);
+}
+static int DGHostCompileShaderInclude(struct DGHostContext *c,struct DGMessage *m)
+{
+    if(m->flags || m->args[0]>UINT32_MAX || m->args[1]>DG_FEEDBACK_NAME_LIMIT)return -1;
+    for(unsigned i=2;i<16;++i)if(m->args[i])return -1;
+    GLsizei count=(GLsizei)m->args[1];
+    size_t header=(size_t)count*sizeof(GLint);
+    if(header+(size_t)count>m->bytes)return -1;
+    typedef void (*CompileProc)(GLuint,GLsizei,const GLchar *const *,const GLint *);
+    static CompileProc compile;
+    if(!compile)compile=(CompileProc)dlsym(RTLD_DEFAULT,"glCompileShaderIncludeARB");
+    if(!compile || c->inside_begin){if(!c->error)c->error=GL_INVALID_OPERATION;return 0;}
+    const GLchar *local[32],**paths=count<=32?local:malloc((size_t)count*sizeof(*paths));
+    if(!paths){if(!c->error)c->error=GL_OUT_OF_MEMORY;return 0;}
+    const GLint *sizes=(const GLint *)(m+1);
+    const char *next=(const char *)sizes+header,*end=(const char *)sizes+m->bytes;
+    int valid=1;
+    for(GLsizei i=0;i<count;++i){
+        GLint length=sizes[i];
+        if(length<0 || length>=end-next || next[length]){valid=0;break;}
+        paths[i]=next;next+=(size_t)length+1;
+    }
+    valid=valid && next==end;
+    if(valid)compile((GLuint)m->args[0],count,count?paths:NULL,count?sizes:NULL);
+    if(paths!=local)free(paths);
+    return valid?0:-1;
+}
+static int DGHostFeedbackVaryings(struct DGHostContext *c,struct DGMessage *m)
+{
+    if(m->flags || m->args[0]>UINT32_MAX || m->args[1]>DG_FEEDBACK_NAME_LIMIT ||
+        m->args[2]>UINT32_MAX || m->args[1]>m->bytes)return -1;
+    for(unsigned i=3;i<16;++i)if(m->args[i])return -1;
+    unsigned count=(unsigned)m->args[1];
+    const GLchar *local[32],**names=count<=32?local:malloc(count*sizeof(*names));
+    if(!names){if(!c->error)c->error=GL_OUT_OF_MEMORY;return 0;}
+    const char *next=(const char *)(m+1),*end=next+m->bytes;
+    for(unsigned i=0;i<count && next<end;++i){
+        const char *nul=memchr(next,0,end-next);
+        if(!nul){next=NULL;break;}
+        names[i]=next;next=nul+1;
+        if(next==end && i+1!=count){next=NULL;break;}
+    }
+    int valid=next==end;
+    if(valid)glTransformFeedbackVaryingsEXT((GLuint)m->args[0],(GLsizei)count,count?names:NULL,(GLenum)m->args[2]);
+    if(names!=local)free(names);
+    return valid?0:-1;
+}
+static int DGHostCreateShaderProgram(struct DGHostContext *c,struct DGMessage *m,struct DGReply *reply)
+{
+    if((m->flags&(DG_REPLY|DG_INPUT_ONLY))!=(DG_REPLY|DG_INPUT_ONLY) ||
+       (m->flags&~(DG_REPLY|DG_INPUT_ONLY|DG_OBSERVE_ERROR_EMPTY)) ||
+       m->args[0]>UINT32_MAX || m->args[1]>UINT32_MAX)return -1;
+    for(unsigned i=2;i<16;++i)if(m->args[i])return -1;
+    GLsizei count=(int32_t)(uint32_t)m->args[1];
+    if(count>0 && ((unsigned)count>DG_FEEDBACK_NAME_LIMIT || (unsigned)count>m->bytes))return -1;
+    typedef GLuint (*CreateProc)(GLenum,GLsizei,const GLchar *const *);
+    CreateProc create=(CreateProc)dlsym(RTLD_DEFAULT,"glCreateShaderProgramv");
+    if(!create || c->inside_begin){c->error=GL_INVALID_OPERATION;return 0;}
+    const GLchar *local[32],**strings=count<=32?local:malloc((size_t)count*sizeof(*strings));
+    if(!strings){c->error=GL_OUT_OF_MEMORY;return 0;}
+    const char *next=(const char *)(m+1),*end=next+m->bytes;
+    for(GLsizei i=0;i<count;++i){
+        const char *nul=memchr(next,0,end-next);
+        if(!nul){next=NULL;break;}
+        strings[i]=next;next=nul+1;
+    }
+    int valid=next==end;
+    if(valid){
+        GLenum compile_error=GL_NO_ERROR;
+        reply->result=DGCreateAdaptedShaderProgram(create,(GLenum)m->args[0],count,count>0?strings:NULL,&compile_error);
+        if(compile_error&&!c->error)c->error=compile_error;
+    }
+    if(strings!=local)free(strings);
+    return valid?0:-1;
+}
+static int DGHostUniformIndices(struct DGHostContext *c,struct DGMessage *m)
+{
+    if(!(m->flags&DG_REPLY) || (m->flags&~(DG_REPLY|DG_OBSERVE_ERROR_EMPTY)) ||
+       m->args[0]>UINT32_MAX || m->args[1]>DG_FEEDBACK_NAME_LIMIT)return -1;
+    for(unsigned i=3;i<16;++i)if(m->args[i])return -1;
+    unsigned count=(unsigned)m->args[1];
+    size_t output=(size_t)count*sizeof(GLuint);
+    if(m->args[2]!=(count?1u:0u) || output+count>m->bytes)return -1;
+    if(c->inside_begin || !dg_core_api.uniform_indices){c->error=GL_INVALID_OPERATION;return 0;}
+    const GLchar *local[32],**names=count<=32?local:malloc(count*sizeof(*names));
+    if(!names){c->error=GL_OUT_OF_MEMORY;return 0;}
+    char *begin=(char *)(m+1);
+    const char *next=begin+output,*end=begin+m->bytes;
+    for(unsigned i=0;i<count;++i){
+        const char *nul=memchr(next,0,end-next);
+        if(!nul){next=NULL;break;}
+        names[i]=next;next=nul+1;
+    }
+    int valid=next==end;
+    if(valid)dg_core_api.uniform_indices((GLuint)m->args[0],(GLsizei)count,
+        count?names:NULL,count?(GLuint *)begin:NULL);
+    if(names!=local)free(names);
+    return valid?0:-1;
+}
+static int DGHostUniformBlockCapacity(struct DGHostContext *c,GLuint program,GLuint block,GLint capacity)
+{
+    if(c->inside_begin || !dg_core_api.uniform_block_iv){c->error=GL_INVALID_OPERATION;return 0;}
+    GLenum prior=glGetError();if(prior && !c->error)c->error=prior;
+    GLint current=-1;
+    dg_core_api.uniform_block_iv(program,block,0x8a42,&current); /* ACTIVE_UNIFORMS */
+    GLenum error=glGetError();
+    if(error || current!=capacity){
+        if(!c->error)c->error=error?error:GL_INVALID_OPERATION;
+        return 0;
+    }
+    return 1;
+}
+static int DGHostSubroutineCapacity(struct DGHostContext *c,GLuint program,GLenum stage,
+                                   GLuint index,GLint capacity)
+{
+    if(c->inside_begin || !dg_core_api.active_subroutine_iv){
+        if(!c->error)c->error=GL_INVALID_OPERATION;return 0;
+    }
+    /* A shared program may have been relinked since the guest measured the
+     * result. Never let native reflection write past the reserved reply. */
+    GLenum prior=glGetError();if(prior && !c->error)c->error=prior;
+    GLint current=-1;
+    dg_core_api.active_subroutine_iv(program,stage,index,0x8e4a,&current);
+    GLenum error=glGetError();
+    if(error || current!=capacity){
+        if(!c->error)c->error=error?error:GL_INVALID_OPERATION;return 0;
+    }
+    return 1;
+}
+static int DGHostStateArrayCapacity(struct DGHostContext *c,GLenum count_key,GLint capacity)
+{
+    if(c->inside_begin){if(!c->error)c->error=GL_INVALID_OPERATION;return 0;}
+    GLenum prior=glGetError();if(prior && !c->error)c->error=prior;
+    GLint current=-1;
+    if(count_key==GL_MAX_VERTEX_UNITS_ARB)current=DGHostWeightUnits(c);
+    else glGetIntegerv(count_key,&current);
+    GLenum error=glGetError();
+    if(error || current!=capacity){
+        if(!c->error)c->error=error?error:GL_INVALID_OPERATION;return 0;
+    }
+    return 1;
+}
 static int DGTightTexSubImage2D(struct DGHostContext *c,struct DGMessage *m,struct DGReply *reply)
 {
     (void)reply;
@@ -1295,15 +1917,83 @@ static int DGTightTexSubImage2D(struct DGHostContext *c,struct DGMessage *m,stru
     const GLint tight[]={0,1,0,0,0};GLint saved[5];
     if(!DGPrepareScopedTextureCPUWrite(c,(GLenum)m->args[0]))return 0;
     for(unsigned i=0;i<5;++i){glGetIntegerv(keys[i],saved+i);glPixelStorei(keys[i],tight[i]);}
+    struct DGAutomaticMipmapScope automatic=DGBeginAutomaticMipmap((GLenum)m->args[0],(int32_t)m->args[1],
+        c->profile==kCGLOGLPVersion_Legacy,c->inside_begin,c->list_mode,
+        &c->error,0,DGNonzeroMipmapBasePossible(c));
     glTexSubImage2D((GLenum)m->args[0],(int32_t)m->args[1],(int32_t)m->args[2],(int32_t)m->args[3],
         width,height,(GLenum)m->args[6],(GLenum)m->args[7],m+1);
     for(unsigned i=0;i<5;++i)glPixelStorei(keys[i],saved[i]);
+    DGEndAutomaticMipmap(&automatic,NULL,&c->error);
+    return 0;
+}
+/* A data-free preflight lets GL reject invalid requests without reading a
+ * guest pointer. Validate the upload again: the executor does not trust
+ * that a guest ran a preflight or packed the points correctly. */
+static int DGHostEvaluatorInput(struct DGHostContext *c,struct DGMessage *m,
+    struct DGReply *reply,GLuint target,unsigned width,GLint ustride,GLint uorder,GLint vstride,
+    GLint vorder,int domain_valid,size_t element,int dimensions,int index,int apple)
+{
+    uint64_t preflight=m->args[15];
+    if(preflight>1 || (preflight?(m->flags!=DG_REPLY || m->bytes || m->args[index]):
+                               (m->flags || m->args[index]!=1)))return -1;
+    GLenum error=GL_NO_ERROR;
+    if(c->inside_begin || c->profile!=kCGLOGLPVersion_Legacy)error=GL_INVALID_OPERATION;
+    else {
+        GLenum prior=glGetError();if(prior && !c->error)c->error=prior;
+        GLint max_order=0,max_index=0;
+        glGetIntegerv(GL_MAX_EVAL_ORDER,&max_order);
+        if(apple)glGetIntegerv(GL_MAX_VERTEX_ATTRIBS_ARB,&max_index);
+        // Intel 10.13 and Apple Silicon both accept maps on nonzero
+        // active units and update the same evaluator map as unit zero.
+        if(!apple && DGMapDimensions(target)!=(unsigned)dimensions)error=GL_INVALID_ENUM;
+        else if((apple && (max_index<=0 || target>=(GLuint)max_index || width<1 || width>4)) ||
+            !domain_valid || uorder<1 || uorder>max_order || ustride<(GLint)width ||
+            (dimensions==2 && (vorder<1 || vorder>max_order || vstride<(GLint)width)))
+            error=GL_INVALID_VALUE;
+    }
+    if(error){if(!c->error)c->error=error;return 0;}
+    if(preflight){reply->result=1;return 0;}
+    size_t bytes=DGEvaluatorCoefficientBytes(width,uorder,vorder,element);
+    if(m->bytes!=bytes || ustride!=vorder*(GLint)width ||
+       (dimensions==2 && vstride!=(GLint)width))return -1;
+    return 1;
+}
+static int DGHostAppleEvaluatorQuery(struct DGHostContext *c,struct DGMessage *m,struct DGReply *reply,unsigned type)
+{
+    GLuint index=(GLuint)m->args[0];GLenum pname=(GLenum)m->args[1];
+    size_t element=type==0?sizeof(GLint):type==1?sizeof(GLfloat):sizeof(GLdouble);
+    unsigned kind=(pname-0x8a02)&3,dimensions=pname>=0x8a06?2:1;
+    int preflight=m->args[3]==1;
+    if(m->args[3]>1 || (preflight?(kind!=1 || m->flags!=DG_REPLY || m->bytes || m->args[2]):
+        (m->flags!=(DG_REPLY|DG_OUTPUT_ONLY) || m->args[2]!=1)))return -1;
+    if(c->inside_begin || c->profile!=kCGLOGLPVersion_Legacy){reply->error=GL_INVALID_OPERATION;return 0;}
+    GLenum prior=glGetError();if(prior && !c->error)c->error=prior;
+    size_t bytes=(kind==3?2*dimensions:kind==2?dimensions:1)*element;
+    if(kind==1){
+        GLint width=0,order[2]={0,1};
+        glGetVertexAttribivARB(index,pname-1,&width);
+        glGetVertexAttribivARB(index,pname+1,order);
+        reply->error=glGetError();if(reply->error)return 0;
+        bytes=DGEvaluatorCoefficientBytes((unsigned)width,order[0],order[1],element);
+        if(bytes==SIZE_MAX){reply->error=GL_INVALID_OPERATION;return 0;}
+    }
+    if(preflight){reply->result=bytes;return 0;}
+    if(m->bytes!=bytes)return -1;
+    void *out=m+1;
+    if(type==0)glGetVertexAttribivARB(index,pname,out);
+    else if(type==1)glGetVertexAttribfvARB(index,pname,out);
+    else glGetVertexAttribdvARB(index,pname,out);
+    reply->error=glGetError();
+    if(!reply->error)reply->result=bytes;
     return 0;
 }
 static int DGExecute(struct DGHostContext *context,struct DGMessage *dg_wire_message,struct DGReply *reply)
 {
     switch(dg_wire_message->op) {
+/* Adapt our own typed dispatch call, not an import in Apple's framework. */
+#define glCompileShader(shader) DGHostCompileShader(context,(shader))
 #include "direct-host-generated.inc"
+#undef glCompileShader
     default:context->error=GL_INVALID_OPERATION;return 0;
     }
 }
@@ -1331,11 +2021,19 @@ static int DGRendererMemory(struct DGHostContext *context,struct DGReply *reply)
 struct DGInterpreter {
     struct DGHostContext contexts[256];
     unsigned next,client_features;
+    uint32_t core_extension_candidates;
     int hello,service_only;
     uint64_t surface_namespace[2];
     struct DGSurfaceHold *surface_holds;
     uint32_t next_surface_hold;
+#ifdef VIM_PASSTHROUGH_OPENGL_PACKET_JOURNAL
+    int journal_fd,journal_depth;
+    uint64_t journal_bytes;
+#endif
 };
+#ifdef VIM_PASSTHROUGH_OPENGL_PACKET_JOURNAL
+#include "../probes/opengl-packet-journal.inc"
+#endif
 #ifdef VIM_VRAM_RENDER_TARGET_EXPERIMENT
 #include "direct-backing-read-only.inc"
 static int DGBackingPacketMayWrite(uint32_t operation)
@@ -1346,7 +2044,7 @@ static int DGBackingPacketMayWrite(uint32_t operation)
     case DG_BACKING_RENDER_DEFER:case DG_BACKING_COMPLETION_WAIT:case DG_BACKING_COMPLETION_RELEASE:case DG_BACKING_COMPLETION_CHECK:
     case DG_FLUSH_DRAWABLE_STATE:case DG_FLUSH_IOSURFACE_STATE:case DG_BIND_DRAWABLE_TEXTURE:
     case DG_ERROR:case DG_ERROR_STATE:case DG_STRING:case DG_COMMON_STATE:case DG_VRAM_STATS:
-    case DG_DRAWABLE_DAMAGE:case DG_UNIFORM_QUERY:return 0;
+    case DG_DRAWABLE_DAMAGE:case DG_UNIFORM_QUERY:case DG_TEXTURE_READ:return 0;
     default:return !(operation>=DG_SYNC_FENCE && operation<=DG_SYNC_GET);
     }
 }
@@ -1357,12 +2055,15 @@ static int DGHeaderValid(const struct DGMessage *header)
        header->bytes<2*sizeof(struct DGCompactScalar) || header->bytes>DG_BATCH_BYTES-sizeof(*header)))return 0;
     return !(header->bytes>DG_MAX_BYTES || (header->flags&~(DG_REPLY|DG_OUTPUT_ONLY|DG_INPUT_ONLY|DG_OBSERVE_ERROR_EMPTY)) ||
            ((header->flags&DG_OBSERVE_ERROR_EMPTY) && (!(header->flags&DG_REPLY)||!header->context)) ||
-           ((header->flags&DG_INPUT_ONLY) && ((header->op!=DG_SURFACE_UPLOAD && header->op!=DG_PBO_DELETE && header->op!=DG_SURFACE_PUBLISH_REGIONS && header->op!=DG_SURFACE_COPY_REGIONS && header->op!=DG_SURFACE_SEALED_REGIONS && header->op!=DG_VRAM_PUBLISH_DRAWABLE && header->op!=DG_VRAM_IMPORT_DRAWABLE && header->op!=DG_VRAM_PATCH_DRAWABLE && header->op!=DG_IOSURFACE_TEXTURE && header->op!=DG_IOSURFACE_TEXTURE_PACKED && header->op!=DG_BACKING_RENDER_BEGIN && header->op!=DG_BACKING_RENDER_CONTINUE) || !(header->flags&DG_REPLY) || (header->flags&DG_OUTPUT_ONLY))) ||
+           ((header->flags&DG_INPUT_ONLY) && ((header->op!=DG_BUFFER_TRANSFER && header->op!=DG_SURFACE_UPLOAD && header->op!=DG_PBO_DELETE && header->op!=DG_SURFACE_PUBLISH_REGIONS && header->op!=DG_SURFACE_COPY_REGIONS && header->op!=DG_SURFACE_SEALED_REGIONS && header->op!=DG_VRAM_PUBLISH_DRAWABLE && header->op!=DG_VRAM_IMPORT_DRAWABLE && header->op!=DG_VRAM_PATCH_DRAWABLE && header->op!=DG_IOSURFACE_TEXTURE && header->op!=DG_IOSURFACE_TEXTURE_PACKED && header->op!=DG_BACKING_RENDER_BEGIN && header->op!=DG_BACKING_RENDER_CONTINUE && header->op!=DG_OP_create_shader_programv) || !(header->flags&DG_REPLY) || (header->flags&DG_OUTPUT_ONLY))) ||
            ((header->flags&DG_OUTPUT_ONLY) &&
             ((header->op!=DG_UNPACK_SNAPSHOT && header->op!=DG_READ_DRAWABLE && header->op!=DG_READ_DRAWABLE_RECT && header->op!=DG_SYNC_GET &&
-              header->op!=DG_BUFFER_QUERY && header->op!=DG_BUFFER_READ && header->op!=DG_MAP_BEGIN &&
+              header->op!=DG_BUFFER_QUERY && header->op!=DG_BUFFER_READ && header->op!=DG_BUFFER_TRANSFER && header->op!=DG_MAP_BEGIN &&
               header->op!=DG_MAP_INFO && header->op!=DG_MAP_READ && header->op!=DG_PBO_CLIENT_STACK &&
-              header->op!=DG_SURFACE_HOLD_READ && header->op!=DG_VRAM_STATS && header->op!=DG_PROGRAM_STRING && header->op!=DG_COMMON_STATE && header->op!=DG_ERROR_STATE && header->op!=DG_FLUSH_IOSURFACE_STATE && header->op!=DG_READ_IOSURFACE_TEXTURE && header->op!=DG_UNIFORM_QUERY
+              header->op!=DG_SURFACE_HOLD_READ && header->op!=DG_VRAM_STATS && header->op!=DG_PROGRAM_STRING && header->op!=DG_COMMON_STATE && header->op!=DG_ERROR_STATE && header->op!=DG_FLUSH_IOSURFACE_STATE && header->op!=DG_READ_IOSURFACE_TEXTURE && header->op!=DG_UNIFORM_QUERY &&
+              header->op!=DG_OP_get_mapdv && header->op!=DG_OP_get_mapfv && header->op!=DG_OP_get_mapiv &&
+              header->op!=DG_OP_get_vertex_attribiv_ARB && header->op!=DG_OP_get_vertex_attribfv_ARB && header->op!=DG_OP_get_vertex_attribdv_ARB &&
+              header->op!=DG_TEXTURE_READ && header->op!=DG_STIPPLE_READ && header->op!=DG_OP_render_mode && header->op!=DG_RETAINED_RENDER_READ
 #ifdef VIM_PASSTHROUGH_OPENGL_COMMAND_PROFILE
               && header->op!=DG_COMMAND_PROFILE
 #endif
@@ -1387,6 +2088,10 @@ static int DGInterpreterFastReadCommand(struct DGInterpreter *s,int fd,struct DG
 }
 static int DGInterpreterFastRead(struct DGInterpreter *s,int fd,struct DGMessage *header)
 {
+#ifdef VIM_PASSTHROUGH_OPENGL_PACKET_JOURNAL
+    /* The diagnostic must record the real command before any fast reply. */
+    if(getenv("VIM_GL_PACKET_JOURNAL"))return 0;
+#endif
 #ifdef VIM_PASSTHROUGH_OPENGL_COMMAND_PROFILE
     struct DGCommandProfileStamp profile={0};
     if(header->op==DG_READ_DRAWABLE || header->op==DG_READ_DRAWABLE_RECT)profile=DGCommandProfileBegin();
@@ -1416,6 +2121,9 @@ static int DGInterpretCommand(struct DGInterpreter *s,int fd,struct DGMessage *m
     struct DGHostContext *contexts=s->contexts;
     struct DGReply reply={.bytes=(m->flags&DG_INPUT_ONLY)?0:m->bytes};int error=0;
     struct DGHostContext *context=m->context && m->context<s->next ? &contexts[m->context] : NULL;
+    if(context && (context->element_vbo_limit || context->element_snapshot_count || context->element_snapshot_error) && !context->inside_begin &&
+       m->op!=DG_ARRAY_ELEMENT_STATE && m->op!=DG_OP_begin && m->op!=DG_OP_array_element)
+        DGHostReleaseArrayElements(context);
     if(context && context->cgl && context->drawable && context->drawable->prepared && DGPreparedNeedsStorage(m->op)){
         if(CGLGetCurrentContext()!=context->cgl && CGLSetCurrentContext(context->cgl))return -1;
         if(!DGResolvePreparedDrawable(context)){
@@ -1441,7 +2149,7 @@ static int DGInterpretCommand(struct DGInterpreter *s,int fd,struct DGMessage *m
        // These private wire packets are actual GL draws into the CURRENT
        // FBO, not exports of the private drawable. Materializing here makes
        // every compositor array draw abandon its scoped shared target.
-       m->op!=DG_DRAW && m->op!=DG_DRAW_INSTANCED_ARRAYS &&
+       m->op!=DG_DRAW && m->op!=DG_DRAW_INSTANCED_ARRAYS && m->op!=DG_ARRAY_ELEMENT_STATE &&
        m->op!=DG_VRAM_STATS && !(m->op>=DG_SYNC_FENCE && m->op<=DG_SYNC_GET)) {
         if((CGLGetCurrentContext()!=context->cgl && CGLSetCurrentContext(context->cgl)) ||
            !DGVRAMRenderMaterialize(context))return -1;
@@ -1542,7 +2250,164 @@ static int DGInterpretCommand(struct DGInterpreter *s,int fd,struct DGMessage *m
                 struct DGHelloFeatures features={DG_HELLO_FEATURES_MAGIC,
                     DG_FEATURE_IOSURFACE_OUTPUT_READ|DG_FEATURE_CORE_COMMON_STATE|DG_FEATURE_IOSURFACE_RED8|
                     DG_FEATURE_COMPRESSED_TEXTURE_UPLOAD|DG_FEATURE_LARGE_IOSURFACE_WRITES|DG_FEATURE_IOSURFACE_PACKED_422|
-                    DG_FEATURE_TEXTURE_IMAGE_READBACK|DG_FEATURE_SURFACE_UPLOAD_ROWS};
+                    DG_FEATURE_TEXTURE_IMAGE_READBACK|
+                    DG_FEATURE_EVALUATOR_QUERIES|DG_FEATURE_SURFACE_UPLOAD_ROWS|
+                    DG_FEATURE_EVALUATOR_UPLOADS|DG_FEATURE_INTEGER_PARAMETERS|
+                    DG_FEATURE_TEXTURE_READ_LAYOUT|DG_FEATURE_TEXTURE_READ_CHUNKS|
+                    DG_FEATURE_TRANSFORM_FEEDBACK_NAMES|DG_FEATURE_INDEXED_STATE|DG_FEATURE_INTEGER_VERTEX_ARRAYS,
+                    DG_HELLO_FEATURES2_MAGIC,0,DG_HELLO_FEATURES3_MAGIC,DG_FEATURE3_STIPPLE_READ|DG_FEATURE3_COMPACT_IMAGING|DG_FEATURE3_COMPACT_TEXTURE|DG_FEATURE3_BIG_ENDIAN_ARRAY_ELEMENT};
+                if(dlsym(RTLD_DEFAULT,"glClearBufferiv") && dlsym(RTLD_DEFAULT,"glClearBufferuiv") &&
+                   dlsym(RTLD_DEFAULT,"glClearBufferfv") && dlsym(RTLD_DEFAULT,"glClearBufferfi"))
+                    features.features|=DG_FEATURE_CLEAR_BUFFER;
+                if(dg_core_api.signed_result && dg_core_api.unsigned_result &&
+                   dg_core_api.signed_result_ext && dg_core_api.unsigned_result_ext && dg_core_api.query_counter)
+                    features.features|=DG_FEATURE_TIMER_QUERY;
+                if(dg_core_api.uniform_indices && dg_core_api.uniform_block_iv &&
+                   dlsym(RTLD_DEFAULT,"glGetActiveUniformsiv") && dlsym(RTLD_DEFAULT,"glGetActiveUniformName") &&
+                   dlsym(RTLD_DEFAULT,"glGetUniformBlockIndex") && dlsym(RTLD_DEFAULT,"glGetActiveUniformBlockName") &&
+                   dlsym(RTLD_DEFAULT,"glUniformBlockBinding"))
+                    features.features|=DG_FEATURE_UNIFORM_BLOCKS;
+                if(dlsym(RTLD_DEFAULT,"glGetInteger64i_v"))features.features|=DG_FEATURE_INDEXED_INT64;
+                if(dg_core_api.samplers)features.features|=DG_FEATURE_SAMPLERS;
+                if(dg_core_api.samplers)features.features2|=DG_FEATURE2_SRGB_DECODE;
+                features.features2|=DG_FEATURE2_ADDITIONAL_STATE;
+                features.features2|=DG_FEATURE2_LARGE_TEXTURE_INPUT;
+                features.features2|=DG_FEATURE2_LARGE_BUFFER_TRANSFER;
+                features.features2|=DG_FEATURE2_RASTER_STREAM;
+                if(dlsym(RTLD_DEFAULT,"glTexBuffer"))features.features|=DG_FEATURE_TEXTURE_BUFFER;
+                if(dlsym(RTLD_DEFAULT,"glTexImage2DMultisample") && dlsym(RTLD_DEFAULT,"glTexImage3DMultisample") &&
+                   dlsym(RTLD_DEFAULT,"glGetMultisamplefv") && dlsym(RTLD_DEFAULT,"glSampleMaski"))
+                    features.features|=DG_FEATURE_MULTISAMPLE_TEXTURE;
+                if(dlsym(RTLD_DEFAULT,"glBindFragDataLocationIndexed") && dlsym(RTLD_DEFAULT,"glGetFragDataIndex"))
+                    features.features|=DG_FEATURE_DUAL_SOURCE_BLEND;
+                if(dlsym(RTLD_DEFAULT,"glBlendFunci") && dlsym(RTLD_DEFAULT,"glBlendFuncSeparatei") &&
+                   dlsym(RTLD_DEFAULT,"glBlendEquationi") && dlsym(RTLD_DEFAULT,"glBlendEquationSeparatei"))
+                    features.features|=DG_FEATURE_INDEXED_BLEND;
+                if(dlsym(RTLD_DEFAULT,"glCreateShaderProgramv") && dlsym(RTLD_DEFAULT,"glUseProgramStages") &&
+                   dlsym(RTLD_DEFAULT,"glGetProgramPipelineInfoLog") && dlsym(RTLD_DEFAULT,"glProgramParameteri") &&
+                   dlsym(RTLD_DEFAULT,"glProgramUniformMatrix4x3dv"))
+                    features.features|=DG_FEATURE_PROGRAM_PIPELINE;
+                if(dg_core_api.uniform_double && dlsym(RTLD_DEFAULT,"glUniform1d") &&
+                   dlsym(RTLD_DEFAULT,"glUniformMatrix4x3dv"))
+                    features.features|=DG_FEATURE_FP64_UNIFORM;
+                if(dg_core_api.enable_indexed && dg_core_api.disable_indexed &&
+                   dlsym(RTLD_DEFAULT,"glViewportArrayv") && dlsym(RTLD_DEFAULT,"glScissorArrayv") &&
+                   dlsym(RTLD_DEFAULT,"glDepthRangeArrayv") && dlsym(RTLD_DEFAULT,"glGetFloati_v") &&
+                   dlsym(RTLD_DEFAULT,"glGetDoublei_v"))
+                    features.features|=DG_FEATURE_VIEWPORT_ARRAY;
+                if(dg_core_api.gl4_profile)features.features|=DG_FEATURE_GL4_PROFILE;
+                if(dg_core_api.gl4_profile && dlsym(RTLD_DEFAULT,"glPatchParameteri") &&
+                   dlsym(RTLD_DEFAULT,"glPatchParameterfv"))features.features2|=DG_FEATURE2_TESSELLATION;
+                if(dg_core_api.gl4_profile && dg_core_api.divisor && dg_core_api.draw_feedback &&
+                   dg_core_api.draw_feedback_stream && dlsym(RTLD_DEFAULT,"glGenTransformFeedbacks") &&
+                   dlsym(RTLD_DEFAULT,"glDeleteTransformFeedbacks") && dlsym(RTLD_DEFAULT,"glBindTransformFeedback") &&
+                   dlsym(RTLD_DEFAULT,"glIsTransformFeedback") && dlsym(RTLD_DEFAULT,"glPauseTransformFeedback") &&
+                   dlsym(RTLD_DEFAULT,"glResumeTransformFeedback") && dlsym(RTLD_DEFAULT,"glBeginQueryIndexed") &&
+                   dlsym(RTLD_DEFAULT,"glEndQueryIndexed") && dlsym(RTLD_DEFAULT,"glGetQueryIndexediv"))
+                    features.features2|=DG_FEATURE2_FEEDBACK_OBJECTS;
+                if(dlsym(RTLD_DEFAULT,"glGetStringi"))features.features2|=DG_FEATURE2_CORE_EXTENSIONS;
+#if defined(__x86_64__)
+                /* ARM Metal's software-stage subroutine path can fault in
+                 * native GL. Do not advertise that optional family with the
+                 * old private renderer rebinding removed. Intel stays native. */
+                if(dg_core_api.gl4_profile && dg_core_api.active_subroutine_iv &&
+                   dlsym(RTLD_DEFAULT,"glGetSubroutineUniformLocation") && dlsym(RTLD_DEFAULT,"glGetSubroutineIndex") &&
+                   dlsym(RTLD_DEFAULT,"glGetActiveSubroutineUniformName") && dlsym(RTLD_DEFAULT,"glGetActiveSubroutineName") &&
+                   dlsym(RTLD_DEFAULT,"glUniformSubroutinesuiv") && dlsym(RTLD_DEFAULT,"glGetUniformSubroutineuiv") &&
+                   dlsym(RTLD_DEFAULT,"glGetProgramStageiv"))
+                    features.features2|=DG_FEATURE2_SUBROUTINES;
+#endif
+                if(dlsym(RTLD_DEFAULT,"glReleaseShaderCompiler") && dlsym(RTLD_DEFAULT,"glShaderBinary") &&
+                   dlsym(RTLD_DEFAULT,"glGetShaderPrecisionFormat") &&
+                   dlsym(RTLD_DEFAULT,"glDepthRangef") && dlsym(RTLD_DEFAULT,"glClearDepthf"))
+                    features.features2|=DG_FEATURE2_ES2_COMPAT;
+                if(dlsym(RTLD_DEFAULT,"glVertexAttribP1ui") && dlsym(RTLD_DEFAULT,"glVertexAttribP2ui") &&
+                   dlsym(RTLD_DEFAULT,"glVertexAttribP3ui") && dlsym(RTLD_DEFAULT,"glVertexAttribP4ui") &&
+                   dlsym(RTLD_DEFAULT,"glVertexAttribP1uiv") && dlsym(RTLD_DEFAULT,"glVertexAttribP2uiv") &&
+                   dlsym(RTLD_DEFAULT,"glVertexAttribP3uiv") && dlsym(RTLD_DEFAULT,"glVertexAttribP4uiv"))
+                    features.features2|=DG_FEATURE2_PACKED_ATTRIBS;
+                if(dlsym(RTLD_DEFAULT,"glGetProgramBinary") && dlsym(RTLD_DEFAULT,"glProgramBinary") &&
+                   dlsym(RTLD_DEFAULT,"glProgramParameteri"))features.features2|=DG_FEATURE2_PROGRAM_BINARY;
+                if(dlsym(RTLD_DEFAULT,"glMinSampleShading"))features.features2|=DG_FEATURE2_SAMPLE_SHADING;
+                if(dlsym(RTLD_DEFAULT,"glGetInternalformativ"))features.features2|=DG_FEATURE2_INTERNAL_FORMAT;
+                if(dlsym(RTLD_DEFAULT,"glPixelMapfv") && dlsym(RTLD_DEFAULT,"glPixelMapuiv") &&
+                   dlsym(RTLD_DEFAULT,"glPixelMapusv") && dlsym(RTLD_DEFAULT,"glGetPixelMapfv") &&
+                   dlsym(RTLD_DEFAULT,"glGetPixelMapuiv") && dlsym(RTLD_DEFAULT,"glGetPixelMapusv"))
+                    features.features2|=DG_FEATURE2_PIXEL_MAPS;
+                if(dlsym(RTLD_DEFAULT,"glBitmap") && dlsym(RTLD_DEFAULT,"glDrawPixels") &&
+                   dlsym(RTLD_DEFAULT,"glPolygonStipple") && dlsym(RTLD_DEFAULT,"glGetPolygonStipple"))
+                    features.features2|=DG_FEATURE2_COMPAT_RASTER;
+                if(dlsym(RTLD_DEFAULT,"glEdgeFlagPointer") && dlsym(RTLD_DEFAULT,"glIndexPointer"))
+                    features.features2|=DG_FEATURE2_AUX_VERTEX_ARRAYS;
+                if(dlsym(RTLD_DEFAULT,"glArrayElement"))features.features2|=DG_FEATURE2_ARRAY_ELEMENT;
+                if(dlsym(RTLD_DEFAULT,"glLabelObjectEXT") && dlsym(RTLD_DEFAULT,"glGetObjectLabelEXT"))
+                    features.features2|=DG_FEATURE2_DEBUG_LABEL;
+                if(dlsym(RTLD_DEFAULT,"glNamedStringARB") && dlsym(RTLD_DEFAULT,"glDeleteNamedStringARB") &&
+                   dlsym(RTLD_DEFAULT,"glCompileShaderIncludeARB") && dlsym(RTLD_DEFAULT,"glIsNamedStringARB") &&
+                   dlsym(RTLD_DEFAULT,"glGetNamedStringARB") && dlsym(RTLD_DEFAULT,"glGetNamedStringivARB"))
+                    features.features2|=DG_FEATURE2_SHADER_INCLUDE;
+                if(dlsym(RTLD_DEFAULT,"glEnableVertexAttribAPPLE") && dlsym(RTLD_DEFAULT,"glDisableVertexAttribAPPLE") &&
+                   dlsym(RTLD_DEFAULT,"glIsVertexAttribEnabledAPPLE") && dlsym(RTLD_DEFAULT,"glMapVertexAttrib1dAPPLE") &&
+                   dlsym(RTLD_DEFAULT,"glMapVertexAttrib1fAPPLE") && dlsym(RTLD_DEFAULT,"glMapVertexAttrib2dAPPLE") &&
+                   dlsym(RTLD_DEFAULT,"glMapVertexAttrib2fAPPLE"))
+                    features.features2|=DG_FEATURE2_APPLE_EVALUATORS;
+                if(dlsym(RTLD_DEFAULT,"glWeightPointerARB") && dlsym(RTLD_DEFAULT,"glVertexBlendARB"))
+                    features.features2|=DG_FEATURE2_VERTEX_BLEND;
+                if(dlsym(RTLD_DEFAULT,"glPointSizePointerAPPLE") && dlsym(RTLD_DEFAULT,"glVertexPointSizefAPPLE"))
+                    features.features2|=DG_FEATURE2_POINT_SIZE_ARRAY;
+                if(dlsym(RTLD_DEFAULT,"glObjectPurgeableAPPLE") && dlsym(RTLD_DEFAULT,"glObjectUnpurgeableAPPLE") &&
+                   dlsym(RTLD_DEFAULT,"glGetObjectParameterivAPPLE"))
+                    features.features2|=DG_FEATURE2_OBJECT_PURGEABLE;
+                /* Wire capabilities are separate from profile advertisement. */
+                if(dlsym(RTLD_DEFAULT,"glColorTableParameterfv") && dlsym(RTLD_DEFAULT,"glColorTableParameteriv") &&
+                   dlsym(RTLD_DEFAULT,"glGetColorTableParameterfv") && dlsym(RTLD_DEFAULT,"glGetColorTableParameteriv") &&
+                   dlsym(RTLD_DEFAULT,"glConvolutionParameterfv") && dlsym(RTLD_DEFAULT,"glConvolutionParameteriv") &&
+                   dlsym(RTLD_DEFAULT,"glGetConvolutionParameterfv") && dlsym(RTLD_DEFAULT,"glGetConvolutionParameteriv") &&
+                   dlsym(RTLD_DEFAULT,"glGetHistogramParameterfv") && dlsym(RTLD_DEFAULT,"glGetHistogramParameteriv") &&
+                   dlsym(RTLD_DEFAULT,"glGetMinmaxParameterfv") && dlsym(RTLD_DEFAULT,"glGetMinmaxParameteriv"))
+                    features.features2|=DG_FEATURE2_IMAGING_PARAMETERS;
+                if((features.features2&DG_FEATURE2_IMAGING_PARAMETERS) &&
+                   dlsym(RTLD_DEFAULT,"glColorTable") && dlsym(RTLD_DEFAULT,"glColorSubTable") &&
+                   dlsym(RTLD_DEFAULT,"glGetColorTable") && dlsym(RTLD_DEFAULT,"glConvolutionFilter1D") &&
+                   dlsym(RTLD_DEFAULT,"glConvolutionFilter2D") && dlsym(RTLD_DEFAULT,"glGetConvolutionFilter") &&
+                   dlsym(RTLD_DEFAULT,"glSeparableFilter2D") && dlsym(RTLD_DEFAULT,"glGetSeparableFilter") &&
+                   dlsym(RTLD_DEFAULT,"glGetHistogram") && dlsym(RTLD_DEFAULT,"glGetMinmax"))
+                    features.features2|=DG_FEATURE2_IMAGING_TRANSFERS;
+                /* Retained entry points are transport capabilities. The
+                 * observed legacy combiner exports are not an advertised
+                 * rendering extension on the tested hardware. */
+                if(dlsym(RTLD_DEFAULT,"glGetCombinerInputParameterfvNV") &&
+                   dlsym(RTLD_DEFAULT,"glGetCombinerInputParameterivNV") &&
+                   dlsym(RTLD_DEFAULT,"glGetCombinerOutputParameterfvNV") &&
+                   dlsym(RTLD_DEFAULT,"glGetCombinerOutputParameterivNV") &&
+                   dlsym(RTLD_DEFAULT,"glGetFinalCombinerInputParameterfvNV") &&
+                   dlsym(RTLD_DEFAULT,"glGetFinalCombinerInputParameterivNV") &&
+                   dlsym(RTLD_DEFAULT,"glCombinerStageParameterfvNV") &&
+                   dlsym(RTLD_DEFAULT,"glGetCombinerStageParameterfvNV"))
+                    features.features2|=DG_FEATURE2_LEGACY_COMBINERS;
+                if(dlsym(RTLD_DEFAULT,"glSamplePass"))
+                    features.features2|=DG_FEATURE2_LEGACY_SAMPLE_PASS;
+                if(dlsym(RTLD_DEFAULT,"glSelectBuffer") && dlsym(RTLD_DEFAULT,"glFeedbackBuffer") &&
+                   dlsym(RTLD_DEFAULT,"glRenderMode"))features.features2|=DG_FEATURE2_RETAINED_RENDER;
+                if(dg_core_api.vertex_attrib_lpointer && dlsym(RTLD_DEFAULT,"glGetVertexAttribLdv") &&
+                   dlsym(RTLD_DEFAULT,"glVertexAttribL1d") && dlsym(RTLD_DEFAULT,"glVertexAttribL1dv") &&
+                   dlsym(RTLD_DEFAULT,"glVertexAttribL2d") && dlsym(RTLD_DEFAULT,"glVertexAttribL2dv") &&
+                   dlsym(RTLD_DEFAULT,"glVertexAttribL3d") && dlsym(RTLD_DEFAULT,"glVertexAttribL3dv") &&
+                   dlsym(RTLD_DEFAULT,"glVertexAttribL4d") && dlsym(RTLD_DEFAULT,"glVertexAttribL4dv"))
+                    features.features2|=DG_FEATURE2_FP64_VERTEX;
+                if(dg_core_api.divisor && dg_core_api.arrays_instanced && dg_core_api.elements_instanced &&
+                   dg_core_api.buffer_parameter64 &&
+                   dg_core_api.draw_arrays_indirect && dg_core_api.draw_elements_indirect)
+                    features.features2|=DG_FEATURE2_DRAW_INDIRECT;
+                if(dg_core_api.elements_base && dg_core_api.range_elements_base && dg_core_api.instanced_elements_base)
+                    features.features|=DG_FEATURE_BASE_VERTEX;
+                if(dg_core_api.multi_arrays && dg_core_api.multi_elements && dg_core_api.multi_base)
+                    features.features|=DG_FEATURE_MULTI_DRAW;
+                if((features.features&(DG_FEATURE_BASE_VERTEX|DG_FEATURE_MULTI_DRAW))==
+                   (DG_FEATURE_BASE_VERTEX|DG_FEATURE_MULTI_DRAW))
+                    features.features2|=DG_FEATURE2_APPLE_ARRAYS;
+                if(features.features2&DG_FEATURE2_CORE_EXTENSIONS)
+                    s->core_extension_candidates=DGHostCoreExtensionCandidates(features.features,features.features2);
                 memcpy((void *)layout,&features,sizeof(features));
             }
         }
@@ -1562,7 +2427,9 @@ static int DGInterpretCommand(struct DGInterpreter *s,int fd,struct DGMessage *m
         uint64_t share=m->args[0];
         unsigned profile=m->args[5]?(unsigned)m->args[5]:kCGLOGLPVersion_Legacy;
         if(s->next>=256 || share>=s->next || (share && !contexts[share].cgl) || m->args[1]>24 || m->args[2]>8 || m->args[3]>1 || m->args[4]>1 ||
-            (m->args[5] && m->args[5]!=kCGLOGLPVersion_Legacy && m->args[5]!=kCGLOGLPVersion_3_2_Core)) error=-1;
+            (m->args[5] && m->args[5]!=kCGLOGLPVersion_Legacy &&
+             m->args[5]!=kCGLOGLPVersion_3_2_Core && m->args[5]!=DG_CGL_PROFILE_GL4)) error=-1;
+        else if(profile==DG_CGL_PROFILE_GL4 && !dg_core_api.gl4_profile)reply.error=GL_INVALID_OPERATION;
         else if(share && contexts[share].profile!=profile)reply.error=GL_INVALID_OPERATION;
         else {
             pthread_once(&dg_core_once,DGLoadCoreAPI);
@@ -1609,8 +2476,11 @@ static int DGInterpretCommand(struct DGInterpreter *s,int fd,struct DGMessage *m
         // A destroyed context disappears from the later endpoint-wide drain.
         // Its last producer use must therefore finish HERE, not just submit.
         if(context->inside_begin){glEnd();context->inside_begin=0;}
+        DGHostReleaseArrayElements(context);
+        DGReleaseTextureRead(context);
         DGSubmitIOSurfaceWrites(context);glFinish();
         DGDisplaySenderStop(context);DGDestroySurfaceLeases(context);DGDestroyDrawables(context);DGDestroyFences(context);DGDestroyAliases(context);CGLSetCurrentContext(NULL);CGLDestroyContext(context->cgl);
+        DGHostFreeRenderBuffers(context);
         memset(context,0,sizeof(*context));
     } else if(m->op==DG_RESIZE
 #ifdef VIM_BACKING_CANONICAL_EXPERIMENT
@@ -1632,9 +2502,15 @@ static int DGInterpretCommand(struct DGInterpreter *s,int fd,struct DGMessage *m
     } else if(m->op==DG_ERROR_STATE) {
         error=DGReadErrorState(context,m,&reply);
     } else if(m->op==DG_STRING) {
-        char *out=DGHostPointer(m,1,4096);
         GLenum key=(GLenum)m->args[0];
-        if(!out || (key!=GL_VENDOR && key!=GL_RENDERER && key!=GL_VERSION && key!=GL_SHADING_LANGUAGE_VERSION &&
+        char *out=DGHostPointer(m,1,4096);
+        if(m->args[0]==0x821d){ /* GL_NUM_EXTENSIONS */
+            if(m->bytes || m->flags!=DG_REPLY || context->profile==kCGLOGLPVersion_Legacy)error=-1;
+            else {
+                for(unsigned i=1;i<16;++i)if(m->args[i])error=-1;
+                if(!error)reply.result=DGHostCoreExtensionMask(s->core_extension_candidates);
+            }
+        }else if(!out || (key!=GL_VENDOR && key!=GL_RENDERER && key!=GL_VERSION && key!=GL_SHADING_LANGUAGE_VERSION &&
             key!=GL_PROGRAM_ERROR_STRING_ARB && key!=GL_EXTENSIONS)) error=-1;
         else if(key==GL_EXTENSIONS){
             const char *ext=context->profile==kCGLOGLPVersion_Legacy?(const char *)glGetString(GL_EXTENSIONS):NULL;
@@ -1657,11 +2533,21 @@ static int DGInterpretCommand(struct DGInterpreter *s,int fd,struct DGMessage *m
             // both ARB targets; the native/forwarded qualification exercises
             // vertex outputs, parameter/query/source contracts and GPU pixels
             // in both guest widths. Admit only what this native context has.
-            snprintf(out,4096,"%s%s%s%s%s",DG_COMPATIBILITY_EXTENSIONS,
+            /* ARB_depth_texture adds no entry points: DEPTH_COMPONENT
+             * uploads, copies and readback, DEPTH_TEXTURE_MODE, compare
+             * state and TEXTURE_DEPTH_SIZE already reach native GL through
+             * the generic texture codecs, for old clients as well. Apps such
+             * as Pro Apps and games gate shadow and depth effects on the
+             * string, not on the GL 1.4 core version. */
+            snprintf(out,4096,"%s%s%s%s%s%s",DG_COMPATIBILITY_EXTENSIONS,
+                DGHostHasExtension(ext,"GL_ARB_depth_texture")?" GL_ARB_depth_texture":"",
                 DGHostHasExtension(ext,"GL_ARB_fragment_program")?" GL_ARB_fragment_program":"",
                 DGHostHasExtension(ext,"GL_ARB_vertex_program")?" GL_ARB_vertex_program":"",
                 DGHostHasExtension(ext,"GL_ARB_texture_non_power_of_two")?" GL_ARB_texture_non_power_of_two":"",
                 video?" GL_EXT_texture_rectangle GL_APPLE_ycbcr_422 GL_APPLE_client_storage GL_APPLE_texture_range":"");
+            if((m->args[2]&DG_CAP_PIXEL_BUFFERS) && DGHostHasExtension(ext,"GL_ARB_pixel_buffer_object")){
+                size_t used=strlen(out);snprintf(out+used,4096-used," GL_ARB_pixel_buffer_object");
+            }
             if(m->args[3]>=1){
                 /* Complete interface families, not a copy of every native
                  * extension. Native availability AND a new guest decoder
@@ -1673,6 +2559,57 @@ static int DGInterpretCommand(struct DGInterpreter *s,int fd,struct DGMessage *m
                     if(DGHostHasExtension(ext,completed[i])){
                         size_t used=strlen(out);snprintf(out+used,4096-used," %s",completed[i]);
                     }
+            }
+            DGAppendIndexedExtensions(out,4096,ext,m->args[3],m->args[4]);
+            DGAppendTextureExtensions(out,4096,ext,m->args[3],m->args[4],m->args[5]);
+            /* Old clients echo the executor's entire features2 word,
+             * including bits they cannot implement. Require the client
+             * dispatch revision before advertising these families. */
+            if(m->args[3]>=3 && DGHostHasExtension(ext,"GL_EXT_bindable_uniform") &&
+               dlsym(RTLD_DEFAULT,"glGetUniformOffsetEXT") && dlsym(RTLD_DEFAULT,"glUniformBufferEXT") &&
+               dlsym(RTLD_DEFAULT,"glGetUniformBufferSizeEXT")){
+                size_t used=strlen(out);snprintf(out+used,4096-used," GL_EXT_bindable_uniform");
+            }
+            if(m->args[3]>=3 && (m->args[5]&DG_FEATURE2_DEBUG_LABEL) && DGHostHasExtension(ext,"GL_EXT_debug_label")){
+                size_t used=strlen(out);snprintf(out+used,4096-used," GL_EXT_debug_label");
+            }
+            if(m->args[3]>=3 && (m->args[5]&DG_FEATURE2_SHADER_INCLUDE) && DGHostHasExtension(ext,"GL_ARB_shading_language_include")){
+                size_t used=strlen(out);snprintf(out+used,4096-used," GL_ARB_shading_language_include");
+            }
+            if(m->args[3]>=3 && (m->args[5]&DG_FEATURE2_APPLE_EVALUATORS) && DGHostHasExtension(ext,"GL_ARB_vertex_program") &&
+               DGHostHasExtension(ext,"GL_APPLE_vertex_program_evaluators")){
+                size_t used=strlen(out);snprintf(out+used,4096-used," GL_APPLE_vertex_program_evaluators");
+            }
+            if(m->args[3]>=3 && (m->args[5]&DG_FEATURE2_VERTEX_BLEND) && DGHostWeightUnits(context)){
+                size_t used=strlen(out);snprintf(out+used,4096-used," GL_ARB_vertex_blend");
+            }
+            if(m->args[3]>=4 && (m->args[5]&DG_FEATURE2_POINT_SIZE_ARRAY) && DGHostPointSizes(context)){
+                size_t used=strlen(out);snprintf(out+used,4096-used," GL_APPLE_vertex_point_size");
+            }
+            if(m->args[3]>=5 && (m->args[5]&DG_FEATURE2_OBJECT_PURGEABLE) &&
+               DGHostHasExtension(ext,"GL_APPLE_object_purgeable")){
+                size_t used=strlen(out);snprintf(out+used,4096-used," GL_APPLE_object_purgeable");
+            }
+            const uint32_t imaging=DG_FEATURE2_IMAGING_TRANSFERS|DG_FEATURE2_IMAGING_PARAMETERS|
+                DG_FEATURE2_COMPAT_RASTER;
+            if(m->args[3]>=6 && (m->args[5]&imaging)==imaging && DGHostHasExtension(ext,"GL_ARB_imaging")){
+                size_t used=strlen(out);snprintf(out+used,4096-used," GL_ARB_imaging");
+            }
+            if(m->args[3]>=3 && (m->args[5]&DG_FEATURE2_APPLE_ARRAYS) && ext){
+                size_t used=strlen(out);
+                snprintf(out+used,4096-used," GL_APPLE_vertex_array_range%s",
+                    DGHostHasExtension(ext,"GL_APPLE_element_array")?" GL_APPLE_element_array":"");
+            }
+            if((m->args[4]&DG_FEATURE_MULTI_DRAW) && dg_core_api.multi_arrays &&
+               dg_core_api.multi_elements && dg_core_api.multi_base){
+                if(DGHostHasExtension(ext,"GL_EXT_multi_draw_arrays")){
+                    size_t used=strlen(out);snprintf(out+used,4096-used," GL_EXT_multi_draw_arrays");
+                }
+                if((m->args[4]&DG_FEATURE_BASE_VERTEX) && dg_core_api.elements_base &&
+                   dg_core_api.range_elements_base && dg_core_api.instanced_elements_base &&
+                   DGHostHasExtension(ext,"GL_ARB_draw_elements_base_vertex")){
+                    size_t used=strlen(out);snprintf(out+used,4096-used," GL_ARB_draw_elements_base_vertex");
+                }
             }
         }else { const GLubyte *s=glGetString(key);snprintf(out,4096,"%s",s ? (const char *)s : ""); }
     } else if(m->op==DG_PROGRAM_STRING){
@@ -1804,8 +2741,14 @@ static int DGInterpretCommand(struct DGInterpreter *s,int fd,struct DGMessage *m
     else if(m->op>=DG_SYNC_FENCE && m->op<=DG_SYNC_GET)error=DGHostSyncCommand(context,m,&reply);
     else if(m->op>=DG_BUFFER_QUERY && m->op<=DG_BUFFER_COPY)error=DGHostBufferAccess(context,m,&reply);
     else if(m->op>=DG_MAP_BEGIN && m->op<=DG_MAP_READY)error=DGHostMappingCommand(context,m,&reply);
+    else if(m->op==DG_TEXTURE_READ)error=DGHostTextureRead(context,m,&reply);
+    else if(m->op==DG_BUFFER_TRANSFER)error=DGHostBufferTransfer(context,m,&reply);
+    else if(m->op==DG_RASTER_READ_STAGE)error=DGHostRasterRead(context,m,&reply);
+    else if(m->op==DG_STIPPLE_READ)error=DGHostStippleRead(context,m,&reply);
     else if(m->op==DG_PBO_PIXEL_2D || m->op==DG_PBO_PIXEL_3D)error=DGHostPBOPixels(context,m);
     else if(m->op>=DG_PBO_CLIENT_STACK && m->op<=DG_PBO_BIND)error=DGHostPBOState(context,m,&reply);
+    else if(m->op==DG_ARRAY_ELEMENT_STATE)error=DGHostPrepareArrayElement(context,m);
+    else if(m->op==DG_RETAINED_RENDER_READ)error=DGHostRenderRead(context,m);
     else if(m->op==DG_ARRAY_DIVISOR) {
         if(m->bytes || m->args[0]>UINT32_MAX || m->args[1]>UINT32_MAX)error=-1;
         else if(!dg_core_api.divisor)reply.error=GL_INVALID_OPERATION;
@@ -1871,6 +2814,9 @@ respond:
 }
 static int DGInterpret(struct DGInterpreter *s,int fd,struct DGMessage *m)
 {
+#ifdef VIM_PASSTHROUGH_OPENGL_PACKET_JOURNAL
+    if(!s->journal_depth++)DGJournalPacket(s,m);
+#endif
 #ifdef VIM_PASSTHROUGH_OPENGL_COMMAND_PROFILE
     // Nested decoded commands are the actual GL operations. The outer inline
     // batch already covers codec time; do not double-count the envelope.
@@ -1880,6 +2826,9 @@ static int DGInterpret(struct DGInterpreter *s,int fd,struct DGMessage *m)
     uint64_t began=DGCommandTimingBegin();
 #endif
     int result=DGInterpretCommand(s,fd,m);
+#ifdef VIM_PASSTHROUGH_OPENGL_PACKET_JOURNAL
+    --s->journal_depth;
+#endif
 #ifdef VIM_PASSTHROUGH_OPENGL_COMMAND_PROFILE
     DGCommandProfileEnd(profile,m->op,m->bytes,0);
 #endif
@@ -1907,19 +2856,25 @@ static void DGInterpreterDestroy(struct DGInterpreter *s)
     for(unsigned i=1;i<s->next;++i)if(contexts[i].cgl){
         CGLSetCurrentContext(contexts[i].cgl);
         if(contexts[i].inside_begin){glEnd();contexts[i].inside_begin=0;}
+        DGHostReleaseArrayElements(&contexts[i]);
         // Drain ALL shared producers before any context can retire a backing
         // used by another one. A half-open primitive must end before Finish.
         glFinish();
     }
     for(unsigned i=1;i<s->next;++i) {
         if(contexts[i].cgl) {
+            DGReleaseTextureRead(&contexts[i]);
             CGLSetCurrentContext(contexts[i].cgl);
             DGDisplaySenderStop(&contexts[i]);DGDestroySurfaceLeases(&contexts[i]);
             DGDestroyDrawables(&contexts[i]);DGDestroyFences(&contexts[i]);DGDestroyAliases(&contexts[i]);
             CGLSetCurrentContext(NULL);CGLDestroyContext(contexts[i].cgl);
+            DGHostFreeRenderBuffers(&contexts[i]);
         }
     }
     DGDisplaySenderStop(&s->surface_holds);DGDestroySurfaceHolds(&s->surface_holds);
+#ifdef VIM_PASSTHROUGH_OPENGL_PACKET_JOURNAL
+    DGJournalClose(s);
+#endif
     free(s);
 }
 static void *DGServe(void *opaque)

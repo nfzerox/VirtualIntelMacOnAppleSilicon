@@ -3,25 +3,30 @@
 <title>WebKit compositing reference</title>
 <style>
 body { margin:0; padding:32px; font:18px Helvetica,sans-serif; color:#182638;
+  background:-webkit-linear-gradient(125deg,#e5f3ff,#fff1df);
   background:linear-gradient(125deg,#e5f3ff,#fff1df); }
 h1 { margin:0 0 12px; font-size:30px; }
 .grid { display:-webkit-flex; -webkit-flex-wrap:wrap; gap:24px; }
-.card { box-sizing:border-box; width:42%; min-width:240px; height:240px;
+.card { display:inline-block; vertical-align:top; box-sizing:border-box; width:42%; min-width:240px; height:240px;
   margin:14px; padding:20px; border-radius:14px; background:white;
   box-shadow:0 8px 20px rgba(0,20,60,.3); overflow:hidden; }
 .promoted { -webkit-transform:translateZ(0); }
 .rotated { -webkit-transform:translateZ(0) rotate(3deg); }
 .stripes { height:115px; margin-top:16px;
+  background:-webkit-repeating-linear-gradient(45deg,#e95353 0,#e95353 18px,#63baff 18px,#63baff 36px);
   background:repeating-linear-gradient(45deg,#e95353 0,#e95353 18px,#63baff 18px,#63baff 36px); }
 .scroll { height:150px; overflow:scroll; -webkit-transform:translateZ(0); }
-.scroll div { height:420px; background:linear-gradient(#ffe08a,#36bda0,#ab7edb); }
+.scroll div { height:420px; background:-webkit-linear-gradient(top,#ffe08a,#36bda0,#ab7edb);
+  background:linear-gradient(#ffe08a,#36bda0,#ab7edb); }
 canvas { width:100%; height:140px; margin-top:12px; }
 button { font:inherit; margin:12px 8px 12px 0; padding:8px 14px; }
-.footer { height:600px; padding:20px; background:linear-gradient(#c6e8ff,#fcbbd2); }
+#webgl-status { display:block; }
+.footer { height:600px; padding:20px; background:-webkit-linear-gradient(top,#c6e8ff,#fcbbd2);
+  background:linear-gradient(#c6e8ff,#fcbbd2); }
 </style>
 <h1>WebKit compositing reference</h1>
-<p>Compare the same page in native Intel Mavericks Safari and the VM.
-All four panels should retain their colors while scrolling and resizing.</p>
+<p>Compare the same page in native Intel Safari and the VM.
+The panels should retain their colors while scrolling and resizing.</p>
 <button onclick="document.body.className=document.body.className?'':'shift';
  document.getElementById('rotated').style.webkitTransform=document.body.className?
  'translateZ(0) rotate(-3deg)':'translateZ(0) rotate(3deg)'">Change transform</button>
@@ -31,7 +36,7 @@ All four panels should retain their colors while scrolling and resizing.</p>
  <div class="card promoted">Composited stripes<div class="stripes"></div></div>
  <div class="card rotated" id="rotated">Canvas / rotated layer<canvas id="canvas" width="640" height="280"></canvas></div>
  <div class="card">Composited scrolling clip<div class="scroll"><div>Top<br>Redraw must preserve this gradient.</div></div></div>
- <div class="card promoted">WebGL texture / framebuffer<canvas id="webgl" width="64" height="64"></canvas><small id="webgl-status">Not run</small></div>
+ <div class="card promoted">WebGL texture / framebuffer<small id="webgl-status">Not run</small><canvas id="webgl" width="64" height="64"></canvas></div>
 </div>
 <div class="footer">Page-scroll gradient: no black blocks or lost panels.<br><button onclick="window.scrollTo(0,0)">Back to top</button></div>
 <script>

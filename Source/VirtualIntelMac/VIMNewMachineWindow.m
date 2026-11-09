@@ -21,6 +21,21 @@
 
 static NSArray<NSString *> *CreationGuests(void) {return @[@"tiger",@"leopard",@"snowleopard",@"lion",@"mountainlion",@"mavericks",@"yosemite",@"elcapitan",@"sierra",@"highsierra",@"mojave",@"catalina",@"bigsur"];}
 static NSArray<NSString *> *CreationNames(void) {return @[@"Tiger",@"Leopard",@"Snow Leopard",@"Lion",@"Mountain Lion",@"Mavericks",@"Yosemite",@"El Capitan",@"Sierra",@"High Sierra",@"Mojave",@"Catalina",@"Big Sur"];}
+static NSDictionary *LibraryDestinationSpace(NSURL *library,NSError **error) {
+    NSFileManager *fm=NSFileManager.defaultManager;
+    NSURL *root=[VIMLibraryLocation rootURLForLibrary:library];
+    NSURL *machines=[VIMLibraryLocation machinesURLForLibrary:library];
+    // Prefer the disk's actual destination (Machines may be a symlink or a
+    // mount point). A new library may not have a Machines folder yet.
+    NSURL *destination=[fm fileExistsAtPath:machines.path]?machines:root;
+    return [fm attributesOfFileSystemForPath:destination.URLByResolvingSymlinksInPath.path error:error];
+}
+static NSInteger DefaultDiskGiB(NSURL *library) {
+    NSDictionary *space=LibraryDestinationSpace(library,NULL);
+    // The disk is sparse: leave room for installation and growth, without
+    // requiring its entire advertised capacity to be free at creation time.
+    return [space[NSFileSystemFreeSize] unsignedLongLongValue]>=(96ULL<<30)?128:64;
+}
 
 // Keep linked alert prose in AppKit's informative-text column, not a separately
 // positioned accessory whose inset can differ between alert presentations.
@@ -254,6 +269,16 @@ static VIMNewMachineWindow *creationController;
         [creationController presentDownloadFailure:[NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorNotConnectedToInternet userInfo:nil] source:source];
     }
 }
++ (void)createGuest:(NSString *)guest automaticSetupPassword:(NSString *)password {
+    if(![CreationGuests() containsObject:guest])return;
+    [self showConfigurationForGuest:guest];
+    if(creationController.creating||creationController.transfer||creationController.assembly)return;
+    if(password.length){
+        creationController.guestPassword.stringValue=password;
+        creationController.visibleGuestPassword.stringValue=password;
+    }
+    [creationController beginSetup:nil];
+}
 + (void)downloadInstallerForGuest:(NSString *)guest {
     if(![CreationGuests() containsObject:guest])return;
     [self showWithInstaller:nil guest:nil];
@@ -311,12 +336,7 @@ static VIMNewMachineWindow *creationController;
         [self.system selectItemAtIndex:[CreationGuests() indexOfObject:@"mavericks"]];
         self.nameField=[NSTextField textFieldWithString:@"Mavericks"];
         self.system.target=self;self.system.action=@selector(systemChanged:);
-        NSDictionary *space=[NSFileManager.defaultManager attributesOfFileSystemForPath:VIMLibraryLocation.currentURL.path error:nil];
-        // The disk is sparse. Match the iPad app's 128 GB headroom policy,
-        // while keeping this app's maximum default at 128 GB.
-        BOOL roomy=[space[NSFileSystemSize] unsignedLongLongValue]>=(256ULL<<30)&&
-            [space[NSFileSystemFreeSize] unsignedLongLongValue]>=(96ULL<<30);
-        self.diskField=[NSTextField textFieldWithString:roomy?@"128":@"64"];
+        self.diskField=[NSTextField textFieldWithString:[@(DefaultDiskGiB(VIMLibraryLocation.currentURL)) stringValue]];
         self.cpuField=[NSTextField textFieldWithString:[NSString stringWithFormat:@"%lu",(unsigned long)MIN(4,NSProcessInfo.processInfo.processorCount)]];
         self.memoryField=[NSTextField textFieldWithString:@"4"];
         for(NSTextField *field in @[self.cpuField,self.memoryField,self.diskField]) {
@@ -374,7 +394,10 @@ static VIMNewMachineWindow *creationController;
         if(self.job&&![CreationGuests() containsObject:self.job[@"Guest"]])self.job=nil;
         if(self.job) {
             [self.system selectItemAtIndex:[CreationGuests() indexOfObject:self.job[@"Guest"]]];
-            self.nameField.stringValue=self.job[@"Name"]?:@"Mac";self.diskField.stringValue=[self.job[@"Disk"] stringValue]?:@"64";
+            self.nameField.stringValue=self.job[@"Name"]?:@"Mac";
+            NSString *libraryPath=self.job[@"Library"];
+            NSURL *library=libraryPath.isAbsolutePath?[NSURL fileURLWithPath:libraryPath]:VIMLibraryLocation.currentURL;
+            self.diskField.integerValue=self.job[@"Disk"]?[self.job[@"Disk"] integerValue]:DefaultDiskGiB(library);
             self.cpuField.stringValue=[self.job[@"CPU"] stringValue]?:@"4";self.memoryField.stringValue=[self.job[@"Memory"] stringValue]?:@"4";
             NSDictionary *setup=self.job[@"AutomaticSetup"];
             if([setup isKindOfClass:NSDictionary.class]) {
@@ -734,9 +757,7 @@ static VIMNewMachineWindow *creationController;
     self.cpuSlider.doubleValue=self.cpuField.doubleValue;
     self.memoryField.doubleValue=MIN(4,self.memorySlider.maxValue);
     self.memorySlider.doubleValue=self.memoryField.doubleValue;
-    NSDictionary *space=[NSFileManager.defaultManager attributesOfFileSystemForPath:VIMLibraryLocation.currentURL.path error:nil];
-    self.diskField.integerValue=[space[NSFileSystemSize] unsignedLongLongValue]>=(256ULL<<30)&&
-        [space[NSFileSystemFreeSize] unsignedLongLongValue]>=(96ULL<<30)?128:64;
+    self.diskField.integerValue=DefaultDiskGiB(VIMLibraryLocation.currentURL);
     for(NSSwitch *control in @[self.automaticSwitch,self.automaticSharing,self.automaticRemoteLogin,self.automaticLogin])
         control.state=NSControlStateValueOn;
     self.guestUsername.stringValue=VIMAutomaticSetup.defaultUsername;
@@ -779,6 +800,7 @@ static VIMNewMachineWindow *creationController;
         NSError *error=nil;NSString *guest=[VIMInstallerAssembly guestForInstallerApplication:panel.URL error:&error];
         dispatch_async(dispatch_get_main_queue(), ^{
         self.chooseButton.enabled=YES;
+        if(!guest&&[error.domain isEqual:VIMInstallerReleaseErrorDomain]){[self presentUnsupportedRelease:error];return;}
         if(!guest){[self presentInstallerChoiceFailure:error.localizedDescription];return;}
         NSUInteger index=[CreationGuests() indexOfObject:guest];
         if(index==NSNotFound){[self presentInstallerChoiceFailure:@"Choose a Tiger, Leopard or Snow Leopard restore DVD, or a Lion through Big Sur installer app."];return;}
@@ -788,6 +810,26 @@ static VIMNewMachineWindow *creationController;
         });
         });
     }];
+}
+- (void)presentUnsupportedRelease:(NSError *)error {
+    // A wrong Tiger–Snow Leopard dot release is the most common manual-media
+    // mistake. Explain it and offer the qualified image, not a generic error.
+    NSString *guest=error.userInfo[@"Guest"];NSURL *download=error.userInfo[VIMSupportedReleaseURLKey];
+    NSUInteger index=[CreationGuests() indexOfObject:guest];
+    NSAlert *alert=[NSAlert new];alert.messageText=error.localizedDescription;
+    alert.informativeText=error.localizedRecoverySuggestion?:@"";
+    if(index!=NSNotFound)VIMSetInstallerAlertIcon(alert,guest);
+    if(index!=NSNotFound)[alert addButtonWithTitle:@"Download Automatically"];
+    if(download)[alert addButtonWithTitle:@"Open Download Page"];
+    [alert addButtonWithTitle:@"Cancel"];
+    VIMPresentAlert(alert,self.window,^(NSModalResponse response){
+        NSModalResponse automatic=index!=NSNotFound?NSAlertFirstButtonReturn:NSNotFound;
+        NSModalResponse page=download?(index!=NSNotFound?NSAlertSecondButtonReturn:NSAlertFirstButtonReturn):NSNotFound;
+        if(response==automatic) {
+            self.archiveInstallerRecovery=NO;self.installer=nil;
+            [self selectSystem:self.systemOptions[index]];[self continueToConfiguration:nil];
+        } else if(response==page)[NSWorkspace.sharedWorkspace openURL:download];
+    });
 }
 - (void)saveJob {
     [NSUserDefaults.standardUserDefaults setObject:self.job forKey:self.downloadOnly?@"VIMInstallerDownloadJob":@"VIMCreationJob"];
@@ -869,7 +911,9 @@ static VIMNewMachineWindow *creationController;
     }
     NSError *spaceError=nil;
     if(![NSFileManager.defaultManager createDirectoryAtPath:self.job[@"Library"] withIntermediateDirectories:YES attributes:nil error:&spaceError]){[self presentCreationError:spaceError.localizedDescription];return;}
-    NSDictionary *space=[NSFileManager.defaultManager attributesOfFileSystemForPath:[VIMLibraryLocation.currentURL absoluteString] error:&spaceError];
+    // Measure the volume that will hold this Mac's disk: the selected library's
+    // Machines destination, which may be a symlink or mount on another drive.
+    NSDictionary *space=LibraryDestinationSpace([NSURL fileURLWithPath:self.job[@"Library"]],&spaceError);
     if(!space){[self presentCreationError:spaceError.localizedDescription?:@"Connect your library drive before continuing."];return;}
     // The guest disk is sparse, so reserve what setup actually writes, not its
     // capacity: downloads, the peak of installer assembly and media creation

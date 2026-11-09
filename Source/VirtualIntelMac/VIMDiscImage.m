@@ -22,7 +22,7 @@ NSString *VIMOpticalImageFormat(NSString *path, NSError **error) {
     struct stat metadata;
     if(fstat(file,&metadata)||!S_ISREG(metadata.st_mode)||metadata.st_size<2048) {
         close(file);
-        DiscFailure(@"Choose a CD/DVD image",@"Choose a complete ISO, CDR or unencrypted DMG image. You can eject the current disc in Configure → Hardware → CD/DVD.",error);return nil;
+        DiscFailure(@"Choose a CD/DVD image",@"Choose a complete ISO, CDR, Toast or unencrypted DMG image. You can eject the current disc in Configure → Hardware → CD/DVD.",error);return nil;
     }
     unsigned char header[4]={0},footer[4]={0};
     ssize_t head=pread(file,header,sizeof(header),0);
@@ -34,7 +34,7 @@ NSString *VIMOpticalImageFormat(NSString *path, NSError **error) {
     BOOL sparse=!memcmp(header,"sprs",4);
     BOOL virtualDisk=!memcmp(header,"QFI\xfb",4)||!memcmp(header,"vhdx",4)||!memcmp(header,"KDMV",4);
     if(sparse||virtualDisk) {
-        NSString *detail=[NSString stringWithFormat:@"“%@” is %@. Choose an ISO, CDR or unencrypted DMG instead. Your original file hasn’t been changed.",path.lastPathComponent,sparse?@"a sparse disk image":@"a virtual hard disk"];
+        NSString *detail=[NSString stringWithFormat:@"“%@” is %@. Choose an ISO, CDR, Toast or unencrypted DMG instead. Your original file hasn’t been changed.",path.lastPathComponent,sparse?@"a sparse disk image":@"a virtual hard disk"];
         DiscFailure(@"This image can’t be inserted as a CD/DVD",detail,error);return nil;
     }
     return !memcmp(footer,"koly",4)||[path.pathExtension.lowercaseString isEqual:@"dmg"]?@"dmg":@"raw";
@@ -43,7 +43,7 @@ BOOL VIMValidateOpticalImage(NSString *path,NSError **error) {return VIMOpticalI
 
 NSError *VIMFriendlyDiscImageError(NSString *path,NSError *underlying) {
     NSString *detail=underlying.localizedDescription.lowercaseString;
-    NSString *advice=@"Make sure the image is fully downloaded. Choose an ISO, CDR or supported, unencrypted DMG. Your original file hasn’t been changed.";
+    NSString *advice=@"Make sure the image is fully downloaded. Choose an ISO, CDR, Toast or unencrypted DMG. Your original file hasn’t been changed.";
     if([underlying.domain isEqual:NSPOSIXErrorDomain]&&(underlying.code==ENOENT||underlying.code==ENOTDIR))
         advice=@"The image may have been moved or deleted, or its drive may be disconnected. Reconnect its drive or choose the image at its current location.";
     else if([underlying.domain isEqual:NSPOSIXErrorDomain]&&(underlying.code==EACCES||underlying.code==EPERM))
@@ -53,7 +53,7 @@ NSError *VIMFriendlyDiscImageError(NSString *path,NSError *underlying) {
     else if([detail containsString:@"no free ports"]||[detail containsString:@"not found (in use?)"])
         advice=@"This virtual Mac’s USB ports are in use. Disconnect another image or USB device, then try again.";
     else if([detail containsString:@"xz"]||[detail containsString:@"lzma"]||[detail containsString:@"not supported"]||[detail containsString:@"unsupported"])
-        advice=@"This image uses a disk format or compression method that Virtual Intel Mac can’t read. Choose an ISO, CDR, or a DMG saved as read-only or zlib compressed. No conversion was attempted, and your original image hasn’t been changed.";
+        advice=@"This image uses a disk format or compression method that Virtual Intel Mac can’t read. Choose an ISO, CDR or Toast image, or a DMG that is uncompressed or uses zlib, bzip2 or LZFSE compression. No conversion was attempted, and your original image hasn’t been changed.";
     return [NSError errorWithDomain:@"VirtualIntelMac.DiscImage" code:2 userInfo:@{
         NSLocalizedDescriptionKey:[NSString stringWithFormat:@"“%@” couldn’t be connected",path.lastPathComponent],
         NSLocalizedRecoverySuggestionErrorKey:advice,NSUnderlyingErrorKey:underlying}];

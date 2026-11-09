@@ -50,23 +50,31 @@ static inline BOOL VIMOpenGLSetLoginUser(NSString *name) {
     return VIMOpenGLSetLoginUserWithPendingPublication(name,NO);
 }
 #ifndef VIM_MODERN_ACCOUNT_SETUP
-// Sierra can clear both parts of the handoff between the first installed
-// boot and its graphics restart. Only an unfinished, owned transaction with
-// no desktop or replacement credential may repair it, once.
-static inline BOOL VIMSierraLoginHandoffMissing(NSString *version,NSDictionary *ownership,
-                                               NSDictionary *account,NSString *boot,uid_t consoleUID) {
+static inline BOOL VIMCanRecoverLoginHandoff(NSString *version) {
+    return [version hasPrefix:@"10.11."]||[version hasPrefix:@"10.12."];
+}
+// El Capitan and Sierra can clear both native settings before first desktop
+// login. Recover an unfinished, owned transaction once. An interrupted
+// publication can resume, but may not take over someone else's login policy.
+static inline BOOL VIMLoginHandoffNeedsRecovery(NSString *version,NSDictionary *ownership,
+                                                NSDictionary *account,NSString *boot,uid_t consoleUID) {
     NSString *armed=[account objectForKey:@"FirstLoginPolicyBootSessionUUID"];
-    if(![version hasPrefix:@"10.12."]||![[ownership objectForKey:@"Enabled"] boolValue]||
+    if(!VIMCanRecoverLoginHandoff(version)||![[ownership objectForKey:@"Enabled"] boolValue]||
        ![[ownership objectForKey:@"AutomaticLogin"] boolValue]||consoleUID!=0||
        ![[account objectForKey:@"Phase"] isEqual:@"autologin-armed"]||
-       ![account objectForKey:@"AutoLoginSHA256"]||[account objectForKey:@"LoginHandoffRecovered"]||
+       ![[account objectForKey:@"FirstLoginPolicyPrepared"] boolValue]||[account objectForKey:@"LoginHandoffRecovered"]||
        !boot.length||!armed.length||[armed isEqual:boot])return NO;
+    BOOL pending=[[account objectForKey:@"LoginHandoffRecoveryPending"] boolValue];
     struct stat st;
-    if(!lstat("/etc/kcpassword",&st)||errno!=ENOENT)return NO;
+    if(lstat("/etc/kcpassword",&st)){
+        if(errno!=ENOENT)return NO;
+    }else if(!pending||!S_ISREG(st.st_mode)||st.st_uid!=0||st.st_nlink!=1||(st.st_mode&0077))return NO;
     NSString *path=@"/Library/Preferences/com.apple.loginwindow.plist";
     if(lstat([path fileSystemRepresentation],&st))return errno==ENOENT;
     if(!S_ISREG(st.st_mode)||st.st_uid!=0||st.st_nlink!=1||(st.st_mode&0022))return NO;
     NSDictionary *prefs=[NSDictionary dictionaryWithContentsOfFile:path];
-    return prefs&&![prefs objectForKey:@"autoLoginUser"]&&![prefs objectForKey:@"autoLoginUserUID"];
+    id user=[prefs objectForKey:@"autoLoginUser"],uid=[prefs objectForKey:@"autoLoginUserUID"];
+    return prefs&&(!user||(pending&&[user isEqual:[account objectForKey:@"Username"]]))&&
+        (!uid||(pending&&[uid isEqual:[account objectForKey:@"UID"]]));
 }
 #endif

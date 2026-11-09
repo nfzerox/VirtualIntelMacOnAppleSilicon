@@ -1,0 +1,333 @@
+#!/bin/bash
+# Exercise the generated evaluator decoder and typed wire clients.
+set -euo pipefail
+source="$(cd "$(dirname "$0")/.." && pwd)"
+sdk="${VIM_OPENGL_SDK:-$source/resources/sdk/MacOSX10.9.sdk}"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/vim-evaluator-queries.XXXXXX")"
+trap 'rm -rf -- "$scratch"' EXIT
+python3 "$source/scripts/generate-passthrough-opengl.py" "$sdk" "$scratch"
+flags=(-O2 -Wall -Wextra -Werror -Wno-deprecated-declarations -Wno-unused-function
+    -Wno-misleading-indentation -Wno-missing-braces -Wno-missing-field-initializers -I "$scratch")
+host_frameworks=(-framework OpenGL -framework IOSurface -framework CoreFoundation -lbsm)
+xcrun clang "${flags[@]}" "$source/probes/opengl-evaluator-query-wire.c" "${host_frameworks[@]}" -o "$scratch/decoder"
+xcrun clang "${flags[@]}" "$source/probes/opengl-array-element-snapshot.c" "${host_frameworks[@]}" -o "$scratch/array-snapshot"
+xcrun clang "${flags[@]}" "$source/PassthroughOpenGL/passthrough-opengl-host.c" "${host_frameworks[@]}" -o "$scratch/executor"
+xcrun clang "${flags[@]}" "$source/probes/opengl-evaluator-query-client.c" -framework IOKit -framework CoreFoundation -o "$scratch/client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-large-surface-wire.c" -framework IOKit -framework CoreFoundation -o "$scratch/large-surface-client"
+xcrun clang "${flags[@]}" -DVIM_INTEGER_WIRE "$source/probes/opengl-integer-parameters.c" -framework IOKit -framework CoreFoundation -o "$scratch/integer-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-integer-parameters.c" -framework OpenGL -o "$scratch/integer-native"
+xcrun clang "${flags[@]}" -DVIM_READBACK_WIRE "$source/probes/opengl-texture-readback.c" -framework IOKit -framework CoreFoundation -o "$scratch/readback-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-texture-readback.c" -framework OpenGL -o "$scratch/readback-native"
+xcrun clang "${flags[@]}" -DVIM_BASE_VERTEX_WIRE "$source/probes/opengl-base-vertex.c" -framework IOKit -framework CoreFoundation -o "$scratch/base-vertex-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-base-vertex.c" -framework OpenGL -o "$scratch/base-vertex-native"
+xcrun clang "${flags[@]}" -DVIM_FEEDBACK_WIRE "$source/probes/opengl-transform-feedback.c" -framework IOKit -framework CoreFoundation -o "$scratch/feedback-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-transform-feedback.c" -framework OpenGL -o "$scratch/feedback-native"
+xcrun clang "${flags[@]}" -DVIM_INTEGER_ARRAY_WIRE "$source/probes/opengl-integer-vertex-arrays.c" -framework IOKit -framework CoreFoundation -o "$scratch/integer-vertex-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-integer-vertex-arrays.c" -framework OpenGL -o "$scratch/integer-vertex-native"
+xcrun clang "${flags[@]}" -DVIM_CLEAR_BUFFER_WIRE "$source/probes/opengl-clear-buffers.c" -framework IOKit -framework CoreFoundation -o "$scratch/clear-buffer-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-clear-buffers.c" -framework OpenGL -o "$scratch/clear-buffer-native"
+xcrun clang "${flags[@]}" -DVIM_TIMER_QUERY_WIRE "$source/probes/opengl-timer-query.c" -framework IOKit -framework CoreFoundation -o "$scratch/timer-query-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-timer-query.c" -framework OpenGL -o "$scratch/timer-query-native"
+xcrun clang "${flags[@]}" -DVIM_UNIFORM_BLOCK_WIRE "$source/probes/opengl-uniform-block.c" -framework IOKit -framework CoreFoundation -o "$scratch/uniform-block-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-uniform-block.c" -framework OpenGL -o "$scratch/uniform-block-native"
+xcrun clang "${flags[@]}" -DVIM_SAMPLER_WIRE "$source/probes/opengl-sampler-objects.c" -framework IOKit -framework CoreFoundation -o "$scratch/sampler-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-sampler-objects.c" -framework OpenGL -o "$scratch/sampler-native"
+xcrun clang "${flags[@]}" -DVIM_RENDER_TARGETS_WIRE "$source/probes/opengl-render-targets.c" -framework IOKit -framework CoreFoundation -o "$scratch/render-targets-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-render-targets.c" -framework OpenGL -o "$scratch/render-targets-native"
+xcrun clang "${flags[@]}" -DVIM_PIPELINE_WIRE "$source/probes/opengl-program-pipeline.c" -framework IOKit -framework CoreFoundation -o "$scratch/pipeline-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-program-pipeline.c" -framework OpenGL -o "$scratch/pipeline-native"
+xcrun clang "${flags[@]}" -DVIM_UNIFORM_FP64_WIRE "$source/probes/opengl-uniform-fp64.c" -framework IOKit -framework CoreFoundation -o "$scratch/fp64-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-uniform-fp64.c" -framework OpenGL -o "$scratch/fp64-native"
+xcrun clang "${flags[@]}" -DVIM_FP64_VERTEX_WIRE "$source/probes/opengl-fp64-vertex.c" -framework IOKit -framework CoreFoundation -o "$scratch/fp64-vertex-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-fp64-vertex.c" -framework OpenGL -o "$scratch/fp64-vertex-native"
+xcrun clang "${flags[@]}" -DVIM_PIXEL_MAP_WIRE "$source/probes/opengl-pixel-maps.c" -framework IOKit -framework CoreFoundation -o "$scratch/pixel-map-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-pixel-maps.c" -framework OpenGL -o "$scratch/pixel-map-native"
+xcrun clang "${flags[@]}" -DVIM_COMPAT_RASTER_WIRE "$source/probes/opengl-compatibility-raster.c" -framework IOKit -framework CoreFoundation -o "$scratch/compat-raster-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-compatibility-raster.c" -framework OpenGL -o "$scratch/compat-raster-native"
+xcrun clang "${flags[@]}" -DVIM_INTERLEAVED_WIRE "$source/probes/opengl-interleaved-arrays.c" -framework IOKit -framework CoreFoundation -o "$scratch/interleaved-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-interleaved-arrays.c" -framework OpenGL -o "$scratch/interleaved-native"
+xcrun clang "${flags[@]}" -DVIM_ARRAY_ELEMENT_WIRE "$source/probes/opengl-array-element.c" -framework IOKit -framework CoreFoundation -o "$scratch/array-element-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-array-element.c" -framework OpenGL -o "$scratch/array-element-native"
+xcrun clang "${flags[@]}" -DVIM_SELECTION_FEEDBACK_WIRE "$source/probes/opengl-selection-feedback.c" -framework IOKit -framework CoreFoundation -o "$scratch/selection-feedback-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-selection-feedback.c" -framework OpenGL -o "$scratch/selection-feedback-native"
+xcrun clang "${flags[@]}" -DVIM_APPLE_ARRAYS_WIRE "$source/probes/opengl-apple-element-array.c" -framework IOKit -framework CoreFoundation -o "$scratch/apple-arrays-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-apple-element-array.c" -framework OpenGL -o "$scratch/apple-arrays-native"
+xcrun clang "${flags[@]}" -DVIM_DEBUG_LABEL_WIRE "$source/probes/opengl-debug-label.c" -framework IOKit -framework CoreFoundation -o "$scratch/label-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-debug-label.c" -framework OpenGL -o "$scratch/label-native"
+xcrun clang "${flags[@]}" -DVIM_SHADER_INCLUDE_WIRE "$source/probes/opengl-shader-include.c" -framework IOKit -framework CoreFoundation -o "$scratch/include-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-shader-include.c" -framework OpenGL -o "$scratch/include-native"
+xcrun clang "${flags[@]}" -DVIM_APPLE_EVALUATOR_WIRE "$source/probes/opengl-apple-evaluator.c" -framework IOKit -framework CoreFoundation -o "$scratch/apple-eval-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-apple-evaluator.c" -framework OpenGL -o "$scratch/apple-eval-native"
+xcrun clang "${flags[@]}" -DVIM_VERTEX_BLEND_WIRE "$source/probes/opengl-vertex-blend.c" -framework IOKit -framework CoreFoundation -o "$scratch/blend-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-vertex-blend.c" -framework OpenGL -o "$scratch/blend-native"
+xcrun clang "${flags[@]}" -DVIM_ATTACHED_OBJECTS_WIRE "$source/probes/opengl-attached-objects.c" -framework IOKit -framework CoreFoundation -o "$scratch/attached-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-attached-objects.c" -framework OpenGL -o "$scratch/attached-native"
+xcrun clang "${flags[@]}" -DVIM_BINDABLE_UNIFORM_WIRE "$source/probes/opengl-bindable-uniform.c" -framework IOKit -framework CoreFoundation -o "$scratch/bindable-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-bindable-uniform.c" -framework OpenGL -o "$scratch/bindable-native"
+xcrun clang "${flags[@]}" -DVIM_POINT_SIZE_WIRE "$source/probes/opengl-apple-point-size.c" -framework IOKit -framework CoreFoundation -o "$scratch/point-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-apple-point-size.c" -framework OpenGL -o "$scratch/point-native"
+xcrun clang "${flags[@]}" -DVIM_PURGEABLE_WIRE "$source/probes/opengl-object-purgeable.c" -framework IOKit -framework CoreFoundation -o "$scratch/purgeable-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-object-purgeable.c" -framework OpenGL -o "$scratch/purgeable-native"
+xcrun clang "${flags[@]}" -DVIM_IMAGING_PARAMETERS_WIRE "$source/probes/opengl-imaging-parameters.c" -framework IOKit -framework CoreFoundation -o "$scratch/imaging-parameters-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-imaging-parameters.c" -framework OpenGL -o "$scratch/imaging-parameters-native"
+xcrun clang "${flags[@]}" -DVIM_IMAGING_WIRE "$source/probes/opengl-imaging.c" -framework IOKit -framework CoreFoundation -o "$scratch/imaging-transfer-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-imaging.c" -framework OpenGL -o "$scratch/imaging-transfer-native"
+xcrun clang "${flags[@]}" -DVIM_NV_COMBINERS_WIRE "$source/probes/opengl-nv-combiners.c" -framework IOKit -framework CoreFoundation -o "$scratch/retained-entries-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-nv-combiners.c" -framework OpenGL -o "$scratch/retained-entries-native"
+xcrun clang "${flags[@]}" -DVIM_VIEWPORT_WIRE "$source/probes/opengl-viewport-arrays.c" -framework IOKit -framework CoreFoundation -o "$scratch/viewport-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-viewport-arrays.c" -framework OpenGL -o "$scratch/viewport-native"
+xcrun clang "${flags[@]}" -DVIM_TESSELLATION_WIRE "$source/probes/opengl-tessellation.c" -framework IOKit -framework CoreFoundation -o "$scratch/tessellation-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-tessellation.c" -framework OpenGL -o "$scratch/tessellation-native"
+xcrun clang "${flags[@]}" -DVIM_FEEDBACK_OBJECTS_WIRE "$source/probes/opengl-feedback-objects.c" -framework IOKit -framework CoreFoundation -o "$scratch/feedback-objects-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-feedback-objects.c" -framework OpenGL -o "$scratch/feedback-objects-native"
+xcrun clang "${flags[@]}" -DVIM_IMMUTABLE_WIRE "$source/probes/opengl-immutable-textures.c" -framework IOKit -framework CoreFoundation -o "$scratch/immutable-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-immutable-textures.c" -framework OpenGL -o "$scratch/immutable-native"
+xcrun clang "${flags[@]}" -DVIM_SUBROUTINES_WIRE "$source/probes/opengl-subroutines.c" -framework IOKit -framework CoreFoundation -o "$scratch/subroutine-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-subroutines.c" -framework OpenGL -o "$scratch/subroutine-native"
+xcrun clang "${flags[@]}" -DVIM_ES2_WIRE "$source/probes/opengl-es2-compatibility.c" -framework IOKit -framework CoreFoundation -o "$scratch/es2-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-es2-compatibility.c" -framework OpenGL -o "$scratch/es2-native"
+xcrun clang "${flags[@]}" -DVIM_PACKED_ATTRIBS_WIRE "$source/probes/opengl-packed-attribs.c" -framework IOKit -framework CoreFoundation -o "$scratch/packed-attribs-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-packed-attribs.c" -framework OpenGL -o "$scratch/packed-attribs-native"
+xcrun clang "${flags[@]}" -DVIM_PROGRAM_BINARY_WIRE "$source/probes/opengl-program-binary.c" -framework IOKit -framework CoreFoundation -o "$scratch/program-binary-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-program-binary.c" -framework OpenGL -o "$scratch/program-binary-native"
+xcrun clang "${flags[@]}" -DVIM_CORE_EXTENSIONS_WIRE "$source/probes/opengl-core-extensions.c" -framework IOKit -framework CoreFoundation -o "$scratch/extensions-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-core-extensions.c" -framework OpenGL -o "$scratch/extensions-native"
+xcrun clang "${flags[@]}" -DVIM_INTERNAL_FORMAT_WIRE "$source/probes/opengl-internal-format.c" -framework IOKit -framework CoreFoundation -o "$scratch/internal-format-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-internal-format.c" -framework OpenGL -o "$scratch/internal-format-native"
+xcrun clang "${flags[@]}" -DVIM_INDIRECT_WIRE "$source/probes/opengl-indirect-draw.c" -framework IOKit -framework CoreFoundation -o "$scratch/indirect-client"
+xcrun clang "${flags[@]}" "$source/probes/opengl-indirect-draw.c" -framework OpenGL -o "$scratch/indirect-native"
+"$scratch/decoder"
+"$scratch/array-snapshot"
+"$scratch/pixel-map-native"
+"$scratch/compat-raster-native"
+"$scratch/interleaved-native"
+"$scratch/array-element-native"
+"$scratch/selection-feedback-native"
+apple_arrays=1
+"$scratch/apple-arrays-native" || { [[ $? == 77 ]] || exit 1; apple_arrays=0; }
+label_legacy=1
+"$scratch/label-native" || { [[ $? == 77 ]] || exit 1; label_legacy=0; }
+label_core=1
+"$scratch/label-native" core || { [[ $? == 77 ]] || exit 1; label_core=0; }
+shader_include=1
+"$scratch/include-native" || { [[ $? == 77 ]] || exit 1; shader_include=0; }
+apple_evaluator=1
+"$scratch/apple-eval-native" || { [[ $? == 77 ]] || exit 1; apple_evaluator=0; }
+vertex_blend=1
+"$scratch/blend-native" || { [[ $? == 77 ]] || exit 1; vertex_blend=0; }
+attached_objects=1
+"$scratch/attached-native" || { [[ $? == 77 ]] || exit 1; attached_objects=0; }
+bindable_uniform=1
+"$scratch/bindable-native" || { [[ $? == 77 ]] || exit 1; bindable_uniform=0; }
+point_size=1
+"$scratch/point-native" || { [[ $? == 77 ]] || exit 1; point_size=0; }
+purgeable_legacy=1
+"$scratch/purgeable-native" || { [[ $? == 77 ]] || exit 1; purgeable_legacy=0; }
+purgeable_core=1
+"$scratch/purgeable-native" core || { [[ $? == 77 ]] || exit 1; purgeable_core=0; }
+"$scratch/integer-native"
+"$scratch/readback-native"
+"$scratch/base-vertex-native"
+clear_buffer_native=$("$scratch/clear-buffer-native")
+printf '%s\n' "$clear_buffer_native"
+"$scratch/timer-query-native"
+timer_legacy=1
+"$scratch/timer-query-native" legacy || { [[ $? == 77 ]] || exit 1; timer_legacy=0; }
+"$scratch/uniform-block-native"
+"$scratch/sampler-native"
+"$scratch/render-targets-native"
+"$scratch/pipeline-native"
+"$scratch/fp64-native"
+"$scratch/viewport-native"
+gl4_native=1
+"$scratch/viewport-native" --gl4 || { [[ $? == 77 ]] || exit 1; gl4_native=0; }
+if [[ $gl4_native == 1 ]]; then
+    "$scratch/tessellation-native"
+    "$scratch/feedback-objects-native"
+    "$scratch/subroutine-native"
+    "$scratch/es2-native"
+    "$scratch/packed-attribs-native"
+    "$scratch/program-binary-native"
+    "$scratch/indirect-native"
+fi
+integer_vertex_native=$("$scratch/integer-vertex-native")
+printf '%s\n' "$integer_vertex_native"
+feedback_native=$("$scratch/feedback-native")
+printf '%s\n' "$feedback_native"
+feedback_extensions=$(sed -n 's/^feedback extensions=//p' <<< "$feedback_native")
+python3 - "$scratch" "$feedback_extensions" "$integer_vertex_native" "$clear_buffer_native" "$timer_legacy" "$gl4_native" "$source" "$apple_arrays" "$label_legacy" "$label_core" "$shader_include" "$apple_evaluator" "$vertex_blend" "$attached_objects" "$bindable_uniform" "$point_size" "$purgeable_legacy" "$purgeable_core" <<'PY'
+import os
+from pathlib import Path
+import re
+import select
+import socket
+import subprocess
+import sys
+
+scratch = Path(sys.argv[1])
+with socket.socket() as reservation:
+    reservation.bind(("127.0.0.1", 0))
+    port = reservation.getsockname()[1]
+env = dict(os.environ, VIM_PASSTHROUGH_OPENGL_PORT=str(port),
+           VIM_PASSTHROUGH_OPENGL_HOST="127.0.0.1")
+with subprocess.Popen([scratch / "executor"], env=env,
+                      stderr=subprocess.PIPE, text=True) as executor:
+    try:
+        if not select.select([executor.stderr], [], [], 10)[0]:
+            raise SystemExit("Executor startup timed out")
+        line = executor.stderr.readline().strip()
+        if f"127.0.0.1:{port};" not in line:
+            raise SystemExit(f"Executor did not start: {line}")
+        subprocess.run([scratch / "client"], env=env, check=True, timeout=15)
+        subprocess.run([scratch / "large-surface-client"], env=env, check=True, timeout=30)
+        subprocess.run([scratch / "integer-client"], env=env, check=True, timeout=15)
+        subprocess.run([scratch / "readback-client"], env=env, check=True, timeout=15)
+        subprocess.run([scratch / "base-vertex-client"], env=env, check=True, timeout=15)
+        clear_buffer_client = subprocess.check_output([scratch / "clear-buffer-client"],
+                                                     env=env, text=True, timeout=15)
+        print(clear_buffer_client, end="")
+        def packed_words(output):
+            return [line for line in output.splitlines() if line.startswith("packed depth-stencil ")]
+        if packed_words(clear_buffer_client) != packed_words(sys.argv[4]):
+            raise SystemExit("Bridge typed clear readback differs from native renderer")
+        subprocess.run([scratch / "timer-query-client"], env=env, check=True, timeout=15)
+        if sys.argv[5] == "1":
+            subprocess.run([scratch / "timer-query-client", "legacy"], env=env, check=True, timeout=15)
+        subprocess.run([scratch / "uniform-block-client"], env=env, check=True, timeout=15)
+        subprocess.run([scratch / "sampler-client"], env=env, check=True, timeout=15)
+        subprocess.run([scratch / "render-targets-client"], env=env, check=True, timeout=15)
+        subprocess.run([scratch / "pipeline-client"], env=env, check=True, timeout=15)
+        subprocess.run([scratch / "fp64-client"], env=env, check=True, timeout=15)
+        subprocess.run([scratch / "pixel-map-client"], env=env, check=True, timeout=15)
+        subprocess.run([scratch / "compat-raster-client"], env=env, check=True, timeout=15)
+        subprocess.run([scratch / "interleaved-client"], env=env, check=True, timeout=15)
+        subprocess.run([scratch / "array-element-client"], env=env, check=True, timeout=15)
+        subprocess.run([scratch / "array-element-client", "--big-endian"], env=env, check=True, timeout=15)
+        subprocess.run([scratch / "selection-feedback-client"], env=env, check=True, timeout=15)
+        if sys.argv[8] == "1":
+            subprocess.run([scratch / "apple-arrays-client"], env=env, check=True, timeout=15)
+        if sys.argv[9] == "1":
+            subprocess.run([scratch / "label-client"], env=env, check=True, timeout=15)
+        if sys.argv[10] == "1":
+            subprocess.run([scratch / "label-client", "core"], env=env, check=True, timeout=15)
+        if sys.argv[11] == "1":
+            subprocess.run([scratch / "include-client"], env=env, check=True, timeout=15)
+        if sys.argv[12] == "1":
+            subprocess.run([scratch / "apple-eval-client"], env=env, check=True, timeout=15)
+        if sys.argv[13] == "1":
+            subprocess.run([scratch / "blend-client"], env=env, check=True, timeout=15)
+        if sys.argv[14] == "1":
+            subprocess.run([scratch / "attached-client"], env=env, check=True, timeout=15)
+        if sys.argv[15] == "1":
+            subprocess.run([scratch / "bindable-client"], env=env, check=True, timeout=15)
+        if sys.argv[16] == "1":
+            subprocess.run([scratch / "point-client"], env=env, check=True, timeout=15)
+        if sys.argv[17] == "1":
+            subprocess.run([scratch / "purgeable-client"], env=env, check=True, timeout=15)
+        if sys.argv[18] == "1":
+            subprocess.run([scratch / "purgeable-client", "core"], env=env, check=True, timeout=15)
+        native_imaging = subprocess.run([scratch / "imaging-parameters-native"], env=env,
+                                        capture_output=True, timeout=15, text=True)
+        if native_imaging.returncode != 77:
+            native_imaging.check_returncode()
+            bridge_imaging = subprocess.check_output([scratch / "imaging-parameters-client"],
+                                                      env=env, timeout=15, text=True)
+            if bridge_imaging != native_imaging.stdout:
+                raise SystemExit(f"Imaging parameter values differ from native:\n{native_imaging.stdout}\n{bridge_imaging}")
+            print("PASS imaging parameter values and errors match native")
+        native_transfers = subprocess.run([scratch / "imaging-transfer-native"], env=env,
+                                           capture_output=True, timeout=15, text=True)
+        if native_transfers.returncode != 77:
+            native_transfers.check_returncode()
+            bridge_transfers = subprocess.check_output([scratch / "imaging-transfer-client"],
+                                                       env=env, timeout=15, text=True)
+            native_renderer, native_values = native_transfers.stdout.split("\n", 1)
+            bridge_renderer, bridge_values = bridge_transfers.split("\n", 1)
+            if (bridge_values != native_values or
+                bridge_renderer.rsplit(" advertised=", 1)[1] != native_renderer.rsplit(" advertised=", 1)[1]):
+                raise SystemExit(f"Imaging differs from native:\n{native_transfers.stdout}\n{bridge_transfers}")
+            print("PASS imaging transfer bytes, rasterization, buffer errors and advertisement match native")
+        for profile in ([], ["core"]):
+            native_legacy = subprocess.run([scratch / "retained-entries-native", *profile], env=env,
+                                            capture_output=True, timeout=15, text=True)
+            if native_legacy.returncode == 77:
+                continue
+            native_legacy.check_returncode()
+            bridge_legacy = subprocess.check_output([scratch / "retained-entries-client", *profile],
+                                                     env=env, timeout=15, text=True)
+            native_values = native_legacy.stdout.splitlines()[1:]
+            if bridge_legacy.splitlines()[1:] != native_values or not bridge_legacy.splitlines()[0].endswith("extensions=0/0"):
+                raise SystemExit(f"Retained GL entry points differ from native:\n{native_legacy.stdout}\n{bridge_legacy}")
+            print(f"PASS retained NV combiner and sample-pass behavior ({profile or 'compatibility'})")
+        subprocess.run([scratch / "viewport-client"], env=env, check=True, timeout=15)
+        def immutable(profile):
+            native = subprocess.run([scratch / "immutable-native", *profile], env=env, timeout=15)
+            client = subprocess.run([scratch / "immutable-client", *profile], env=env, timeout=15)
+            if native.returncode not in (0, 77) or native.returncode != client.returncode:
+                raise SystemExit("Immutable texture availability/behavior differs from native")
+        immutable([])
+        def extensions(profile):
+            qualified = set(re.findall(r'X\(\w+, \d+, "(GL_[^"]+)"',
+                (Path(sys.argv[7]) / "PassthroughOpenGL/passthrough-opengl-wire.h").read_text()))
+            def listed(executable):
+                output = subprocess.check_output([scratch / executable, *profile], env=env,
+                                                 text=True, timeout=15)
+                return [line for line in output.splitlines() if line.startswith("GL_")]
+            native = set(listed("extensions-native"))
+            client = listed("extensions-client")
+            if len(client) != len(set(client)) or set(client) != (native & qualified):
+                raise SystemExit(f"Core extension discovery differs from native/qualified intersection: {client}")
+            print(f"PASS {len(client)} qualified core extensions match native for {profile or 'GL3 selector'}")
+            return set(client)
+        core_extensions = extensions([])
+        if sys.argv[6] == "1":
+            subprocess.run([scratch / "viewport-client", "--gl4"], env=env, check=True, timeout=15)
+            immutable(["--gl4"])
+            extensions(["--gl4"])
+            subprocess.run([scratch / "tessellation-client"], env=env, check=True, timeout=15)
+            subprocess.run([scratch / "subroutine-client"], env=env, check=True, timeout=15)
+            subprocess.run([scratch / "es2-client"], env=env, check=True, timeout=15)
+            subprocess.run([scratch / "packed-attribs-client"], env=env, check=True, timeout=15)
+            subprocess.run([scratch / "fp64-vertex-native"], env=env, check=True, timeout=15)
+            subprocess.run([scratch / "fp64-vertex-client"], env=env, check=True, timeout=15)
+            subprocess.run([scratch / "program-binary-client"], env=env, check=True, timeout=15)
+            subprocess.run([scratch / "indirect-client"], env=env, check=True, timeout=15)
+            def internal_formats(executable):
+                output = subprocess.check_output([scratch / executable], env=env, text=True, timeout=15)
+                print(output, end="")
+                return [line for line in output.splitlines() if line.startswith(("internal format target=", "sample "))]
+            if internal_formats("internal-format-native") != internal_formats("internal-format-client"):
+                raise SystemExit("Bridge internal format query differs from native")
+            subprocess.run([scratch / "feedback-objects-client"], env=env, check=True, timeout=15)
+            if "GL_ARB_transform_feedback2" in core_extensions and "GL_ARB_transform_feedback3" in core_extensions:
+                subprocess.run([scratch / "feedback-objects-client", "--gl3"], env=env, check=True, timeout=15)
+            def resumed(executable):
+                result = subprocess.run([scratch / executable, "--draw-after-resume"],
+                                        env=env, capture_output=True, text=True, timeout=15)
+                capture = [line for line in result.stdout.splitlines()
+                           if line.startswith(("feedback captured ", "feedback replay "))]
+                if len(capture) != 9:
+                    raise SystemExit(f"{executable} did not finish feedback replay: {result.stderr}")
+                return result.returncode, capture
+            if resumed("feedback-objects-client") != resumed("feedback-objects-native"):
+                raise SystemExit("Drawing after feedback resume differs from the native renderer")
+        vertex_client = subprocess.check_output([scratch / "integer-vertex-client"],
+                                                env=env, text=True, timeout=15)
+        print(vertex_client, end="")
+        def captures(output):
+            return [line for line in output.splitlines() if line.startswith("integer capture ")]
+        if captures(vertex_client) != captures(sys.argv[3]):
+            raise SystemExit("Bridge integer-array capture differs from the native renderer")
+        subprocess.run([scratch / "feedback-client"], env=dict(env,
+                       VIM_EXPECT_FEEDBACK_EXTENSIONS=sys.argv[2]), check=True, timeout=15)
+    finally:
+        if executor.poll() is None:
+            executor.terminate()
+        try:
+            _, diagnostics = executor.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            executor.kill()
+            _, diagnostics = executor.communicate()
+        if diagnostics:
+            print(diagnostics, end="", file=sys.stderr)
+PY

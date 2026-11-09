@@ -400,7 +400,7 @@ static void VIMAlignFormBaselines(NSView *view) {
             [rows addObject:@[[NSTextField labelWithString:@"Source:"],source]];
         } else if(images.count<VIMImageSlotCount)[rows addObject:@[NSGridCell.emptyContentView,[self button:@"Connect Image…" action:@selector(chooseDisc:)]]];
         NSGridView *grid=[NSGridView gridViewWithViews:rows];grid.columnSpacing=12;grid.rowSpacing=14;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
-        return VIMColumn(@[grid,VIMText(@"Connect ISO, CDR or supported unencrypted DMG images. Disconnect a drive’s current image before replacing it.",NO)]);
+        return VIMColumn(@[grid,VIMText(@"Connect ISO, CDR, Toast or unencrypted DMG images. Disconnect a drive’s current image before replacing it.",NO)]);
     }
     NSString *file=[self.machine.configuration[@"Disk"] lastPathComponent]?:@"System.qcow2";
     NSPopUpButton *source=[NSPopUpButton new];[source addItemWithTitle:file];[source.widthAnchor constraintEqualToConstant:250].active=YES;

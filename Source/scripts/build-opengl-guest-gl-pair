@@ -19,6 +19,14 @@ dispatch_args=(--dispatch-sdk "$dispatch_sdk")
 if [[ "$minimum" == 10.7 ]]; then dispatch_args=(--runtime-dispatch-count 968); fi
 if [[ "$minimum" == 10.14 ]]; then dispatch_args=(--runtime-dispatch-count 975); fi
 python3 "$root/scripts/generate-opengl-gli.py" "$build/passthrough-opengl-gli-map.json" "$build/passthrough-opengl-gli-generated.inc" "${dispatch_args[@]}"
+if [[ "$minimum" == 10.8 ]]; then
+    # The default canonical 10.9 table has two extra fields. Compiling it for
+    # 10.8 still links, but corrupts native CGLCreateContext's dispatch ABI.
+    grep -Fxq '#define VIM_GLI_DISPATCH_COUNT 972' "$build/passthrough-opengl-gli-generated.inc" || {
+        echo 'Mountain Lion requires its 972-slot layout: set VIM_OPENGL_DISPATCH_SDK to the actual 10.8 SDK.' >&2
+        exit 2
+    }
+fi
 flags=(-O2 -g -fno-omit-frame-pointer -Wall -Wextra -Werror -Wno-deprecated-declarations
     -Wno-unused-function -Wno-missing-braces -Wno-missing-field-initializers
     -arch x86_64 -arch i386 -isysroot "$sdk" -mmacosx-version-min="$minimum" -I "$build")

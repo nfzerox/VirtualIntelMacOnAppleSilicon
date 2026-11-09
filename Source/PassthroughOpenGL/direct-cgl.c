@@ -41,6 +41,7 @@ extern GLboolean DGMakeCurrent(DGContextHandle,void *,GLenum,GLsizei,GLsizei);
 extern GLboolean DGMakeCurrentPrepared(DGContextHandle,void *,GLsizei,GLsizei);
 extern void DGDestroyContext(DGContextHandle);
 extern void (*DGGetProcAddress(const char *))(void);
+extern int DGReadTextureWithRowBytes(GLenum,GLint,GLenum,GLenum,void *,GLint);
 extern void DGPixelStore(GLint,GLint);
 extern GLenum DGGetVertexAttribPointer(void *,GLuint,GLenum,void **);
 #define DG_CONTEXT_FORMAT 0x22
@@ -53,6 +54,8 @@ extern GLenum DGGetVertexAttribPointer(void *,GLuint,GLenum,void **);
 #define DG_CONTEXT_ROW_LENGTH 0x10
 #define DG_CONTEXT_VIM_DOUBLEBUFFER 0x56494d01
 #define DG_CONTEXT_VIM_PROFILE 0x56494d02
+#define VIM_GL_SAMPLER 0x82e6
+#define VIM_GL_TRANSFORM_FEEDBACK 0x8e22
 
 struct _CGLPixelFormatObject { unsigned refs; GLint depth,stencil; int accelerated,double_buffer;CGLOpenGLProfile profile; };
 struct VIMSurface {
@@ -264,6 +267,7 @@ static void VIMDestroyCGSContext(struct VIMContext *);
 static void VIMDestroyGLIDrawables(struct VIMContext *);
 static GLuint VIMCGSBeginRedefine(GLIContext,GLenum,GLint);
 static void VIMCGSEndRedefine(GLIContext,GLuint);
+static inline int VIMPrepareOrdinaryDrawing(GLIContext);
 #endif
 static void VIMForgetAppleObjects(GLIContext,GLenum,GLsizei,const GLuint *);
 static int VIMPreparePixelTransfer(GLIContext,GLenum,GLenum,int,struct VIMPixelTransfer *);
@@ -335,7 +339,8 @@ CGLError CGLChoosePixelFormat(const CGLPixelFormatAttribute *a,CGLPixelFormatObj
         case kCGLPFAAlphaSize: if((int)a[++i]>8) goto unsupported; break;
         case kCGLPFAOpenGLProfile:
             p->profile=(CGLOpenGLProfile)a[++i];
-            if(p->profile!=kCGLOGLPVersion_Legacy && p->profile!=kCGLOGLPVersion_3_2_Core)goto unsupported;
+            if(p->profile!=kCGLOGLPVersion_Legacy && p->profile!=kCGLOGLPVersion_3_2_Core &&
+               p->profile!=(CGLOpenGLProfile)DG_CGL_PROFILE_GL4)goto unsupported;
             break;
         case kCGLPFASamples: case kCGLPFASampleBuffers:
             if(a[++i]) goto unsupported; break;
@@ -382,7 +387,7 @@ CGLError CGLCreateContext(CGLPixelFormatObj pf,CGLContextObj share,CGLContextObj
     if(!out) return kCGLBadAddress;
     *out=NULL;
     if(!pf) return kCGLBadPixelFormat;
-    if(share && (pf->profile==kCGLOGLPVersion_Legacy)!=(VIM(share)->format->profile==kCGLOGLPVersion_Legacy))
+    if(share && pf->profile!=VIM(share)->format->profile)
         return kCGLBadMatch;
     struct VIMContext *c=calloc(1,sizeof(*c));
     if(!c) return kCGLBadAlloc;
@@ -465,6 +470,7 @@ void CGLReleaseContext(CGLContextObj ctx)
     if(bound==ctx->rend)VIMCacheBinding(NULL);
     if(backend_current==c->backend) backend_current=NULL;
     DGDestroyContext(c->backend);
+    VIMForgetAppleOwner(c);
     if(!__sync_sub_and_fetch(&c->group->refs,1)) {
         struct VIMSurface *s=c->group->surfaces;
         while(s) { struct VIMSurface *next=s->next; CFRelease(s->surface); free(s); s=next; }

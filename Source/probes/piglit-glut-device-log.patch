@@ -1,0 +1,14 @@
+diff --git a/tests/util/piglit-framework-gl/piglit_glut_framework.c b/tests/util/piglit-framework-gl/piglit_glut_framework.c
+--- a/tests/util/piglit-framework-gl/piglit_glut_framework.c
++++ b/tests/util/piglit-framework-gl/piglit_glut_framework.c
+@@ -275,6 +275,10 @@
+ 
+ #ifdef PIGLIT_USE_OPENGL
+ 	piglit_dispatch_default_init(PIGLIT_DISPATCH_GL);
++	printf("PIGLIT GL vendor=%s renderer=%s version=%s\n",
++	       (const char *)glGetString(GL_VENDOR),
++	       (const char *)glGetString(GL_RENDERER),
++	       (const char *)glGetString(GL_VERSION));
+ #endif
+ }
+ 

@@ -127,6 +127,14 @@ int main(int argc,const char **argv){@autoreleasepool{
     check([d[@"DuplicateFrames"] unsignedIntegerValue]==2,"identical and alpha-only image changes not counted twice");
     check(![d[@"Failures"] unsignedIntegerValue] && ![d[@"Reordered"] unsignedIntegerValue],"complete ordered measurements");
     check([d[@"Trace"] count]==4 && [d[@"Trace"][0][3] intValue]==-1,"bounded ordered trace and absent marker");
+    check([d[@"PipelineTrace"] count]==[d[@"Trace"] count],"one timing row per presented fingerprint");
+    for(NSUInteger i=0;i<[d[@"PipelineTrace"] count];++i){
+        NSArray *phase=d[@"PipelineTrace"][i];
+        double offered=[phase[0] doubleValue],commit=[phase[1] doubleValue],completed=[phase[2] doubleValue];
+        check(offered>0&&offered<=commit&&commit<=completed&&commit<=[phase[3] doubleValue]&&
+              [phase[3] isEqual:d[@"Trace"][i][0]]&&![phase[4] boolValue],
+              "shared-buffer frame timing separates offer, commit, completion callback and presentation");
+    }
     pixels[5*width+5]=0xffff4040; // Red outside the search rectangle is ignored.
     pixels[19*width+21]=0xffcd7445; // Actual Snow minimize rim RGB205/116/69 is not red.
     pixels[20*width+20]=0xffff4040;
@@ -167,22 +175,28 @@ int main(int argc,const char **argv){@autoreleasepool{
               [row[5] intValue]==456&&[row[6] boolValue],"separate skipped marker/fingerprint metadata");
         [view setFingerprintTraceEnabled:NO];
         check(!view.frameDiagnostics[@"DistinctPresentationTiming"][@"UnpresentedTrace"],"no trace while disabled");
+        check(!view.frameDiagnostics[@"DistinctPresentationTiming"][@"PipelineTrace"],"no pipeline rows while disabled");
     });
     dispatch_sync(dispatch_get_main_queue(),^{[view setFingerprintMeasurementEnabled:NO];});
     check(![counts(view)[@"Enabled"] boolValue],"same-session disable without changing presentation");
     dispatch_semaphore_t inputDone=dispatch_semaphore_create(0);
-    __block NSUInteger downs=0,ups=0,batches=0;
+    __block NSUInteger downs=0,ups=0,batches=0,unrelated=0;
     dispatch_sync(dispatch_get_main_queue(),^{
         __weak VIMMetalView *weakView=view;
         view.inputHandler=^(NSArray *events){
-            if(!weakView.diagnosticInputObserver)return;
+            void (^observer)(CFTimeInterval,NSError *)=weakView.diagnosticInputObserver;
+            if(!observer){
+                if([events.firstObject[@"data"][@"value"] isEqual:@500])unrelated++;
+                return;
+            }
             batches++;
             for(NSDictionary *event in events)if([event[@"type"] isEqual:@"btn"]){
                 NSNumber *down=event[@"data"][@"down"];
                 check(CFGetTypeID((__bridge CFTypeRef)down)==CFBooleanGetTypeID(),"strict QMP button boolean, not numeric 0/1");
                 if(down.boolValue)downs++;else ups++;
             }
-            if(weakView.diagnosticInputObserver)weakView.diagnosticInputObserver(CACurrentMediaTime(),nil);
+            CFTimeInterval queued=CACurrentMediaTime();
+            dispatch_async(dispatch_get_main_queue(),^{observer(queued,nil);});
         };
         VIMResearchPointerWorkload(view,@{@"Pattern":@"circle",@"Seconds":@1,@"Hz":@60,@"Origin":@[@16000,@16000],
             @"Amplitude":@[@1000,@1000],@"MarkerRect":@[@0,@0,@0,@0]},^BOOL{return YES;},^(NSDictionary *result){
@@ -190,9 +204,13 @@ int main(int argc,const char **argv){@autoreleasepool{
                 fprintf(stderr,"INPUT_FIXTURE batches=%lu inputs=%lu error=%s\n",(unsigned long)batches,
                     (unsigned long)[result[@"Inputs"] count],[result[@"Error"] description].UTF8String?:"none");
             check(!result[@"Error"]&&[result[@"Inputs"] count]==batches,"finite production-path input trace");
-            check([result[@"InputReplies"] count]==batches&&downs==1&&ups==1,"ordered input replies and one button release");
+            check([result[@"InputReplies"] count]==batches&&downs==1&&ups==1&&unrelated==1,
+                  "ordered asynchronous replies exclude unrelated input and include one button release");
             check(!view.diagnosticInputObserver,"diagnostic observer retired");
             view.inputHandler=nil;dispatch_semaphore_signal(inputDone);
+        });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,500*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
+            view.inputHandler(@[@{@"type":@"abs",@"data":@{@"axis":@"x",@"value":@500}}]);
         });
     });
     check(!dispatch_semaphore_wait(inputDone,dispatch_time(DISPATCH_TIME_NOW,4*NSEC_PER_SEC)),"finite pointer workload completion");
@@ -224,6 +242,25 @@ int main(int argc,const char **argv){@autoreleasepool{
         });
     });
     check(!dispatch_semaphore_wait(commandDone,dispatch_time(DISPATCH_TIME_NOW,4*NSEC_PER_SEC)),"finite Command-drag completion");
+    dispatch_semaphore_t keyDone=dispatch_semaphore_create(0);
+    dispatch_sync(dispatch_get_main_queue(),^{
+        __weak VIMMetalView *weakView=view;
+        view.inputHandler=^(NSArray *events){
+            void (^observer)(CFTimeInterval,NSError *)=weakView.diagnosticInputObserver;
+            if(!observer)return;
+            CFTimeInterval queued=CACurrentMediaTime();
+            dispatch_async(dispatch_get_main_queue(),^{observer(queued,nil);});
+        };
+        VIMResearchKeyWorkload(view,@{@"Workload":@"mission-control",@"Cycles":@1},^BOOL{return YES;},^(NSDictionary *result){
+            check(!result[@"Error"]&&[result[@"Inputs"] count]==5&&[result[@"InputReplies"] count]==5,
+                  "one ACK per scheduled key batch, excluding unrelated pointer input");
+            view.inputHandler=nil;dispatch_semaphore_signal(keyDone);
+        });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,700*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
+            view.inputHandler(@[@{@"type":@"abs",@"data":@{@"axis":@"x",@"value":@500}}]);
+        });
+    });
+    check(!dispatch_semaphore_wait(keyDone,dispatch_time(DISPATCH_TIME_NOW,4*NSEC_PER_SEC)),"finite key workload completion");
     if(pacing)retinaPacing(view,pixels);
     munmap(pixels,bytes);dispatch_sync(dispatch_get_main_queue(),^{[view discardFrameStorage];[window orderOut:nil];});
     puts("PASS actual-presented whole-image GPU fingerprints: duplicate, final-pixel/alpha changes, bounded trace, clipped moving marker, disable");exit(0);

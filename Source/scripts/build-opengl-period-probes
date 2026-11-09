@@ -1,0 +1,48 @@
+#!/bin/bash
+# Public CGL fixtures, not an injected/replacement client. Run the same files
+# on the physical reference and guest. Default: 10.5+; --tiger uses genuine
+# 10.4 link libraries and its period linker for i386-only public controls.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+tiger=0
+if [[ ${1:-} == --tiger ]]; then tiger=1;shift; fi
+[[ $# == 1 ]] || { echo "Usage: $0 [--tiger] NEW_OUTPUT_DIRECTORY" >&2; exit 64; }
+output="$1"
+[[ ! -e "$output" ]] || { echo 'Choose a new output directory.' >&2; exit 65; }
+sdk="${VIM_OPENGL_SDK:-$root/resources/sdk/MacOSX10.9.sdk}"
+cc="${VIM_OPENGL_CC:-$root/resources/xcode/XcodeMojave.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang}"
+if [[ $tiger == 1 ]]; then
+    : "${VIM_OPENGL_TIGER_SDK:?Set VIM_OPENGL_TIGER_SDK to the genuine MacOSX10.4u.sdk}"
+    : "${VIM_OPENGL_TIGER_LD:?Set VIM_OPENGL_TIGER_LD to the Xcode 3.2.6 period linker}"
+    [[ -f "$VIM_OPENGL_TIGER_SDK/usr/lib/crt1.o" && -x "$VIM_OPENGL_TIGER_LD" ]] || exit 66
+fi
+mkdir -p "$output"
+if [[ $tiger == 1 ]]; then
+    "$cc" -O2 -arch i386 -isysroot "$sdk" -mmacosx-version-min=10.4 -Wall -Wextra -Werror \
+        -c "$root/probes/opengl-period-assert.c" -o "$output/period-assert.o"
+fi
+names=(period-conformance array-element mixed-index-arrays compiled-index-families interleaved-arrays apple-element-array
+    apple-evaluator selection-feedback pixel-maps compatibility-raster
+    imaging-parameters imaging texture-readback texture-environment-queries
+    arb-vertex-program arb-fragment-program texture-list-errors raster-list-errors depth-texture)
+for name in "${names[@]}"; do
+    # This context-selection hint postdates 10.5/10.6. Zero terminates the
+    # attribute list at that point; all these fixtures request legacy GL.
+    architectures=(-arch x86_64 -arch i386);minimum=10.5
+    if [[ $tiger == 1 ]]; then architectures=(-arch i386);minimum=10.4;fi
+    flags=(-O2 "${architectures[@]}" -isysroot "$sdk" "-mmacosx-version-min=$minimum"
+        -Wall -Wextra -Werror -Wno-unused-function -Wno-missing-braces -Wno-deprecated-declarations
+        -include "$root/probes/opengl-period-context.h")
+    if [[ $tiger == 1 ]]; then
+        "$cc" "${flags[@]}" -c "$root/probes/opengl-$name.c" -o "$output/$name.o"
+        "$VIM_OPENGL_TIGER_LD" -arch i386 -macosx_version_min 10.4 -syslibroot "$VIM_OPENGL_TIGER_SDK" \
+            -no_uuid -lcrt1.o "$output/$name.o" "$output/period-assert.o" \
+            -framework OpenGL -lgcc_s.10.4 -lSystem -o "$output/$name"
+    else
+        "$cc" "${flags[@]}" \
+            "$root/probes/opengl-$name.c" -framework OpenGL -o "$output/$name"
+        codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/$name"
+    fi
+done
+cp "$root/scripts/run-opengl-period-probes" "$output/run-opengl-period-probes"
+echo "$output"

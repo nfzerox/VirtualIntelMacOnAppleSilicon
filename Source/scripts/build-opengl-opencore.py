@@ -30,6 +30,7 @@ def inputs():
            'vendor/patches/opencore-hfs-overflow-extents.patch',
            'vendor/patches/opencore-installer-graphics-isolation.patch',
            'vendor/patches/opencore-memory-map-tail-count.patch',
+           'vendor/patches/opencore-dmg-chunk-cache.patch',
            'compat/PassthroughOpenGLBootPolicy.h',
            'scripts/build-guest-firmware.py','scripts/firmware-host-compiler.py','scripts/build_signing.py')
     return {name:digest(SOURCE/name) for name in names}
@@ -146,6 +147,13 @@ def main():
     else:
         run('/usr/bin/patch','-p1','--batch','--forward','-i',memory_patch,cwd=root/'OpenCorePkg')
         memory_stamp.write_text(digest(memory_patch))
+    dmg_patch=SOURCE/'vendor/patches/opencore-dmg-chunk-cache.patch'
+    dmg_stamp=root/'.VIMDmgChunkCachePatchSHA256'
+    if dmg_stamp.exists():
+        if dmg_stamp.read_text()!=digest(dmg_patch):raise ValueError('DMG cache patch changed; use a new --work directory')
+    else:
+        run('/usr/bin/patch','-p1','--batch','--forward','-i',dmg_patch,cwd=root/'OpenCorePkg')
+        dmg_stamp.write_text(digest(dmg_patch))
     builder=runpy.run_path(str(SOURCE/'scripts/build-guest-firmware.py'))
     replace=builder['replace_once']
     replace(root,'BaseTools/Source/C/VfrCompile/GNUmakefile','APPNAME = VfrCompile','.NOTPARALLEL:\n\nAPPNAME = VfrCompile')

@@ -68,7 +68,7 @@ static GLenum DGHostMapBegin(struct DGHostContext *c,struct DGMessage *m,struct 
     uint32_t flags=ranged?access:access==GL_READ_ONLY?GL_MAP_READ_BIT:access==GL_WRITE_ONLY?GL_MAP_WRITE_BIT:
         access==GL_READ_WRITE?(GL_MAP_READ_BIT|GL_MAP_WRITE_BIT):0;
     int valid=size>=0 && offset>=0 && length>=0 && offset<=size && length<=size-offset;
-    if(valid && (uint64_t)length>DG_MAX_BYTES)return GL_OUT_OF_MEMORY;
+    if(valid && ((uint64_t)length>SIZE_MAX || (uint64_t)length>DG_MAP_BUDGET-group->map_bytes))return GL_OUT_OF_MEMORY;
     unsigned char *seed=NULL;GLint mapped=0;glGetBufferParameteriv(target,GL_BUFFER_MAPPED,&mapped);
     error=glGetError();if(error)return error;
     if(valid && !mapped && length && (flags&GL_MAP_WRITE_BIT) && !(flags&GL_MAP_READ_BIT) &&
@@ -97,7 +97,7 @@ static GLenum DGHostMapBegin(struct DGHostContext *c,struct DGMessage *m,struct 
             reply->result=old->info.lease;DGRemoveHostMap(group,old);break;
         }
     }
-    if(map->info.length>DG_MAX_BYTES || map->info.length>DG_MAP_BUDGET-group->map_bytes) {
+    if(map->info.length>SIZE_MAX || map->info.length>DG_MAP_BUDGET-group->map_bytes) {
         if(dg_diagnostics&&c->diagnostic_errors++<8)fprintf(stderr,"direct mapping byte limit count=%u bytes=%zu requested=%llu\n",group->map_count,group->map_bytes,(unsigned long long)map->info.length);
         glUnmapBuffer(target);glGetError();free(seed);free(map);return GL_OUT_OF_MEMORY;
     }

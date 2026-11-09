@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Build a period public-CGL audit from Khronos gl.xml and SDK selectors.
+
+Usage: build-opengl-state-query-audit GL_XML NEW_OUTPUT_DIRECTORY
+The registry is a developer diagnostic input, not an app runtime dependency.
+Use https://raw.githubusercontent.com/KhronosGroup/OpenGL-Registry/main/xml/gl.xml.
+"""
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+
+if len(sys.argv)!=3:
+    raise SystemExit(__doc__)
+source=Path(__file__).resolve().parents[1]
+registry,output=map(Path,sys.argv[1:])
+if output.exists():
+    raise SystemExit('Choose a new output directory.')
+sdk=Path(os.environ.get('VIM_OPENGL_SDK',source/'resources/sdk/MacOSX10.9.sdk'))
+cc=os.environ.get('VIM_OPENGL_CC',str(source/'resources/xcode/XcodeMojave.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang'))
+headers=sdk/'System/Library/Frameworks/OpenGL.framework/Headers'
+text='\n'.join((headers/name).read_text() for name in ('gl.h','glext.h','gl3.h','gl3ext.h'))
+available={name for name in re.findall(r'#define\s+(GL_\w+)\b',text)}
+# These are counted by another state query, not fixed 1..16 element state.
+# Include only period SDK names, not future registry selectors on old drivers.
+variable={0x86a3,0x87ff,0x8df8,0x86a8}
+selectors={}
+for group in ET.parse(registry).getroot().findall('enums'):
+    for enum in group:
+        name,value=enum.get('name'),enum.get('value')
+        if 'GetPName' not in enum.get('group','').split(',') or name not in available or not value:
+            continue
+        number=int(value,0)
+        if number not in variable:
+            selectors.setdefault(number,name)
+output.mkdir(parents=True)
+(output/'state-query-selectors.inc').write_text(
+    '/* Khronos gl.xml GetPName intersected with the selected period SDK. */\n'+
+    ''.join(f'{{0x{key:x},"{name}"}},\n' for key,name in sorted(selectors.items())))
+# The wire helper consumes the canonical, already generated state-limit list.
+subprocess.run([sys.executable,str(source/'scripts/generate-passthrough-opengl.py'),str(sdk),str(output)],check=True)
+binary=output/'state-query-audit'
+subprocess.run([cc,'-O2','-arch','x86_64','-arch','i386','-isysroot',str(sdk),
+    '-mmacosx-version-min=10.7','-Wall','-Wextra','-Werror','-Wno-unused-function',
+    '-Wno-deprecated-declarations','-I',str(output),str(source/'probes/opengl-state-query-audit.c'),
+    '-framework','OpenGL','-o',str(binary)],check=True)
+subprocess.run(['codesign','--force','--sign','-','--digest-algorithm=sha1,sha256',str(binary)],check=True)
+print(f'{binary}: {len(selectors)} unique fixed-size selectors')

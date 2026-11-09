@@ -1,0 +1,18 @@
+#!/bin/bash
+# Public CGL fixtures for 10.7+, unchanged on the physical reference and guest.
+# These link Apple's public OpenGL.framework, not the private wire client.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+[[ $# == 1 ]] || { echo "Usage: $0 NEW_OUTPUT_DIRECTORY" >&2; exit 64; }
+output="$1"
+[[ ! -e "$output" ]] || { echo 'Choose a new output directory.' >&2; exit 65; }
+sdk="${VIM_OPENGL_SDK:-$root/resources/sdk/MacOSX10.9.sdk}"
+cc="${VIM_OPENGL_CC:-$root/resources/xcode/XcodeMojave.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang}"
+mkdir -p "$output"
+for name in core-profile core-extensions compressed-filter-textures texture-format-families scalar-object-queries srgb-decode integer-scissor-clear packed-depth-mipmap; do
+    "$cc" -O2 -arch x86_64 -arch i386 -isysroot "$sdk" -mmacosx-version-min=10.7 \
+        -Wall -Wextra -Werror -Wno-deprecated-declarations \
+        "$root/probes/opengl-$name.c" -framework OpenGL -o "$output/$name"
+    codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/$name"
+done
+echo "$output"

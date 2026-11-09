@@ -1,0 +1,29 @@
+#!/bin/bash
+# Explicit diagnostic build only; ordinary runtime builds omit this code.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+    echo "Usage: $0 NEW_OUTPUT_DIRECTORY [MACOS_10_9_SDK]" >&2; exit 64
+fi
+output="$1"
+sdk="${2:-$root/resources/sdk/MacOSX10.9.sdk}"
+[[ ! -e "$output" ]] || { echo 'Choose a new output directory.' >&2; exit 65; }
+mkdir -p "$output"
+output="$(cd "$output" && pwd)"
+python3 "$root/scripts/generate-passthrough-opengl.py" "$sdk" "$output/Generated"
+flags=(-O2 -g -fno-omit-frame-pointer -Wall -Wextra -Werror
+    -Wno-deprecated-declarations -Wno-misleading-indentation -Wno-unused-function
+    -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$output/Generated")
+frameworks=(-framework OpenGL -framework IOSurface -framework CoreFoundation -lbsm)
+xcrun clang "${flags[@]}" -fvisibility=hidden -DVIM_PASSTHROUGH_OPENGL_INPROCESS=1 \
+    -DVIM_PASSTHROUGH_OPENGL_PACKET_JOURNAL=1 -dynamiclib \
+    "$root/PassthroughOpenGL/passthrough-opengl-host.c" "${frameworks[@]}" \
+    -o "$output/libVIMJournalHost.dylib"
+xcrun clang "${flags[@]}" "$root/probes/opengl-packet-replay.c" "${frameworks[@]}" \
+    -o "$output/opengl-packet-replay"
+for binary in libVIMJournalHost.dylib opengl-packet-replay; do
+    for arch in arm64 x86_64; do lipo "$output/$binary" -verify_arch "$arch"; done
+    codesign --force --sign - "$output/$binary"
+done
+mkdir -m 700 "$output/Capture"
+printf 'Diagnostic executor and replay tool: %s\n' "$output"

@@ -4,6 +4,12 @@
  * pnames still fail closed. Native GL owns values, validation and conversions.
  */
 DG_SERVER_QUERY(GL_CURRENT_NORMAL,3)
+/* Both secondary colors are four-component server state, even though their
+ * setters/arrays accept only RGB. GL 2.1 table 6.5 and EXT_secondary_color;
+ * native GL supplies alpha and integer/boolean conversions, not our cache. */
+DG_SERVER_QUERY(GL_CURRENT_SECONDARY_COLOR,4)
+DG_SERVER_QUERY(GL_CURRENT_RASTER_SECONDARY_COLOR,4)
+DG_SERVER_QUERY(GL_COLOR_SUM,1)
 DG_SERVER_QUERY(GL_POLYGON_MODE,2)
 DG_SERVER_QUERY(GL_ACCUM_CLEAR_VALUE,4)
 DG_SERVER_QUERY(GL_BLEND_COLOR,4)

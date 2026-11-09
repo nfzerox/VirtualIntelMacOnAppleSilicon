@@ -142,7 +142,7 @@ static int DGVRAMRenderMaterialize(struct DGHostContext *c)
     glFramebufferTexture2DEXT(GL_DRAW_FRAMEBUFFER_EXT,GL_COLOR_ATTACHMENT0_EXT,GL_TEXTURE_RECTANGLE_ARB,d->color,0);
     int good=glCheckFramebufferStatusEXT(GL_DRAW_FRAMEBUFFER_EXT)==GL_FRAMEBUFFER_COMPLETE_EXT;
     glReadBuffer(GL_COLOR_ATTACHMENT0_EXT);glDrawBuffer(GL_COLOR_ATTACHMENT0_EXT);
-    glDisable(GL_SCISSOR_TEST);glDisable(GL_FRAMEBUFFER_SRGB_EXT);
+    DGSetBlitScissor(c,GL_FALSE);glDisable(GL_FRAMEBUFFER_SRGB_EXT);
     if(good)glBlitFramebufferEXT(0,0,d->width,d->height,0,0,d->width,d->height,GL_COLOR_BUFFER_BIT,GL_NEAREST);
     glReadBuffer((GLenum)source_read);glDrawBuffer((GLenum)destination_draw);
     glFramebufferTexture2DEXT(GL_DRAW_FRAMEBUFFER_EXT,GL_COLOR_ATTACHMENT0_EXT,GL_TEXTURE_RECTANGLE_ARB,0,0);
@@ -156,7 +156,7 @@ static int DGVRAMRenderMaterialize(struct DGHostContext *c)
         __atomic_fetch_add(&dg_vram_render_materializations,1,__ATOMIC_RELAXED);
     }
     glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT,(GLuint)read);glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT,(GLuint)draw);
-    if(scissor)glEnable(GL_SCISSOR_TEST);if(srgb)glEnable(GL_FRAMEBUFFER_SRGB_EXT);
+    if(scissor)DGSetBlitScissor(c,GL_TRUE);if(srgb)glEnable(GL_FRAMEBUFFER_SRGB_EXT);
     if(glGetError())good=0;
     return good;
 }

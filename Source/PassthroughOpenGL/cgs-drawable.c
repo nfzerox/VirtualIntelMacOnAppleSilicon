@@ -82,6 +82,9 @@ struct VIMCGSDrawable {
     uint64_t cache_object,cache_incarnation;
     struct VIMCGSDrawable *cache_next;
     unsigned pixel_format; // Canonical typed pbuffer format; zero is old BGRA8.
+#if VIM_GLI_DISPATCH_COUNT == 968
+    int ordinary_draw_prepared;
+#endif
 };
 /* The finite x64 upload probe decodes only these owned fields. Fail its build
  * contract if this layout changes; never infer Apple private structure offsets. */
@@ -590,6 +593,24 @@ static CGLError VIMImportAcceleratorBacking(struct VIMContext *c,struct VIMCGSDr
     if(imported && unlocked)VIMRememberOrdinaryDrawable(c,d,&imported_state);
     return imported && unlocked ? kCGLNoError : kCGLBadDrawable;
 }
+#if VIM_GLI_DISPATCH_COUNT == 968
+static inline int VIMPrepareOrdinaryDrawing(GLIContext opaque)
+{
+    struct VIMContext *c=(void *)opaque;
+    struct VIMCGSDrawable *d=c->drawable;
+    if(!d || d->ordinary_draw_prepared || c->inside_begin || d->pixel_format ||
+       !d->imported_state.version || !VIMPreservesOrdinaryDrawable(c,d))return 1;
+    /* Lion scrolls ordinary window backings on the CPU between native GL
+     * batches. Check the provider epoch before drawing over that backing,
+     * not at flush after the new GL pixels have already been produced. */
+    if(VIMImportAcceleratorBacking(c,d)) {
+        if(!c->error)c->error=GL_INVALID_OPERATION;
+        return 0;
+    }
+    d->ordinary_draw_prepared=1;
+    return 1;
+}
+#endif
 static CGLError VIMCreateFullscreen(struct VIMContext *c,const uint32_t *record)
 {
     if(!record) return kCGLBadDisplay;
@@ -1608,12 +1629,15 @@ static void VIMCopyDrawableBackToFront(struct VIMContext *c)
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&draw_fb);
     glBindFramebufferEXT(GL_READ_FRAMEBUFFER,0);glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER,0);
     glGetIntegerv(GL_READ_BUFFER,&read_buffer);glGetIntegerv(GL_DRAW_BUFFER,&draw_buffer);
-    glReadBuffer(GL_BACK);glDrawBuffer(GL_FRONT);glDisable(GL_SCISSOR_TEST);
+    void (*set_scissor)(GLboolean)=c->format->profile!=0x1000?
+        (void *)DGGetProcAddress("DGSetBlitScissor"):NULL;
+    glReadBuffer(GL_BACK);glDrawBuffer(GL_FRONT);
+    if(set_scissor)set_scissor(GL_FALSE);else glDisable(GL_SCISSOR_TEST);
     void (*blit)(GLint,GLint,GLint,GLint,GLint,GLint,GLint,GLint,GLbitfield,GLenum)=
         (void *)DGGetProcAddress("glBlitFramebuffer");
     blit(0,0,c->width,c->height,0,0,c->width,c->height,GL_COLOR_BUFFER_BIT,GL_NEAREST);
     glReadBuffer(read_buffer);glDrawBuffer(draw_buffer);
-    if(scissor) glEnable(GL_SCISSOR_TEST);
+    if(scissor){if(set_scissor)set_scissor(GL_TRUE);else glEnable(GL_SCISSOR_TEST);}
     glBindFramebufferEXT(GL_READ_FRAMEBUFFER,(GLuint)read_fb);
     glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER,(GLuint)draw_fb);
 }
@@ -1624,6 +1648,12 @@ static void VIMPresentDrawableKnown(GLIContext opaque,int known_framebuffer,GLin
     if(!d || !VIMBindGLI(opaque)) return;
     if(!known_framebuffer)glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&draw_framebuffer);
     if(draw_framebuffer) return; /* An offscreen finish is not a window swap. */
+#if VIM_GLI_DISPATCH_COUNT == 968
+    /* An empty flush must not publish an old private image either. A batch
+     * which drew has already prepared its backing; never reseed it here. */
+    if(!VIMPrepareOrdinaryDrawing(opaque))return;
+    d->ordinary_draw_prepared=0;
+#endif
     if(d->pixel_format){VIMPresentTypedPBuffer(c,d);return;}
     if(d->backing_render_active){VIMEndScopedDrawable(opaque);return;}
     if(d->gpu_family_root){VIMPublishGPUFamily(c,d);return;}

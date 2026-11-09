@@ -78,6 +78,7 @@ struct GLIRenderer { struct GLIRenderer *next; uint32_t data[32]; };
 _Static_assert(sizeof(struct GLIRenderer)==128+sizeof(void *),"audited GLI renderer ABI");
 static pthread_once_t vim_native_recovery_once=PTHREAD_ONCE_INIT;
 static int vim_native_recovery_available;
+static int vim_native_gl4_available;
 static GLint vim_video_mb,vim_texture_mb;
 static int vim_memory_valid;
 static uint32_t vim_hardware_display_mask=1,vim_software_display_mask=1;
@@ -91,14 +92,23 @@ static void VIMQueryNativeRecovery(void)
      * Explicit zero retains the old mode for bounded diagnostic comparisons. */
     const char *enabled=getenv("VIM_GL_NATIVE_RECOVERY");
     struct DGNativeRendererInfo info={0};
-    vim_memory_valid=DGQueryRendererDetails(&vim_video_mb,&vim_texture_mb,
-        enabled&&!strcmp(enabled,"0")?NULL:&info);
+    vim_memory_valid=DGQueryRendererDetailsWithGL4(&vim_video_mb,&vim_texture_mb,
+        enabled&&!strcmp(enabled,"0")?NULL:&info,&vim_native_gl4_available);
     if(vim_memory_valid)
         vim_native_recovery_available=(info.flags&(DG_NATIVE_HARDWARE|DG_NATIVE_SOFTWARE))==
             (DG_NATIVE_HARDWARE|DG_NATIVE_SOFTWARE);
 }
 static int VIMNativeRecoveryAvailable(void)
 {pthread_once(&vim_native_recovery_once,VIMQueryNativeRecovery);return vim_native_recovery_available;}
+static int VIMNativeGL4Available(void)
+{
+    if(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__<1090)return 0;
+    pthread_once(&vim_native_recovery_once,VIMQueryNativeRecovery);
+    return vim_native_gl4_available;
+}
+/* High Sierra CGL's native GL4 format mask is 0x40000; context-family
+ * flags are separately shifted by CGL before calling gliCreateContext. */
+#define VIM_GLI_GL4_FORMAT 0x40000u
 
 GLI_EXPORT void gliInitializeLibrary(void *devices,void *plugins,unsigned count,
     void *unbind,void *bind,void *io
@@ -264,6 +274,7 @@ GLI_EXPORT CGLError gliChoosePixelFormat(struct GLIPixelFormat **out,const GLint
      * formats retain their independently measured capability record. */
     p->flags=__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__==1040?
         (full_screen?(0x512U|(explicit_window?1U:0U)):0x511U):0x0003270f;
+    if(VIMNativeGL4Available())p->flags|=VIM_GLI_GL4_FORMAT;
     // Selected-format buffer flags differ from renderer capability masks:
     // single/monoscopic is represented by absence of double/stereo flags.
     p->buffers=double_buffer ? kCGLDoubleBufferBit : 0;
@@ -277,6 +288,8 @@ GLI_EXPORT CGLError gliChoosePixelFormat(struct GLIPixelFormat **out,const GLint
         /* Measured native Mavericks GLI software flags from the real engine,
          * not the hardware record's accelerated/compliance bits. */
         sw->flags=__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__==1040?0x24dd:0x000626dd;
+        if(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__>=1090 && !VIMNativeGL4Available())
+            sw->flags&=~VIM_GLI_GL4_FORMAT;
         sw->display_mask=vim_software_display_mask;
         if(!software_only)p->next=sw;
     }
@@ -304,6 +317,7 @@ GLI_EXPORT CGLError gliQueryRendererInfo(struct GLIRenderer **out,unsigned mask)
     r->data[7]=vim_hardware_display_mask;
 #endif
     VIMNativeRecoveryAvailable();
+    if(VIMNativeGL4Available())r->data[1]|=VIM_GLI_GL4_FORMAT;
     if(!vim_memory_valid) { free(r);return kCGLBadRendererInfo; }
     /* Native CGL prepends one pointer to the GLI record. DescribeRenderer's
      * MB fields are public +0x54/0x5c (64-bit) or +0x4c/0x54 (i386). */
@@ -329,6 +343,8 @@ GLI_EXPORT CGLError gliQueryRendererInfo(struct GLIRenderer **out,unsigned mask)
     if(software){
         struct GLIRenderer *sw=hardware?calloc(1,sizeof(*sw)):r;if(!sw){free(r);return kCGLBadAlloc;}
         *sw=*r;sw->data[0]=VIM_SOFTWARE_RENDERER_ID;sw->data[1]=__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__==1040?0x65d:0x000626dd;
+        if(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__>=1090 && !VIMNativeGL4Available())
+            sw->data[1]&=~VIM_GLI_GL4_FORMAT;
 #if VIM_GLI_DISPATCH_COUNT == 757 || __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ == 1040
         sw->data[11]=sw->data[12]=0;
 #else
@@ -360,14 +376,20 @@ GLI_EXPORT CGLError gliCreateContext(GLIContext *out,const struct GLIPixelFormat
     if(p->next&&(!VIMNativeRecoveryAvailable()||p->next->next||
        p->next->renderer!=(software?VIM_RENDERER_ID:VIM_SOFTWARE_RENDERER_ID)))return kCGLBadPixelFormat;
     unsigned family=flags&0x18;
-    // Physical native entry traces: GL3 core uses bit8 independently of
-    // recovery bit1. The production Mavericks and Yosemite tables pass the
-    // real core-profile fixture in both widths. Earlier payloads keep the opt-in.
-    int allow_core=__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__>=1090||getenv("VIM_GL_CORE_BRINGUP");
-    if(family && (family!=8 || !allow_core))return kCGLBadPixelFormat;
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1070 && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1090
+    // Stock Lion/Mountain CGLCreateContext masks pixel-record byte3 with
+    // 0x11 and forwards it unchanged: bit0x10 means GL3, not GL4. Mavericks+
+    // instead shifts the profile family down (GL3=8, GL4=0x10). Measured
+    // on the native physical frameworks and Lion's public CGL entry trace.
+    family=(flags&0x10)?8:0;
+#endif
+    int allow_core=__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__>=1070;
+    if(family && ((family!=8 && family!=0x10) || !allow_core ||
+                  (family==0x10 && !VIMNativeGL4Available())))return kCGLBadPixelFormat;
+    const unsigned profile=family==0x10?DG_CGL_PROFILE_GL4:family?kCGLOGLPVersion_3_2_Core:kCGLOGLPVersion_Legacy;
     CGLPixelFormatAttribute attrs[]={kCGLPFAAccelerated,kCGLPFADepthSize,
         p->depth==kCGL0Bit ? 0 : 24,kCGLPFAStencilSize,p->stencil==kCGL0Bit ? 0 : 8,
-        kCGLPFAOpenGLProfile,(CGLPixelFormatAttribute)(family?kCGLOGLPVersion_3_2_Core:kCGLOGLPVersion_Legacy),
+        kCGLPFAOpenGLProfile,(CGLPixelFormatAttribute)profile,
         kCGLPFADoubleBuffer,0};
     if(!(p->buffers&kCGLDoubleBufferBit)) attrs[7]=0;
     CGLPixelFormatObj pf=NULL;CGLContextObj ctx=NULL;GLint count=0;

@@ -17,12 +17,13 @@ struct DGUniformShape {GLuint program;GLint location;uint32_t components;};
 struct DGAliasSamplers {GLuint program;GLint *locations;unsigned count;int valid,fragment_stage;};
 struct DGAtlasProgram {GLuint name;GLint sampler;struct DGAtlasProgram *next;};
 struct DGAliasGroup { unsigned refs;uint64_t generation;struct DGAlias *aliases;
+    unsigned nonzero_mipmap_base_possible;
     struct DGPrivateTextures *private_textures;
     struct DGAtlasProgram *atlas_programs;
 #ifdef VIM_VRAM_RENDER_TARGET_EXPERIMENT
     uint64_t backing_write_serial; // all potentially pixel-mutating packets across the share group
-    struct DGHostContext *members; // Serialized endpoint-owned contexts, never asynchronous jobs.
 #endif
+    struct DGHostContext *members; // Serialized endpoint-owned contexts, never asynchronous jobs.
 #ifdef VIM_ALIAS_REBIND_EXPERIMENT
     uint64_t binding_generation;
 #endif
@@ -32,6 +33,13 @@ struct DGAliasGroup { unsigned refs;uint64_t generation;struct DGAlias *aliases;
     unsigned iosurface_import_count;uint64_t iosurface_write_clock;
     uint32_t next_sync;struct DGHostSync *syncs;
     uint32_t next_map,map_count;size_t map_bytes;struct DGHostMapping *maps; };
+static int DGNonzeroMipmapBasePossible(const struct DGHostContext *c)
+{
+    /* A conservative shared-group possibility, not a texture-state cache.
+     * Native GL remains authoritative after binds, lists, stacks and sharing.
+     * Owned decoder controls without a resource group take the query path. */
+    return !c->alias_group || c->alias_group->nonzero_mipmap_base_possible;
+}
 static int DGCreateAliases(struct DGHostContext *c,struct DGHostContext *shared)
 {
     glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS,&c->texture_units);
@@ -50,9 +58,7 @@ static int DGCreateAliases(struct DGHostContext *c,struct DGHostContext *shared)
             free(c->sampled_storage);c->sampled_storage=c->sampled_textures=c->rectangle_bindings=NULL;return 0;}
     }
     ++c->alias_group->refs;c->alias_bindings_dirty=1;
-#ifdef VIM_VRAM_RENDER_TARGET_EXPERIMENT
     c->alias_member_next=c->alias_group->members;c->alias_group->members=c;
-#endif
     return 1;
 }
 static void DGDestroyAliases(struct DGHostContext *c)
@@ -61,11 +67,9 @@ static void DGDestroyAliases(struct DGHostContext *c)
     free(c->sampled_storage);c->sampled_storage=c->sampled_textures=c->rectangle_bindings=NULL;
     struct DGAliasGroup *g=c->alias_group;c->alias_group=NULL;
     if(!g)return;
-#ifdef VIM_VRAM_RENDER_TARGET_EXPERIMENT
     struct DGHostContext **member=&g->members;
     while(*member && *member!=c)member=&(*member)->alias_member_next;
     if(*member)*member=c->alias_member_next;c->alias_member_next=NULL;
-#endif
     for(struct DGAlias *p=g->aliases;p;p=p->next)
         if(p->iosurface_writer==c)p->iosurface_writer=NULL;
     if(--g->refs)return;

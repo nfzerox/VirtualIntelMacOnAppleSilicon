@@ -142,6 +142,9 @@ bool VoodooHDADevice::init(OSDictionary *dict)
 	mAllowMSI = (osBool ? osBool->isTrue() : true);
 
 	mLock = IOLockAlloc();
+	mCodecCommandLock = IOLockAlloc();
+	if (!mCodecCommandLock)
+		return false;
 
 	mUnsolqState = HDAC_UNSOLQ_READY;
 
@@ -672,6 +675,8 @@ void VoodooHDADevice::free()
 	FREE_LOCK(mPrefPanelMemoryBufLock);
 
 	FREE_LOCK(mLock);
+	if (mCodecCommandLock)
+		IOLockFree(mCodecCommandLock);
 
 	if (mRegBase)
 		mRegBase = 0;
@@ -1705,10 +1710,18 @@ void VoodooHDADevice::sendCommands(CommandList *commands, nid_t cad)
 	int timeout;
 	int retry = 10;
 
-	if (!mCodecs[cad] || !commands || (commands->numCommands < 1))
+	if (cad < 0 || cad >= HDAC_CODEC_MAX || !commands || commands->numCommands < 1)
 		return;
 
+	// The workloop can drain RIRB while another thread is sending verbs.
+	// Keep the caller's stack-backed CommandList alive until both paths
+	// have finished with it. Dispatch jack notifications outside the lock.
+	IOLockLock(mCodecCommandLock);
 	codec = mCodecs[cad];
+	if (!codec) {
+		IOLockUnlock(mCodecCommandLock);
+		return;
+	}
 	codec->commands = commands;
 	codec->numRespReceived = 0;
 	codec->numVerbsSent = 0;
@@ -1752,6 +1765,7 @@ void VoodooHDADevice::sendCommands(CommandList *commands, nid_t cad)
 	codec->numRespReceived = 0;
 	codec->numVerbsSent = 0;
 
+	IOLockUnlock(mCodecCommandLock);
 	unsolqFlush();
 }
 
@@ -1922,6 +1936,7 @@ int VoodooHDADevice::unsolqFlush()
 {
 	int ret = 0;
 
+	IOLockLock(mCodecCommandLock);
 	if (mUnsolqState == HDAC_UNSOLQ_READY) {
 		mUnsolqState = HDAC_UNSOLQ_BUSY;
 		while (mUnsolqReadPtr != mUnsolqWritePtr) {
@@ -1930,11 +1945,17 @@ int VoodooHDADevice::unsolqFlush()
 			cad = mUnsolq[mUnsolqReadPtr] >> 16;
 			tag = mUnsolq[mUnsolqReadPtr++] & 0xffff;
 			mUnsolqReadPtr %= HDAC_UNSOLQ_MAX;
-			handleUnsolicited(mCodecs[cad], tag);
+			Codec *codec = mCodecs[cad];
+			// The callback may send more verbs. BUSY keeps ownership of
+			// the queue while those verbs are sent and responses arrive.
+			IOLockUnlock(mCodecCommandLock);
+			handleUnsolicited(codec, tag);
+			IOLockLock(mCodecCommandLock);
 			ret++;
 		}
 		mUnsolqState = HDAC_UNSOLQ_READY;
 	}
+	IOLockUnlock(mCodecCommandLock);
 
 	return ret;
 }
@@ -2020,6 +2041,8 @@ void VoodooHDADevice::handleInterrupt()
 
 		/* Was this a controller interrupt? */
 		if (HDA_FLAG_MATCH(status, HDAC_INTSTS_CIS)) {
+			// This is the deferred workloop handler, not the interrupt filter.
+			IOLockLock(mCodecCommandLock);
 			UInt8 rirbStatus = readData8(HDAC_RIRBSTS);
 			/* Get as many responses that we can */
 			while (HDA_FLAG_MATCH(rirbStatus, HDAC_RIRBSTS_RINTFL)) {
@@ -2028,6 +2051,7 @@ void VoodooHDADevice::handleInterrupt()
 					trigger |= HDAC_TRIGGER_UNSOL;
 				rirbStatus = readData8(HDAC_RIRBSTS);
 			}
+			IOLockUnlock(mCodecCommandLock);
 		}
 
 		if (status & HDAC_INTSTS_SIS_MASK) {

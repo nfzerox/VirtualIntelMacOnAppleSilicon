@@ -9,6 +9,7 @@
 #import "VIMLibraryLocation.h"
 #import "VIMInstallerSource.h"
 #import "VIMInstallerCatalog.h"
+#import "VIMToolPropertyList.h"
 #import "VIMTigerRestoreProfile.h"
 #import "VIMTigerInstallerSupport.h"
 #include "VIMHFSInstallerDisk.h"
@@ -33,7 +34,8 @@ static NSInteger OpenGLBootstrapMediaVersion(NSString *guest) {
     // Earlier Leopard images can fall through to the manual language picker
     // before Disk Arbitration publishes the already attached setup medium.
     // Sierra's updated helpers recover a lost native first-login handoff.
-    return [@[@"leopard",@"sierra"] containsObject:guest]?5:4;
+    // Lion's installer RAM disks now journal native HFS+ catalog writes.
+    return [@[@"leopard",@"lion",@"sierra"] containsObject:guest]?5:4;
 }
 static BOOL RegularFile(NSURL *URL) {
     NSNumber *regular=nil;
@@ -140,6 +142,40 @@ static BOOL InstallerVersionMatches(id version,NSString *guest) {
     if([guest isEqual:@"bigsur"]&&([version isEqual:@"10.16"]||[version hasPrefix:@"10.16."]))return YES;
     return [version isEqual:family]||[version hasPrefix:[family stringByAppendingString:@"."]];
 }
+NSString *const VIMInstallerReleaseErrorDomain=@"VirtualIntelMac.InstallerRelease";
+NSString *const VIMSupportedReleaseURLKey=@"VIMSupportedReleaseURL";
+// Restore DVDs for Tiger through Snow Leopard are qualified per dot release.
+// This checks the install image only: an installed guest may still apply
+// Apple's later updates. Tiger's install-time automation (setup policy and
+// preboot graphics staging) recognizes only the 8R4088 disc; any other disc
+// would silently skip it. The catalog keeps Leopard/Snow in step with the
+// image this app downloads.
+static BOOL ClassicReleaseSupported(NSString *guest,NSDictionary *version,NSError **error) {
+    NSDictionary *entry=nil;
+    for(NSDictionary *candidate in [VIMInstallerCatalog currentCatalogWithError:NULL].supportedInstallers)
+        if([candidate[@"Guest"] isEqual:guest]){entry=candidate;break;}
+    NSString *supported=[entry[@"Version"] isKindOfClass:NSString.class]?entry[@"Version"]:
+        @{@"tiger":@"10.4.10",@"leopard":@"10.5.7",@"snowleopard":@"10.6.7"}[guest];
+    NSString *build=[guest isEqual:@"tiger"]?@"8R4088":nil;
+    NSString *found=[version[@"ProductVersion"] isKindOfClass:NSString.class]?version[@"ProductVersion"]:nil;
+    NSString *foundBuild=[version[@"ProductBuildVersion"] isKindOfClass:NSString.class]?version[@"ProductBuildVersion"]:nil;
+    if(!supported||([found isEqual:supported]&&(!build||[foundBuild isEqual:build])))return YES;
+    NSString *name=@{@"tiger":@"Mac OS X Tiger",@"leopard":@"Mac OS X Leopard",@"snowleopard":@"Mac OS X Snow Leopard"}[guest];
+    NSString *required=build?[NSString stringWithFormat:@"%@ (%@)",supported,build]:supported;
+    NSString *chosen=found.length?(foundBuild.length?[NSString stringWithFormat:@"%@ (%@)",found,foundBuild]:found):@"an unknown version";
+    // Link the catalog's release page for the supported image, else the
+    // catalog's own image URL. No location is built into the app.
+    NSURL *download=[entry[@"ReleaseURL"] isKindOfClass:NSString.class]?[NSURL URLWithString:entry[@"ReleaseURL"]]:nil;
+    for(NSDictionary *file in entry[@"Files"])if(!download&&[file[@"Role"] isEqual:@"diskimage"])download=[NSURL URLWithString:file[@"URL"]];
+    NSMutableDictionary *info=[@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"This %@ disc isn’t supported",name],
+        NSLocalizedRecoverySuggestionErrorKey:[NSString stringWithFormat:
+            @"This image is %@ %@. Virtual Intel Mac installs %@ only from the %@ image.\n\nDownload the supported image, or choose %@ without an installer and Virtual Intel Mac downloads it for you.",
+            name,chosen,name,required,name]} mutableCopy];
+    if(download)info[VIMSupportedReleaseURLKey]=download;
+    info[@"Guest"]=guest;
+    if(error)*error=[NSError errorWithDomain:VIMInstallerReleaseErrorDomain code:1 userInfo:info];
+    return NO;
+}
 static BOOL UnlinkedDirectory(NSURL *URL) {
     struct stat st;return !lstat(URL.fileSystemRepresentation,&st)&&S_ISDIR(st.st_mode);
 }
@@ -173,6 +209,7 @@ static NSURL *MountDirectory(NSError **error) {
 - (NSURL *)assembleClassicDiskImage:(NSURL *)image guest:(NSString *)guest jobDirectory:(NSURL *)directory error:(NSError **)error;
 - (BOOL)removeRestoreModelRestrictionAtMount:(NSURL *)mount error:(NSError **)error;
 - (BOOL)prepareLeopardRecoveryMemoryAtMount:(NSURL *)mount error:(NSError **)error;
+- (BOOL)prepareLionRecoveryMemoryAtMount:(NSURL *)mount error:(NSError **)error;
 - (BOOL)prepareSerialRecoveryAtMount:(NSURL *)mount error:(NSError **)error;
 - (void)completedWork:(double)fraction;
 - (BOOL)run:(NSString *)path arguments:(NSArray<NSString *> *)arguments workingDirectory:(nullable NSURL *)workingDirectory timeout:(NSTimeInterval)timeout cleanup:(BOOL)cleanup error:(NSError **)error;
@@ -197,7 +234,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     BOOL attached=[self run:@"/usr/bin/hdiutil" arguments:@[@"attach",@"-readonly",@"-owners",@"off",@"-nobrowse",@"-noautoopen",@"-mountpoint",mounted.path,working.path] timeout:180 cleanup:NO error:error];
     BOOL copied=NO;
     if(attached&&[self run:@"/usr/sbin/diskutil" arguments:@[@"info",@"-plist",mounted.path] timeout:60 cleanup:NO error:error]) {
-        NSDictionary *info=[NSDictionary dictionaryWithContentsOfURL:self.lastLog];NSString *device=info[@"DeviceNode"];
+        NSDictionary *info=VIMToolDictionary(self.lastLog);NSString *device=info[@"DeviceNode"];
         NSRegularExpression *pattern=[NSRegularExpression regularExpressionWithPattern:@"^/dev/disk[0-9]+s[0-9]+$" options:0 error:NULL];
         if([info[@"FilesystemType"] isEqual:@"hfs"]&&[device isKindOfClass:NSString.class]&&
            [pattern numberOfMatchesInString:device options:0 range:NSMakeRange(0,device.length)]==1) {
@@ -281,6 +318,30 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
         [text writeToURL:script atomically:NO encoding:NSUTF8StringEncoding error:error];
     NSError *restore=nil;
     if(![NSFileManager.defaultManager setAttributes:@{NSFilePosixPermissions:mode} ofItemAtPath:script.path error:&restore]){if(error)*error=restore;return NO;}
+    return written;
+}
+- (BOOL)prepareLionRecoveryMemoryAtMount:(NSURL *)mount error:(NSError **)error {
+    NSURL *script=[mount URLByAppendingPathComponent:@"etc/rc.cdrom"];
+    NSString *original=[NSString stringWithContentsOfURL:script encoding:NSUTF8StringEncoding error:NULL];
+    if(![original containsString:@"\nRAMDisk()\n{"])return YES;
+    NSString *size=@"\n  rdsize=$2\n",*format=@"\n    newfs_hfs $dev\n";
+    if([original componentsSeparatedByString:size].count!=2||
+       [original componentsSeparatedByString:format].count!=2)return YES;
+    // Native 11G63 can block in nonjournaled async HFS metadata I/O on
+    // /var/run before Language Chooser can start Installer. Journal only
+    // the recovery environment's disposable RAM disks; keep the guest's
+    // configured CPUs, mount layout, and installation target unchanged.
+    // The 4 MiB minimum accommodates a 512 KiB journal on tiny volumes.
+    NSString *updated=[original stringByReplacingOccurrencesOfString:size
+        withString:@"\n  rdsize=$2\n  if [ \"$rdsize\" -lt 8192 ]; then\n    rdsize=8192\n  fi\n"];
+    updated=[updated stringByReplacingOccurrencesOfString:format
+        withString:@"\n    newfs_hfs -J 512k $dev || newfs_hfs $dev || return\n"];
+    NSFileManager *fm=NSFileManager.defaultManager;
+    NSNumber *mode=[fm attributesOfItemAtPath:script.path error:error][NSFilePosixPermissions];
+    if(!mode||![fm setAttributes:@{NSFilePosixPermissions:@(mode.unsignedIntValue|0200)} ofItemAtPath:script.path error:error])return NO;
+    BOOL written=[updated writeToURL:script atomically:NO encoding:NSUTF8StringEncoding error:error];
+    NSError *restore=nil;
+    if(![fm setAttributes:@{NSFilePosixPermissions:mode} ofItemAtPath:script.path error:&restore]){if(error)*error=restore;return NO;}
     return written;
 }
 + (BOOL)validatePreparedMedia:(NSURL *)URL guest:(NSString *)guest error:(NSError **)error {
@@ -385,6 +446,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
                 (InstallerPackageImage([mount URLByAppendingPathComponent:@"System/Installation/Packages/OSInstall.mpkg"])||
                  RegularFile([mount URLByAppendingPathComponent:@"System/Installation/Packages/OSInstall.mpkg/Contents/Info.plist"])))guest=@"snowleopard";
             else if(!guest)AssemblyError(error,@"Choose a supported Tiger, Leopard or Snow Leopard restore DVD, or a complete installer app for a newer OS.");
+            if(guest&&!ClassicReleaseSupported(guest,version,error))guest=nil;
         }
         NSError *detachError=nil;
         BOOL detached=!attached||[worker run:@"/usr/bin/hdiutil" arguments:@[@"detach",mount.path] timeout:60 cleanup:YES error:&detachError];
@@ -916,7 +978,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
         BOOL sourceAttached=[self run:@"/usr/bin/hdiutil" arguments:@[@"attach",@"-readonly",@"-owners",@"off",@"-nobrowse",@"-noautoopen",@"-mountpoint",original.path,base.path] timeout:180 cleanup:NO error:error];
         if(sourceAttached&&LeopardRestoreProfile(original,error)&&
            [self run:@"/usr/sbin/diskutil" arguments:@[@"info",@"-plist",original.path] timeout:60 cleanup:NO error:error]){
-            NSDictionary *info=[NSDictionary dictionaryWithContentsOfURL:self.lastLog];NSString *device=info[@"DeviceNode"];
+            NSDictionary *info=VIMToolDictionary(self.lastLog);NSString *device=info[@"DeviceNode"];
             NSRegularExpression *pattern=[NSRegularExpression regularExpressionWithPattern:@"^/dev/disk[0-9]+s[0-9]+$" options:0 error:nil];
             if([device isKindOfClass:NSString.class]&&[pattern numberOfMatchesInString:device options:0 range:NSMakeRange(0,device.length)]==1){
                 if(modernImages){
@@ -1003,8 +1065,9 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
                     }
                 }
                 if(copied&&bootstrap) {
+                    if([guest isEqual:@"lion"])copied=[self prepareLionRecoveryMemoryAtMount:mount error:error];
                     NSURL *extras=[packages URLByAppendingPathComponent:@"Extras"],*support=[extras URLByAppendingPathComponent:@"VirtualIntelMac"];
-                    copied=[fm createDirectoryAtURL:extras withIntermediateDirectories:YES attributes:nil error:error]&&
+                    copied=copied&&[fm createDirectoryAtURL:extras withIntermediateDirectories:YES attributes:nil error:error]&&
                         [self run:@"/usr/bin/ditto" arguments:@[@"--norsrc",@"--noextattr",@"--noacl",openGLSupport.path,support.path] timeout:180 cleanup:NO error:error];
                     if(copied&&NativeAutomatedRecovery(guest)){
                         NSURL *early=[mount URLByAppendingPathComponent:@"etc/rc.cdrom.local"];

@@ -22,6 +22,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source', type=Path)
     parser.add_argument('output', type=Path)
+    parser.add_argument('--profile', choices=('tiger', 'leopard', 'snowleopard', 'lion', 'mountainlion',
+        'mavericks', 'yosemite', 'elcapitan', 'sierra', 'highsierra', 'mojave', 'catalina', 'bigsur'),
+        help='select the guest profile when editing a copy of the unified firmware')
     parser.add_argument('--verbose', action='store_true', help='Show native Apple booter/kernel messages for one diagnostic boot')
     parser.add_argument('--boot-arg', action='append', default=[],
                         help='Explicit native diagnostic boot token; repeated tokens allowed, never changes host NVRAM')
@@ -55,7 +58,8 @@ def main():
     volume = bytearray(data[start:end])
     fat_type = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'scripts/efi-fat32.py'))['FAT32']
     fat = fat_type(volume)
-    path = 'EFI/OC/config.plist'
+    directory = 'EFI/VIM/'+args.profile if args.profile else 'EFI/OC'
+    path = directory+'/config.plist'
     config = plistlib.loads(fat.read(path))
     debug = config['Misc']['Debug']
     # OpenCore Configuration.tex: 0x01 enable, 0x10 variable, 0x20 NV.
@@ -97,7 +101,7 @@ def main():
         loader = args.loader.read_bytes()
         if loader[:2] != b'MZ':
             raise ValueError('Expected a PE firmware application')
-        fat.write('EFI/OC/OpenCore.efi', loader, replace=True)
+        fat.write(directory+'/OpenCore.efi', loader, replace=True)
     data[start:end] = volume
     with args.output.open('xb') as stream:
         stream.write(data)

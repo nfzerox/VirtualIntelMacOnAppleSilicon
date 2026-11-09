@@ -70,15 +70,30 @@ def undefine_unavailable(config_header, prefix, arch, minimum='11.0'):
     return removed
 
 
-def check_weak_libsystem_imports(binary):
+def _weak_libsystem_imports(binary, arch, *, historical_guest=False):
+    command = ['xcrun', 'dyld_info', '-arch', arch, '-imports', str(binary)]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode == 0:
+        pattern = r'\s+(\S+) \[weak-import\] \(from libSystem\)'
+        lines = result.stdout
+    elif historical_guest and 'mis-aligned LINKEDIT string pool' in result.stdout + result.stderr:
+        # Period ld/codesign binaries can have a non-8-byte-aligned string
+        # table accepted by their guest dyld. Read N_WEAK_REF from the
+        # undefined symbol table instead of relaxing the import check.
+        lines = subprocess.check_output(['xcrun', 'nm', '-arch', arch, '-m', '-u', str(binary)], text=True)
+        pattern = r'\s+\(undefined\) weak external (\S+) \(from libSystem\)'
+    else:
+        raise RuntimeError(f'{binary} ({arch}): {result.stderr.strip() or result.stdout.strip()}')
+    return [match.group(1) for line in lines.splitlines() if (match := re.match(pattern, line))]
+
+
+def check_weak_libsystem_imports(binary, *, historical_guest=False):
     """Raise if a binary weak-imports libSystem symbols beyond the allowlist."""
     weak = []
     for arch in subprocess.check_output(['lipo', '-archs', str(binary)], text=True).split():
-        imports = subprocess.check_output(['xcrun', 'dyld_info', '-arch', arch, '-imports', str(binary)], text=True)
-        for line in imports.splitlines():
-            match = re.match(r'\s+(\S+) \[weak-import\] \(from libSystem\)', line)
-            if match and match.group(1).lstrip('_') not in {s.lstrip('_') for s in ALLOWED_WEAK}:
-                weak.append(f'{arch}:{match.group(1)}')
+        for name in _weak_libsystem_imports(binary, arch, historical_guest=historical_guest):
+            if name not in ALLOWED_WEAK:
+                weak.append(f'{arch}:{name}')
     if weak:
         raise RuntimeError(f'{binary} weak-imports libSystem functions that may be missing on older macOS: '
                            + ', '.join(weak))

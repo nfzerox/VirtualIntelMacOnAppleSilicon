@@ -203,11 +203,13 @@ def main():
         ('com.apple.kext.OSvKernDSPLib','OSvKernDSPLib.kext','Contents/MacOS/OSvKernDSPLib','Contents/Info.plist'),
         ('com.apple.iokit.IOAudioFamily','IOAudioFamily.kext','Contents/MacOS/IOAudioFamily','Contents/Info.plist')]
     if kernel>=15:
-        # Native15G31/16G29 IOAudioFamily imports vecLib. These installed
-        # caches omit it: the preboot linker otherwise rejects IOAudioFamily
-        # and VoodooHDA, though a later native kextload can resolve them.
-        # Keep dependency order and read this OS's own signed bundle.
-        native.insert(-1,('com.apple.vecLib.kext','vecLib.kext','Contents/MacOS/vecLib','Contents/Info.plist'))
+        # The Air's stock 15G31 cache also omits Libm. OpenCore then cannot
+        # link vecLib -> IOAudioFamily -> VoodooHDA, even though native
+        # kextd can load those dependencies after boot. Force the full
+        # native chain in order; already cached bundles are not duplicated.
+        native[-1:-1]=[
+            ('com.apple.kec.Libm','Libm.kext','Contents/MacOS/Libm','Contents/Info.plist'),
+            ('com.apple.vecLib.kext','vecLib.kext','Contents/MacOS/vecLib','Contents/Info.plist')]
     force=config['Kernel'].setdefault('Force',[])
     identifiers={item[0] for item in native};force[:]=[e for e in force if e['Identifier'] not in identifiers]
     for identifier,bundle,executable,info in native:

@@ -1,0 +1,26 @@
+#!/bin/bash
+# Build the local 2017 CGL CTS port for 10.7+, not a modern-SDK binary merely
+# relabeled with an old minimum. Nothing from this diagnostic enters the app.
+set -euo pipefail
+[[ $# == 3 ]] || { echo "Usage: $0 CTS_SOURCE LIBPNG_1_6_27_SOURCE NEW_OUTPUT_DIRECTORY" >&2; exit 64; }
+root="$(cd "$(dirname "$0")/.." && pwd)"
+cts="$(cd "$1" && pwd)";png="$(cd "$2" && pwd)";output="$3"
+[[ ! -e "$output" ]] || { echo 'Choose a new output directory.' >&2; exit 65; }
+mkdir -p "$output";output="$(cd "$output" && pwd)"
+sdk="${VIM_OPENGL_SDK:-$root/resources/sdk/MacOSX10.9.sdk}"
+toolchain="${VIM_OPENGL_TOOLCHAIN:-$root/resources/xcode/XcodeMojave.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin}"
+common=(-G Ninja -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_BUILD_TYPE=Release
+    "-DCMAKE_C_COMPILER=$toolchain/clang" "-DCMAKE_CXX_COMPILER=$toolchain/clang++"
+    "-DCMAKE_AR=$(xcrun --find ar)" "-DCMAKE_RANLIB=$(xcrun --find ranlib)"
+    -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=10.7 "-DCMAKE_OSX_SYSROOT=$sdk")
+cmake -S "$root/probes/cts-period-png" -B "$output/PNG" "${common[@]}" "-DPNG_SOURCE=$png"
+cmake --build "$output/PNG" --target png16 -j6
+cmake -S "$cts" -B "$output/CTS" "${common[@]}" -DDEQP_TARGET=osx -DDE_CPU=DE_CPU_X86_64 \
+    "-DPNG_INCLUDE_PATH=$output/PNG;$png" "-DPNG_LIBRARY=$output/PNG/libpng16.a" \
+    -DCMAKE_CXX_STANDARD_LIBRARIES=-lz
+cmake --build "$output/CTS" --target glcts -j6
+cp "$output/CTS/external/openglcts/modules/glcts" "$output/glcts"
+codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/glcts"
+mkdir -p "$output/gl_cts"
+ln -s "$cts/external/openglcts/data" "$output/gl_cts/data"
+echo "$output"

@@ -113,7 +113,7 @@ int main(int argc,char **argv)
     glProgramStringARB(GL_FRAGMENT_PROGRAM_ARB,GL_PROGRAM_FORMAT_ASCII_ARB,sizeof(invalid)-1,invalid);
     GLenum error=glGetError();glGetIntegerv(GL_PROGRAM_ERROR_POSITION_ARB,&position);
     const char *diagnostic=(const char *)glGetString(GL_PROGRAM_ERROR_STRING_ARB);
-    check(error==GL_INVALID_OPERATION && position>=0 && position<sizeof(invalid)-1 && diagnostic && *diagnostic && !glGetError(),
+    check(error==GL_INVALID_OPERATION && position>=0 && (size_t)position<sizeof(invalid)-1 && diagnostic && *diagnostic && !glGetError(),
         "bad program returns real compiler error position and diagnostic string");
     glProgramStringARB(GL_FRAGMENT_PROGRAM_ARB,GL_PROGRAM_FORMAT_ASCII_ARB,sizeof(program)-1,program);
     glGetIntegerv(GL_PROGRAM_ERROR_POSITION_ARB,&position);diagnostic=(const char *)glGetString(GL_PROGRAM_ERROR_STRING_ARB);

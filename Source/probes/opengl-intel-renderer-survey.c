@@ -6,7 +6,51 @@
 #include <AvailabilityMacros.h>
 #include <stdio.h>
 #include <string.h>
-int main(void){
+static void evaluators(void)
+{
+    const GLfloat p[]={1,2,3,99,4,5,6,99,7,8,9,99,10,11,12};
+    GLfloat result[12]={0};
+    GLint order[2]={0};
+    glMap2f(GL_MAP2_VERTEX_3,-3,4,4,2,-5,6,8,2,p);
+    glGetMapiv(GL_MAP2_VERTEX_3,GL_ORDER,order);
+    glGetMapfv(GL_MAP2_VERTEX_3,GL_COEFF,result);
+    printf("eval map2 order=%d,%d coeff=",order[0],order[1]);
+    for(unsigned i=0;i<12;++i)printf("%s%g",i?",":"",result[i]);
+    printf(" error=%x\n",glGetError());
+    glActiveTexture(GL_TEXTURE1);
+    GLint unit=0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE,&unit);
+    GLenum unit_error=glGetError();
+    glMap1f(GL_MAP1_VERTEX_3,0,1,3,1,p);
+    GLenum map_error=glGetError();
+    glMap1f(GL_MAP1_TEXTURE_COORD_2,0,1,2,1,p);
+    GLenum texcoord_error=glGetError();
+    glActiveTexture(GL_TEXTURE0);
+    glGetMapfv(GL_MAP1_VERTEX_3,GL_COEFF,result);
+    printf("eval other texture unit=%x unit-error=%x map-error=%x unit-zero-coeff=%g,%g,%g\n",
+           unit,unit_error,map_error,result[0],result[1],result[2]);
+    glGetMapfv(GL_MAP1_TEXTURE_COORD_2,GL_COEFF,result);
+    printf("eval other texture unit texcoord-error=%x unit-zero-coeff=%g,%g\n",
+           texcoord_error,result[0],result[1]);
+    GLuint fbo=0,rbo=0;
+    glGenFramebuffersEXT(1,&fbo);
+    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT,fbo);
+    glGenRenderbuffersEXT(1,&rbo);
+    glBindRenderbufferEXT(GL_RENDERBUFFER_EXT,rbo);
+    glRenderbufferStorageEXT(GL_RENDERBUFFER_EXT,GL_RGBA8,16,16);
+    glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT,GL_COLOR_ATTACHMENT0_EXT,GL_RENDERBUFFER_EXT,rbo);
+    printf("eval framebuffer status=%x error=%x\n",glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT),glGetError());
+    glBegin(GL_POINTS);
+    glMap1f(GL_MAP1_VERTEX_3,0,1,3,1,p);
+    glEnd();
+    printf("eval inside begin error=%x\n",glGetError());
+    const GLdouble point[]={1,2,3};
+    glMap1d(GL_MAP1_VERTEX_3,1.0,1.0+0x1p-30,3,1,point);
+    printf("eval closely spaced double endpoints error=%x\n",glGetError());
+    glDeleteFramebuffersEXT(1,&fbo);
+    glDeleteRenderbuffersEXT(1,&rbo);
+}
+int main(int argc,char **argv){
     GLuint mask=CGDisplayIDToOpenGLDisplayMask(CGMainDisplayID());
     CGLRendererInfoObj info=NULL;GLint count=0;
     CGLError error=CGLQueryRendererInfo(mask,&info,&count);
@@ -52,5 +96,6 @@ int main(void){
     }
     printf("extensions=%s\n",glGetString(GL_EXTENSIONS));
     int ok=vendor&&strstr(vendor,"Intel")&&renderer&&strstr(renderer,"Intel")&&((actual&0xffffff00)==(chosen&0xffffff00));
+    if(ok && argc==2 && !strcmp(argv[1],"--evaluators"))evaluators();
     CGLSetCurrentContext(NULL);CGLDestroyContext(context);return ok?0:77;
 }

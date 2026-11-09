@@ -84,6 +84,9 @@ static struct DGSharedSurface *DGSurfaceRetainTyped(const uint64_t namespace[2],
     }
     /* Bounded, overflow-checked BGRA8 allocation, including actual padding. */
     size_t row=((size_t)width*element+63)&~(size_t)63,bytes=row*(size_t)height;
+    // Logical-size views of this surface must match an affected driver's
+    // own view pitch; see iosurface-view-pitch-host.h.
+    row=DGIOSurfaceViewRowBytes(row,DGIOSurfaceViewPitch(CGLGetCurrentContext()));bytes=row*(size_t)height;
     size_t surface_limit=format==VIM_GL_PIXEL_BGRA8?DG_DISPLAY_MAX_BYTES:DG_MAX_BYTES;
     if(dg_surface_count>=DG_SURFACE_LIMIT || bytes>surface_limit ||
        bytes>DG_SURFACE_BYTE_LIMIT-dg_surface_bytes) goto out;
@@ -262,14 +265,14 @@ static GLenum DGSurfacePublishRectCommands(struct DGHostContext *c,struct DGSurf
     glGetIntegerv(GL_READ_BUFFER,&source_read);
     glReadBuffer(back ? GL_COLOR_ATTACHMENT1_EXT : GL_COLOR_ATTACHMENT0_EXT);
     glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT,p->framebuffer);
-    glDisable(GL_SCISSOR_TEST);glDisable(GL_FRAMEBUFFER_SRGB_EXT);
+    DGSetBlitScissor(c,GL_FALSE);glDisable(GL_FRAMEBUFFER_SRGB_EXT);
     glBlitFramebufferEXT(x,y,x+width,y+height,destination_x,destination_y+(flip?height:0),
         destination_x+width,destination_y+(flip?0:height),
         GL_COLOR_BUFFER_BIT,GL_NEAREST);
     glReadBuffer((GLenum)source_read);
     glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT,(GLuint)read);
     glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT,(GLuint)draw);
-    if(scissor) glEnable(GL_SCISSOR_TEST);if(srgb) glEnable(GL_FRAMEBUFFER_SRGB_EXT);
+    if(scissor) DGSetBlitScissor(c,GL_TRUE);if(srgb) glEnable(GL_FRAMEBUFFER_SRGB_EXT);
     /* CGLIOSurface.h: publish to a different context by flushing, not by
      * downloading/reuploading or unconditionally stalling with glFinish. */
     if(submit)glFlush();return glGetError();
@@ -303,16 +306,16 @@ static GLenum DGSurfaceUpload(struct DGHostContext *c,struct DGSurfaceLease *p,c
     DGRestoreColorTransfer(&transfer);
     glFlush();return glGetError();
 }
-static GLenum DGSurfaceRetire(struct DGSurfaceLease *p)
+static GLenum DGSurfaceRetire(struct DGHostContext *c,struct DGSurfaceLease *p)
 {
     GLint draw;GLfloat color[4];GLboolean mask[4],scissor=glIsEnabled(GL_SCISSOR_TEST);
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING_EXT,&draw);
-    glGetFloatv(GL_COLOR_CLEAR_VALUE,color);glGetBooleanv(GL_COLOR_WRITEMASK,mask);
+    glGetFloatv(GL_COLOR_CLEAR_VALUE,color);glGetBooleanIndexedvEXT(GL_COLOR_WRITEMASK,0,mask);
     glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT,p->framebuffer);
-    glDisable(GL_SCISSOR_TEST);glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+    DGSetBlitScissor(c,GL_FALSE);glColorMaskIndexedEXT(0,GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
     glClearColor(0,0,0,0);glClear(GL_COLOR_BUFFER_BIT);
-    glClearColor(color[0],color[1],color[2],color[3]);glColorMask(mask[0],mask[1],mask[2],mask[3]);
-    if(scissor)glEnable(GL_SCISSOR_TEST);glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT,(GLuint)draw);
+    glClearColor(color[0],color[1],color[2],color[3]);glColorMaskIndexedEXT(0,mask[0],mask[1],mask[2],mask[3]);
+    if(scissor)DGSetBlitScissor(c,GL_TRUE);glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT,(GLuint)draw);
     glFlush();return glGetError();
 }
 static GLenum DGSurfaceDrawable(struct DGHostContext *c,struct DGSurfaceLease *p)
@@ -477,12 +480,12 @@ static int DGSurfaceCommandImpl(struct DGHostContext *c,struct DGMessage *m,stru
             glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT,p->framebuffer);glGetIntegerv(GL_READ_BUFFER,&source_read);
             glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT,c->framebuffer);glGetIntegerv(GL_DRAW_BUFFER,&destination_draw);
             glReadBuffer(GL_COLOR_ATTACHMENT0_EXT);glDrawBuffer(GL_COLOR_ATTACHMENT0_EXT);
-            glDisable(GL_SCISSOR_TEST);glDisable(GL_FRAMEBUFFER_SRGB_EXT);
+            DGSetBlitScissor(c,GL_FALSE);glDisable(GL_FRAMEBUFFER_SRGB_EXT);
             glBlitFramebufferEXT((GLint)x,(GLint)y,(GLint)(x+w),(GLint)(y+h),
                 (GLint)dx,(GLint)(dy+(m->args[6]?h:0)),(GLint)(dx+w),(GLint)(dy+(m->args[6]?0:h)),GL_COLOR_BUFFER_BIT,GL_NEAREST);
             glReadBuffer(source_read);glDrawBuffer(destination_draw);
             glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT,read);glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT,draw);
-            if(scissor)glEnable(GL_SCISSOR_TEST);if(srgb)glEnable(GL_FRAMEBUFFER_SRGB_EXT);
+            if(scissor)DGSetBlitScissor(c,GL_TRUE);if(srgb)glEnable(GL_FRAMEBUFFER_SRGB_EXT);
             glFlush();
             r->error=glGetError();
             if(!r->error){c->drawable->alias_dirty=1;++c->drawable->write_serial;}
@@ -632,7 +635,7 @@ static int DGSurfaceCommandImpl(struct DGHostContext *c,struct DGMessage *m,stru
         if(r->error)DGSurfaceDropUpload(p);
     } else if(m->op==DG_SURFACE_RETIRE) {
         pthread_mutex_lock(&p->resource->access);
-        if(!p->resource->retired) { r->error=DGSurfaceRetire(p);if(!r->error)__atomic_store_n(&p->resource->retired,1,__ATOMIC_RELEASE); }
+        if(!p->resource->retired) { r->error=DGSurfaceRetire(c,p);if(!r->error)__atomic_store_n(&p->resource->retired,1,__ATOMIC_RELEASE); }
         pthread_mutex_unlock(&p->resource->access);
     } else return -1;
     return 0;

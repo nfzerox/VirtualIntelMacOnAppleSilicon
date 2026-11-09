@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Maintenance capture of qualified legacy EFI files, never mutable VARS.
 
-Captures only active boot components, strips machine identities and diagnostic
-arguments, and adds the already-vendored audio driver. The resulting archive is
-a durable build input; normal builds do not read the research VM or use mtools.
+Captures only active boot components and strips machine identities and
+diagnostic arguments. The resulting archive is a durable build input;
+normal builds do not read the research VM or use mtools.
 """
 import argparse
 import hashlib
@@ -18,6 +18,8 @@ import tempfile
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--qualified-fat',type=Path,required=True)
+    parser.add_argument('--audio-kext',type=Path,
+                        help='Qualified Mavericks audio driver if missing from the input EFI')
     parser.add_argument('--output',type=Path,required=True)
     args=parser.parse_args()
     if args.output.exists():parser.error('Use a new output archive')
@@ -63,13 +65,21 @@ def main():
             for file in sorted(root.rglob('*')):
                 if file.is_symlink():raise ValueError('Unexpected kext symlink')
                 if file.is_file():entries['EFI/OC/Kexts/'+name+'/'+file.relative_to(root).as_posix()]=file.read_bytes()
-    audio=source/'prebuilt/audio/VoodooHDA.kext'
-    for file in sorted(audio.rglob('*')):
-        if file.is_symlink():raise ValueError('Unexpected audio driver symlink')
-        if file.is_file():entries['EFI/OC/Kexts/VoodooHDA.kext/'+file.relative_to(audio).as_posix()]=file.read_bytes()
-    config['Kernel']['Add'].append(dict(Arch='x86_64',BundlePath='VoodooHDA.kext',
-        Comment='Virtual Intel Mac legacy HDA input and output',Enabled=True,
-        ExecutablePath='Contents/MacOS/VoodooHDA',PlistPath='Contents/Info.plist',MinKernel='11.0.0',MaxKernel='13.99.99'))
+    audio_path='EFI/OC/Kexts/VoodooHDA.kext/'
+    if audio_path+'Contents/MacOS/VoodooHDA' not in entries:
+        audio=args.audio_kext
+        if not audio or not (audio/'Contents/MacOS/VoodooHDA').is_file():
+            parser.error('Provide the qualified Mavericks driver with --audio-kext')
+        for file in sorted(audio.rglob('*')):
+            if file.is_symlink():raise ValueError('Unexpected audio driver symlink')
+            if file.is_file():entries[audio_path+file.relative_to(audio).as_posix()]=file.read_bytes()
+        config['Kernel']['Add'].append(dict(Arch='x86_64',BundlePath='VoodooHDA.kext',
+            Comment='Virtual Intel Mac HDA input and output',Enabled=True,
+            ExecutablePath='Contents/MacOS/VoodooHDA',PlistPath='Contents/Info.plist',MinKernel='11.0.0',MaxKernel='13.99.99'))
+    audio_info=plistlib.loads(entries[audio_path+'Contents/Info.plist'])
+    minimum=audio_info.get('LSMinimumSystemVersion','10.9')
+    if tuple(map(int,minimum.split('.')[:2]))>(10,9):
+        raise ValueError('Mavericks EFI requires a period audio driver, not the Mojave/Catalina payload')
     for entry in config['Kernel']['Add']:
         if entry['BundlePath'].split('/')[0] in ('VMsvga2.kext','VMsvga2Accel.kext'):
             # Do not claim Lion/Mountain Lion driver ABI qualification yet.

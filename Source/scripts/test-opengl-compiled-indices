@@ -1,0 +1,52 @@
+#!/bin/bash
+# Finite production-wire control: independent strips, signed bases and native
+# non-list vertex IDs. --sanitize instruments the executor, not Apple's GL.
+set -euo pipefail
+source="$(cd "$(dirname "$0")/.." && pwd)"
+sanitize=()
+if [[ ${1:-} == --sanitize ]]; then sanitize=(-fsanitize=address,undefined -fno-omit-frame-pointer);shift;fi
+[[ $# == 0 ]] || { echo "Usage: $0 [--sanitize]" >&2;exit 64; }
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/vim-compiled-indices.XXXXXX")"
+trap 'rm -rf -- "$scratch"' EXIT
+python3 "$source/scripts/generate-passthrough-opengl.py" \
+    "${VIM_OPENGL_SDK:-$source/resources/sdk/MacOSX10.9.sdk}" "$scratch"
+flags=(-O2 -g -Wall -Wextra -Werror -Wno-deprecated-declarations
+    -Wno-misleading-indentation -Wno-unused-function -Wno-missing-field-initializers -I "$scratch")
+xcrun clang "${flags[@]}" "${sanitize[@]}" "$source/PassthroughOpenGL/passthrough-opengl-host.c" \
+    -framework OpenGL -framework IOSurface -framework CoreFoundation -lbsm -o "$scratch/executor"
+xcrun clang "${flags[@]}" -DVIM_COMPILED_INDEX_WIRE "$source/probes/opengl-compiled-index-families.c" \
+    -framework IOKit -framework CoreFoundation -o "$scratch/compiled-wire"
+xcrun clang "${flags[@]}" -DVIM_BASE_VERTEX_WIRE "$source/probes/opengl-base-vertex.c" \
+    -framework IOKit -framework CoreFoundation -o "$scratch/base-wire"
+python3 - "$scratch" <<'PY'
+from pathlib import Path
+import os, select, socket, subprocess, sys, tempfile
+root=Path(sys.argv[1])
+with socket.socket() as reservation:
+    reservation.bind(('127.0.0.1',0));port=reservation.getsockname()[1]
+env={**os.environ,'VIM_PASSTHROUGH_OPENGL_PORT':str(port),
+     'VIM_PASSTHROUGH_OPENGL_HOST':'127.0.0.1','ASAN_OPTIONS':'detect_leaks=0'}
+with tempfile.TemporaryFile(mode='w+') as diagnostics:
+    executor=subprocess.Popen([root/'executor'],env=env,stderr=subprocess.PIPE,text=True)
+    try:
+        if not select.select([executor.stderr],[],[],20)[0]:raise RuntimeError('Executor did not start')
+        startup=executor.stderr.readline()
+        if f'127.0.0.1:{port};' not in startup:raise RuntimeError(startup)
+        # Drain into a regular file after the one-line handshake, so a native
+        # diagnostic cannot fill a pipe and turn a failed test into a deadlock.
+        import threading
+        def drain():
+            for line in executor.stderr:diagnostics.write(line)
+        reader=threading.Thread(target=drain);reader.start()
+        for kind in ('multi','base','range-base','multi-base'):
+            subprocess.run([root/'compiled-wire','--kind',kind],env=env,check=True,timeout=60)
+        subprocess.run([root/'base-wire'],env=env,check=True,timeout=60)
+    finally:
+        executor.terminate()
+        executor.wait(timeout=10)
+        if 'reader' in locals():reader.join()
+        diagnostics.seek(0);errors=diagnostics.read()
+        if errors:print(errors,file=sys.stderr)
+    if 'ERROR: AddressSanitizer' in errors or 'runtime error:' in errors:
+        raise RuntimeError('Executor sanitizer finding')
+PY

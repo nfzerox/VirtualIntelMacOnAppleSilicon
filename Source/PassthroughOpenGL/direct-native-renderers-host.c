@@ -32,7 +32,7 @@ static int DGNativeRendererPrepareCommand(struct DGHostContext *c,const struct D
     case DG_OP_tex_sub_image1D:case DG_OP_tex_sub_image2D:case DG_OP_tex_sub_image3D:
     case DG_OP_compressed_tex_image1D:case DG_OP_compressed_tex_image2D:case DG_OP_compressed_tex_image3D:
     case DG_OP_compressed_tex_sub_image1D:case DG_OP_compressed_tex_sub_image2D:case DG_OP_compressed_tex_sub_image3D:
-    case DG_OP_get_tex_image:case DG_OP_get_compressed_tex_image:
+    case DG_OP_get_tex_image:case DG_OP_get_compressed_tex_image:case DG_TEXTURE_READ:
     case DG_OP_get_tex_level_parameterfv:case DG_OP_get_tex_level_parameteriv:
     case DG_OP_get_tex_parameterfv:case DG_OP_get_tex_parameteriv:
     case DG_OP_tex_parameterf:case DG_OP_tex_parameterfv:case DG_OP_tex_parameteri:case DG_OP_tex_parameteriv:
@@ -104,6 +104,7 @@ static int DGNativeRendererCommand(struct DGHostContext *c,const struct DGMessag
             DGSubmitIOSurfaceWrites(c);
             if(CGLGetVirtualScreen(c->cgl,&current)||current!=wanted)return -1;
             c->alias_bindings_dirty=1;c->iosurface_draw_dirty=1;
+            c->point_sizes=0;c->purgeability=0;c->array_enable_valid=0;
             if(!DGNativeRendererState(c,&info,&hardware,&software))return -1;
             if(!!(info.flags&DG_NATIVE_CURRENT_SOFTWARE)!=!!m->args[0])return -1;
         }

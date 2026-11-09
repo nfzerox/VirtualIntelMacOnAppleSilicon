@@ -310,7 +310,8 @@ else:
     sys.path.insert(0, str(source/'scripts'))
     import deployment_target
     donor = args.output/'Contents/Resources/Runtime/Donor'  # unmodified Apple binaries
-    tiger_graphics = args.output/'Contents/Resources/Runtime/OpenGLGuests/tiger'
+    historical_guests = args.output/'Contents/Resources/Runtime/OpenGLGuests'
+    tiger_graphics = historical_guests/'tiger'
     for path in sorted(args.output.rglob('*')):
         if donor in path.parents:
             continue
@@ -321,7 +322,7 @@ else:
                     from tiger_rosetta_imports import check_tiger_rosetta_imports
                     check_tiger_rosetta_imports(path)
                 else:
-                    deployment_target.check_weak_libsystem_imports(path)
+                    deployment_target.check_weak_libsystem_imports(path, historical_guest=historical_guests in path.parents)
             except RuntimeError as error:
                 sys.exit(f'Package refused: {error}')
     if args.runtime_bin:

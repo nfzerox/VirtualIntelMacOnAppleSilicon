@@ -1,0 +1,72 @@
+#!/bin/bash
+# Cold diagnostic batch only. Individual failures/crashes remain visible and
+# don't hide later fixtures. No renderer override, VM write, or polling loop.
+set -u
+process_library=
+if [[ ${1:-} == --process-library ]]; then
+    [[ $# -ge 2 && $2 = /* && -f $2 ]] || exit 64
+    process_library="$2";shift 2
+fi
+[[ $# == 2 || $# == 3 ]] || { echo "Usage: $0 [--process-library ABSOLUTE_DYLIB] PROBE_DIRECTORY NEW_RESULTS_DIRECTORY [both|x86_64|i386]" >&2; exit 64; }
+case "${3:-both}" in
+    both) architectures=(x86_64 i386);;
+    x86_64|i386) architectures=("$3");;
+    *) exit 64;;
+esac
+# Tiger's arch only prints the machine architecture. It rejects execution
+# arguments yet can return success, which would produce false passing runs.
+# The Tiger build emits thin i386 binaries; execute those directly.
+tiger=0
+leopard=0
+case "$(uname -r)" in 8.*) tiger=1;; 9.*) leopard=1;; esac
+if [[ $tiger == 1 ]]; then
+    [[ ${3:-both} != x86_64 ]] || { echo 'Tiger does not run x86_64 probes.' >&2;exit 77; }
+    architectures=(i386)
+fi
+run_probe() {
+    local arch="$1";shift
+    local launch=(/usr/bin/env)
+    if [[ $tiger != 1 ]]; then launch=(/usr/bin/arch "-$arch");fi
+    # arch -e sets the environment in the owned child itself. High Sierra's
+    # /usr/bin/env is 64-bit only, so arch -i386 /usr/bin/env cannot launch it.
+    if [[ -n "$process_library" ]]; then
+        if [[ $tiger == 1 ]]; then launch+=("DYLD_INSERT_LIBRARIES=$process_library")
+        else launch+=(-e "DYLD_INSERT_LIBRARIES=$process_library");fi
+    fi
+    "${launch[@]}" "$@"
+}
+probes="$(cd "$1" && pwd)" || exit 1
+results="$2"
+[[ ! -e "$results" ]] || { echo 'Choose a new results directory.' >&2; exit 65; }
+mkdir -p "$results" || exit 1
+names=(period-conformance array-element mixed-index-arrays compiled-index-families interleaved-arrays apple-element-array
+    apple-evaluator selection-feedback pixel-maps compatibility-raster
+    imaging-parameters imaging texture-readback texture-environment-queries
+    arb-vertex-program arb-fragment-program texture-list-errors raster-list-errors depth-texture)
+failed=0
+for arch in "${architectures[@]}"; do
+    for name in "${names[@]}"; do
+        # Native GMA950 on Leopard maps signed byte zero to 1/255, including
+        # CPU ArrayElement. Tiger's actual arrays and newer target contracts
+        # retain the other oracle. Never accept either value interchangeably.
+        if [[ $leopard == 1 && $name == array-element ]]; then
+            run_probe "$arch" "$probes/$name" --signed-byte-biased >"$results/$arch-$name.stdout" 2>"$results/$arch-$name.stderr"
+        else
+            run_probe "$arch" "$probes/$name" >"$results/$arch-$name.stdout" 2>"$results/$arch-$name.stderr"
+        fi
+        status=$?
+        [[ $status == 0 || $status == 77 ]] || failed=1
+        printf '%s\t%s\t%d\n' "$arch" "$name" "$status" | tee -a "$results/status.tsv"
+    done
+    for name in texture-list-errors raster-list-errors; do
+        run_probe "$arch" "$probes/$name" --pbo >"$results/$arch-$name-pbo.stdout" 2>"$results/$arch-$name-pbo.stderr"
+        status=$?
+        [[ $status == 0 || $status == 77 ]] || failed=1
+        printf '%s\t%s-pbo\t%d\n' "$arch" "$name" "$status" | tee -a "$results/status.tsv"
+    done
+    run_probe "$arch" "$probes/period-conformance" --fbo >"$results/$arch-period-fbo.stdout" 2>"$results/$arch-period-fbo.stderr"
+    status=$?
+    [[ $status == 0 || $status == 77 ]] || failed=1
+    printf '%s\tperiod-fbo\t%d\n' "$arch" "$status" | tee -a "$results/status.tsv"
+done
+exit "$failed"

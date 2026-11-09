@@ -11,7 +11,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
-from legacy_transition_evidence import summarize
+from opengl_transition_evidence import summarize, visible_frame
 
 
 def main():
@@ -32,10 +32,12 @@ def main():
         return {'type': 'key', 'data': {'down': down, 'key': {'type': 'qcode', 'data': code}}}
 
     def invoke(label, *arguments):
-        start = time.monotonic() - began
+        start = time.monotonic()
         result = subprocess.run([sys.executable, str(adapter), str(args.diagnostics),
                                  *arguments], capture_output=True, text=True)
-        rows.append({'Action': label, 'Start': start, 'Returned': time.monotonic() - began,
+        end = time.monotonic()
+        rows.append({'Action': label, 'Start': start - began, 'Returned': end - began,
+                     'HostStartMonotonic': start, 'HostReturnMonotonic': end,
                      'ExitCode': result.returncode, 'Reply': result.stdout, 'Error': result.stderr})
         if result.returncode:
             raise RuntimeError('Dispatch failed; inspect the existing request before retrying')
@@ -49,10 +51,13 @@ def main():
     before = after = None
     armed = False
     try:
+        invoke('focus-real-guest', '--menu-state', 'guest')
         send('initial-release', [key('ctrl', False), key('meta_l', False), key('esc', False)])
         if args.measure:
             before = invoke('measurement-on', '--display-fingerprint', 'on')
             armed = True
+            if not visible_frame(before['Frame']):
+                raise RuntimeError('The guest window is hidden, asleep or has no display.')
         workloads = ['mission-control', 'app-expose', 'spaces'] if args.workload == 'all' else [args.workload]
         for workload in workloads:
             for cycle in range(args.cycles):
@@ -89,6 +94,8 @@ def main():
         args.output.write_text(json.dumps(evidence, indent=2)+'\n')
     if failure:
         raise SystemExit(failure)
+    if args.measure and not evidence['MeasurementSummary']['MeasurementValid']:
+        raise SystemExit('; '.join(evidence['MeasurementSummary']['Issues']))
     print(args.output)
 
 

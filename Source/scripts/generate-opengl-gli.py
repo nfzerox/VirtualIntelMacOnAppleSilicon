@@ -167,17 +167,37 @@ for row in rows:
     declaration = ",".join(params[1:]) or "void"
     out += [f"typedef {ret} (*VIMProc_{field})({declaration});",
             f"static VIMProc_{field} VIMFunction_{field};",
-            f"static {ret} VIMDispatch_{field}({parameters}) {{",
-            "    struct VIMSavedBinding previous=VIMSaveGLI(ctx);",
+            f"static {ret} VIMDispatch_{field}({parameters}) {{"]
+    if field=="sample_pass" or (field.endswith("_NV") and "combiner" in field):
+        # Native public exports are retained no-ops on tested renderers, but
+        # the actual core GLI entries report INVALID_OPERATION. Keep the two
+        # contracts distinct; don't touch output storage or send a packet.
+        out += ["    struct VIMContext *owner=(void *)ctx;",
+                "    if(owner->format->profile!=kCGLOGLPVersion_Legacy) { if(!owner->error)owner->error=GL_INVALID_OPERATION;return; }"]
+    out += ["    struct VIMSavedBinding previous=VIMSaveGLI(ctx);",
             "    if (!VIMBindGLI(ctx)) { VIMDiscardGLI(previous);" + (" return;" if ret == "void" else f" return ({ret})0;") + " }" ]
     if field == "get_error":
         out += ["    GLenum pending=VIMTakeError(ctx); if(pending) { VIMRestoreGLI(previous,ctx); return pending; }"]
     out += [f"    if (!VIMFunction_{field}) {{ VIMUnsupported(ctx,{row['index']}); VIMRestoreGLI(previous,ctx);" +
             (" return;" if ret == "void" else f" return ({ret})0;") + " }"]
+    if a.runtime_dispatch_count == 968 and (field in {
+            "begin","accum","bitmap","clear","call_list","call_lists","copy_pixels",
+            "read_pixels","blit_framebuffer_EXT"
+        } or field.startswith(("clear_buffer","draw_arrays","draw_elements","draw_range_elements",
+                              "draw_pixels","draw_element_array","draw_range_element_array",
+                              "draw_transform_feedback","multi_draw","eval_mesh","rect","copy_tex_"))):
+        out += ["#if defined(VIM_PASSTHROUGH_OPENGL_BACKEND) && defined(VIM_GLI_PLUGIN)",
+                "    if(!VIMPrepareOrdinaryDrawing(ctx)) { VIMRestoreGLI(previous,ctx);" +
+                (" return; }" if ret == "void" else f" return ({ret})0; }}"), "#endif"]
     transfer = field in {"tex_image1D","tex_image2D","tex_image3D","tex_sub_image1D",
         "tex_sub_image2D","tex_sub_image3D","draw_pixels","read_pixels","get_tex_image"}
     if transfer:
         pack = int(field in {"read_pixels","get_tex_image"})
+        if field=="get_tex_image":
+            out += ["#ifdef VIM_PASSTHROUGH_OPENGL_BACKEND",
+                    f"    if(DGReadTextureWithRowBytes({','.join(arguments)},((struct VIMContext *)ctx)->pack_row_bytes)) {{",
+                    "        VIMCheckBackendError(ctx,\"get_tex_image\",0,0);VIMRestoreGLI(previous,ctx);return;",
+                    "    }", "#endif"]
         out += ["    struct VIMPixelTransfer transfer;",
             f"    if(!VIMPreparePixelTransfer(ctx,format,type,{pack},&transfer)) {{ VIMRestoreGLI(previous,ctx);return; }}"]
     redefine = (field.startswith(("tex_image", "copy_tex_image", "compressed_tex_image")) and
@@ -229,6 +249,10 @@ for row in rows:
             "delete_queries": ("GL_QUERY_OBJECT_EXT", "ids"),
             "delete_vertex_arrays_APPLE": ("GL_VERTEX_ARRAY_OBJECT_EXT", "ids")}[field]
         out += [f"    VIMForgetAppleObjects(ctx,{typ},n,{names});"]
+    elif field=="delete_samplers":
+        out += ["    if(!((struct VIMContext *)ctx)->inside_begin) VIMForgetAppleObjects(ctx,VIM_GL_SAMPLER,count,samplers);"]
+    elif field=="delete_transform_feedbacks":
+        out += ["    if(!((struct VIMContext *)ctx)->inside_begin) VIMForgetAppleObjects(ctx,VIM_GL_TRANSFORM_FEEDBACK,n,ids);"]
     if field == "begin":
         out += ["    ((struct VIMContext *)ctx)->inside_begin=1;"]
     elif field == "end":

@@ -5,18 +5,23 @@
  * row length/alignment. Non-pixel-aligned pitches remain explicit errors. */
 struct VIMAppleObject {
     GLenum type;GLuint name;int purgeable,responsible_pid;
+    const struct VIMContext *owner; /* Context-local namespaces only. */
     GLint hint,length;const void *pointer;
     int mipmap_sgis,mipmap_apple;
     struct VIMAppleObject *next;
 };
-static struct VIMAppleObject *VIMAppleObject(struct VIMShareGroup *g,GLenum type,GLuint name,int create)
+static struct VIMAppleObject *VIMAppleObjectOwned(struct VIMShareGroup *g,GLenum type,
+    GLuint name,const struct VIMContext *owner,int create)
 {
-    for(struct VIMAppleObject *o=g->objects;o;o=o->next) if(o->type==type && o->name==name) return o;
+    for(struct VIMAppleObject *o=g->objects;o;o=o->next)
+        if(o->type==type && o->name==name && o->owner==owner)return o;
     if(!create) return NULL;
     struct VIMAppleObject *o=calloc(1,sizeof(*o));
-    if(o) { o->type=type;o->name=name;o->hint=GL_STORAGE_PRIVATE_APPLE;o->next=g->objects;g->objects=o; }
+    if(o) { o->type=type;o->name=name;o->owner=owner;o->hint=GL_STORAGE_PRIVATE_APPLE;o->next=g->objects;g->objects=o; }
     return o;
 }
+static struct VIMAppleObject *VIMAppleObject(struct VIMShareGroup *g,GLenum type,GLuint name,int create)
+{ return VIMAppleObjectOwned(g,type,name,NULL,create); }
 static void VIMDestroyAppleObjects(struct VIMShareGroup *g)
 {
     while(g->objects) { struct VIMAppleObject *o=g->objects;g->objects=o->next;free(o); }
@@ -24,15 +29,28 @@ static void VIMDestroyAppleObjects(struct VIMShareGroup *g)
 static void VIMForgetAppleObjects(GLIContext opaque,GLenum type,GLsizei n,const GLuint *names)
 {
     if(!opaque || n<1 || !names) return;
-    struct VIMShareGroup *g=((struct VIMContext *)opaque)->group;
+    struct VIMContext *c=(void *)opaque;
+    struct VIMShareGroup *g=c->group;
+    const struct VIMContext *owner=type==VIM_GL_TRANSFORM_FEEDBACK?c:NULL;
     pthread_mutex_lock(&g->lock);
     struct VIMAppleObject **p=&g->objects;
     while(*p) {
         int remove=0;
-        if((*p)->type==type) for(GLsizei i=0;i<n;++i) if((*p)->name==names[i]) { remove=1;break; }
+        if((*p)->type==type && (*p)->owner==owner)
+            for(GLsizei i=0;i<n;++i) if((*p)->name==names[i]) { remove=1;break; }
         if(remove) { struct VIMAppleObject *o=*p;*p=o->next;free(o); } else p=&(*p)->next;
     }
     pthread_mutex_unlock(&g->lock);
+}
+static void VIMForgetAppleOwner(struct VIMContext *c)
+{
+    pthread_mutex_lock(&c->group->lock);
+    struct VIMAppleObject **p=&c->group->objects;
+    while(*p){
+        if((*p)->owner==c){struct VIMAppleObject *o=*p;*p=o->next;free(o);}
+        else p=&(*p)->next;
+    }
+    pthread_mutex_unlock(&c->group->lock);
 }
 static GLint *VIMAppleState(struct VIMContext *c,GLenum key)
 {
@@ -83,8 +101,11 @@ static void VIMAppleHint(GLIContext ctx,GLenum target,GLenum mode)
     }
     VIMDispatch_hint(ctx,target,mode);
 }
-static GLuint VIMAppleTexture(GLIContext ctx,GLenum target)
+static int VIMAppleTextureChecked(GLIContext ctx,GLenum target,GLuint *texture)
 {
+    if(((struct VIMContext *)ctx)->inside_begin){
+        ((struct VIMContext *)ctx)->error=GL_INVALID_OPERATION;return 0;
+    }
     GLenum binding=0;GLint name=0;
     switch(target) {
     case GL_TEXTURE_1D:binding=GL_TEXTURE_BINDING_1D;break;
@@ -94,8 +115,20 @@ static GLuint VIMAppleTexture(GLIContext ctx,GLenum target)
     case GL_TEXTURE_CUBE_MAP:binding=GL_TEXTURE_BINDING_CUBE_MAP;break;
     default:((struct VIMContext *)ctx)->error=GL_INVALID_ENUM;return 0;
     }
-    if(VIMBindGLI(ctx)) glGetIntegerv(binding,&name);
-    return (GLuint)name;
+    if(!VIMBindGLI(ctx))return 0;
+    glGetIntegerv(binding,&name);*texture=(GLuint)name;
+    return 1;
+}
+static GLuint VIMAppleTexture(GLIContext ctx,GLenum target)
+{GLuint texture=0;VIMAppleTextureChecked(ctx,target,&texture);return texture;}
+/* Compatibility object zero is a distinct default object for each target in
+ * each context. Named textures remain in the share group's namespace. Do not
+ * reject zero or alias the defaults across targets / sharing contexts. Caller
+ * holds the existing share-group metadata lock. */
+static struct VIMAppleObject *VIMAppleTextureObject(struct VIMContext *c,
+    GLenum target,GLuint name,int create)
+{
+    return VIMAppleObjectOwned(c->group,name?GL_TEXTURE:target,name,name?NULL:c,create);
 }
 static int VIMAppleTexParameter(GLIContext ctx,GLenum target,GLenum key,GLint value)
 {
@@ -107,15 +140,15 @@ static int VIMAppleTexParameter(GLIContext ctx,GLenum target,GLenum key,GLint va
     const GLenum apple_mipmap=0x8a4b;
     if(key!=GL_TEXTURE_STORAGE_HINT_APPLE && key!=apple_mipmap && key!=GL_GENERATE_MIPMAP) return 0;
     struct VIMContext *c=(void *)ctx;
-    GLuint name=VIMAppleTexture(ctx,target);
-    if(!name) { c->error=GL_INVALID_OPERATION;return 1; }
+    GLuint name=0;
+    if(!VIMAppleTextureChecked(ctx,target,&name))return 1;
     if(key==GL_TEXTURE_STORAGE_HINT_APPLE &&
        value!=GL_STORAGE_PRIVATE_APPLE && value!=GL_STORAGE_CACHED_APPLE && value!=GL_STORAGE_SHARED_APPLE)
         { c->error=GL_INVALID_ENUM;return 1; }
     if(key!=GL_TEXTURE_STORAGE_HINT_APPLE && value!=0 && value!=1)
-        { c->error=GL_INVALID_VALUE;return 1; }
+        { c->error=key==GL_GENERATE_MIPMAP?GL_INVALID_ENUM:GL_INVALID_VALUE;return 1; }
     pthread_mutex_lock(&c->group->lock);
-    struct VIMAppleObject *o=VIMAppleObject(c->group,GL_TEXTURE,name,1);
+    struct VIMAppleObject *o=VIMAppleTextureObject(c,target,name,1);
     int generate=-1;
     if(!o) c->error=GL_OUT_OF_MEMORY;
     else if(key==GL_TEXTURE_STORAGE_HINT_APPLE) o->hint=value;
@@ -140,9 +173,10 @@ static int VIMAppleTexQuery(GLIContext ctx,GLenum target,GLenum key,GLint *value
 {
     if(key!=0x8a4b && key!=GL_GENERATE_MIPMAP && key!=GL_TEXTURE_STORAGE_HINT_APPLE) return 0;
     struct VIMContext *c=(void *)ctx;
-    GLuint name=VIMAppleTexture(ctx,target);
+    GLuint name=0;
+    if(!VIMAppleTextureChecked(ctx,target,&name))return -1;
     pthread_mutex_lock(&c->group->lock);
-    struct VIMAppleObject *o=VIMAppleObject(c->group,GL_TEXTURE,name,0);
+    struct VIMAppleObject *o=VIMAppleTextureObject(c,target,name,0);
     if(value) *value=key==GL_TEXTURE_STORAGE_HINT_APPLE ? (o ? o->hint : GL_STORAGE_PRIVATE_APPLE) :
         o ? (key==0x8a4b ? o->mipmap_apple : o->mipmap_sgis) : 0;
     pthread_mutex_unlock(&c->group->lock);
@@ -151,7 +185,8 @@ static int VIMAppleTexQuery(GLIContext ctx,GLenum target,GLenum key,GLint *value
 static void VIMAppleGetTexParameteriv(GLIContext c,GLenum t,GLenum p,GLint *v)
 { if(!VIMAppleTexQuery(c,t,p,v)) VIMDispatch_get_tex_parameteriv(c,t,p,v); }
 static void VIMAppleGetTexParameterfv(GLIContext c,GLenum t,GLenum p,GLfloat *v)
-{ GLint i;if(VIMAppleTexQuery(c,t,p,&i)) { if(v) *v=(GLfloat)i; } else VIMDispatch_get_tex_parameterfv(c,t,p,v); }
+{ GLint i=0;int result=VIMAppleTexQuery(c,t,p,&i);
+  if(!result)VIMDispatch_get_tex_parameterfv(c,t,p,v);else if(result>0&&v)*v=(GLfloat)i; }
 static int VIMPixelBytes(GLenum format,GLenum type)
 {
     if(type==GL_UNSIGNED_SHORT_8_8_APPLE || type==GL_UNSIGNED_SHORT_8_8_REV_APPLE)
@@ -249,13 +284,20 @@ static void VIMAppleResponsible(GLIContext ctx,GLenum type,GLuint name,GLint pid
     case GL_PROGRAM_OBJECT_EXT:valid=glIsProgram(name);break;
     case GL_QUERY_OBJECT_EXT:valid=glIsQuery(name);break;
     case GL_VERTEX_ARRAY_OBJECT_EXT:valid=glIsVertexArrayAPPLE(name);break;
+    case VIM_GL_SAMPLER:case VIM_GL_TRANSFORM_FEEDBACK: {
+        GLboolean (*exists)(GLuint)=(void *)DGGetProcAddress(
+            type==VIM_GL_SAMPLER?"glIsSampler":"glIsTransformFeedback");
+        if(exists)valid=exists(name);
+        break;
+    }
     default:if(!c->error) c->error=GL_INVALID_ENUM;return;
     }
     // Live 13F1911 NVIDIA control: generated-but-unbound, missing and deleted
     // names are INVALID_VALUE (501), not INVALID_OPERATION (502).
     if(!valid) { if(!c->error) c->error=GL_INVALID_VALUE;return; }
     pthread_mutex_lock(&c->group->lock);
-    struct VIMAppleObject *o=VIMAppleObject(c->group,type,name,1);
+    struct VIMAppleObject *o=VIMAppleObjectOwned(c->group,type,name,
+        type==VIM_GL_TRANSFORM_FEEDBACK?c:NULL,1);
     if(o) o->responsible_pid=pid;else c->error=GL_OUT_OF_MEMORY;
     pthread_mutex_unlock(&c->group->lock);
 }
