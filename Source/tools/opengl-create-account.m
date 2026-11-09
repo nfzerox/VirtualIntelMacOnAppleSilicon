@@ -246,6 +246,19 @@ static BOOL LoginOnce(NSString *name,NSString *password,NSMutableDictionary *jou
     NSString *loginUser=VIMOpenGLLoginUser();
     if(loginUser&&![loginUser isEqual:name])return NO;
     NSData *plain=[password dataUsingEncoding:NSUTF8StringEncoding];
+#ifdef VIM_MODERN_ACCOUNT_SETUP
+    // Big Sur's installer leaves its own reversible post-install login
+    // secret in /etc/kcpassword (a 40-character token, not the account
+    // password). Inside our recorded first-login transaction, with no other
+    // auto-login user configured, replace that leftover instead of failing
+    // setup on every attempt. Any other mismatch still fails closed.
+    if(present&&Owned(credential,NO)&&st.st_size<=4096&&[[journal objectForKey:@"FirstLoginPolicyPrepared"] boolValue]&&
+       (!loginUser||[loginUser isEqual:name])&&![journal objectForKey:@"AutoLoginSHA256"]&&
+       !LoginCredentialMatches([NSData dataWithContentsOfFile:credential],plain)){
+        if(unlink([credential fileSystemRepresentation]))return NO;
+        present=NO;
+    }
+#endif
     if(present){
         if(!Owned(credential,NO)||st.st_size>4096)return NO;
         // The caller has checked the transaction's account GUID, UID and

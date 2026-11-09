@@ -48,7 +48,20 @@ static bool transfer(int fd, void *bytes, size_t remaining, bool writing)
     return true;
 }
 
-int main(void)
+// A fresh guest has no developer tools, so /usr/bin/codesign cannot find
+// its codesign_allocate helper. Use Apple's allocator staged beside this tool,
+// for our own signer children only, as guest preparation does.
+static void use_staged_allocator(const char *self)
+{
+    if (getenv("CODESIGN_ALLOCATE") || !self || self[0] != '/') return;
+    const char *slash = strrchr(self, '/');
+    char allocator[1024];
+    if ((size_t)(slash - self) + sizeof("/codesign_allocate") > sizeof(allocator)) return;
+    snprintf(allocator, sizeof(allocator), "%.*s/codesign_allocate", (int)(slash - self), self);
+    if (!access(allocator, X_OK)) setenv("CODESIGN_ALLOCATE", allocator, 1);
+}
+
+int main(int argc, char **argv)
 {
     // Do not patch the recovery environment or any newer guest, even if its
     // compiler emitted an identical instruction sequence.
@@ -57,6 +70,7 @@ int main(void)
     if (sysctlbyname("kern.osrelease", release, &release_size, NULL, 0) ||
         strncmp(release, "13.", 3) || access("/var/db/.AppleSetupDone", F_OK)) return 0;
     if (geteuid()) return 1;
+    use_staged_allocator(argc > 0 ? argv[0] : NULL);
 
     int fd = open(smbd_path, O_RDONLY | O_NOFOLLOW);
     struct stat st;
