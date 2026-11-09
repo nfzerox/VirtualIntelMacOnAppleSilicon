@@ -415,9 +415,18 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         NSMutableArray *items=[NSMutableArray new];
         // SDL device selection is currently next-start only. Keep it in Sound
         // settings, not among controls that imply a live device change.
-        for(NSString *child in @[@"GuestApps",@"GuestCPU",@"GuestUSB",@"GuestOptical",@"GuestNetwork",@"GuestSharing",@"GuestControls"])
+        for(NSString *child in @[@"GuestApps",@"GuestCPU",@"GuestMouse",@"GuestUSB",@"GuestOptical",@"GuestNetwork",@"GuestSharing",@"GuestControls"])
             [items addObject:[self toolbar:toolbar itemForItemIdentifier:child willBeInsertedIntoToolbar:NO]];
         group.subitems=items;return group;
+    }
+    if([identifier isEqual:@"GuestMouse"]) {
+        BOOL relative=self.displayView.relativeMouseMode;
+        NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];
+        item.label=relative?@"Relative Mouse":@"Tablet Mouse";
+        item.toolTip=relative?@"Using a relative mouse, for games with their own cursor or aim. Click to switch back to the tablet pointer for normal use.":
+            @"Using the absolute tablet pointer, for normal use. Click to switch to a relative mouse for games (⌘⇧M).";
+        item.image=[NSImage imageWithSystemSymbolName:relative?@"computermouse.fill":@"computermouse" accessibilityDescription:item.label];
+        item.target=self;item.action=@selector(toggleRelativeMouse:);return item;
     }
     if([identifier isEqual:@"GuestExpand"]) {
         BOOL expanded=[self deviceToolbarExpanded];
@@ -451,6 +460,14 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         NSArray *titles=@[@"Shut Down",@"Reset…",@"Force Stop…"];
         NSArray *actions=@[NSStringFromSelector(@selector(shutdown:)),NSStringFromSelector(@selector(resetMachine:)),NSStringFromSelector(@selector(forceStop:))];
         for(NSUInteger i=0;i<titles.count;i++){NSMenuItem *item=[[NSMenuItem alloc] initWithTitle:titles[i] action:NSSelectorFromString(actions[i]) keyEquivalent:@""];item.target=self;[menu addItem:item];}
+        [menu addItem:NSMenuItem.separatorItem];
+        NSMenuItem *relativeMouse=[[NSMenuItem alloc] initWithTitle:@"Relative Mouse (for Games)" action:@selector(toggleRelativeMouse:) keyEquivalent:@"m"];
+        relativeMouse.keyEquivalentModifierMask=NSEventModifierFlagCommand|NSEventModifierFlagShift;
+        // The cursor is intentionally hidden while this is on (see
+        // -effectiveCursor) since it can no longer show where a click will
+        // actually land. A menu click alone isn't reliable then - this must
+        // stay reachable by key equivalent, not just by clicking the menu.
+        relativeMouse.target=self;relativeMouse.state=self.displayView.relativeMouseMode?NSControlStateValueOn:NSControlStateValueOff;[menu addItem:relativeMouse];
         menu.delegate=self;controls.menu=menu;return controls;
     }
     NSToolbarItem *gear=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];gear.label=@"Configure";gear.toolTip=@"Configure this Mac";
@@ -1056,10 +1073,30 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         // whose PIC alias is deliberately disabled after _PIC(1). Slot5
         // routes EHCI INTD to PIRQ E instead; newer guests retain their map.
         @"-device",[self.machine.guest isEqual:@"leopard"]?@"ich9-usb-ehci1,id=usb,bus=pcie.0,addr=0x5":@"ich9-usb-ehci1,id=usb",@"-device",@"usb-kbd,id=keyboard,bus=usb.0,port=1,apple-ansi=on",
+        // Second, independent controller: usb.0 (EHCI1) already allocates all
+        // 6 ports (keyboard, tablet, the primary image slot, three more for
+        // user-connected images). The GPU driver support disc needs its own
+        // hot-plugged usb-bot/scsi-hd pair (see VIMOpenGLSetup.m) and there is
+        // no free port left on usb.0 for it; pre-Metal guests have no xHCI
+        // driver to see a device on the USB3 passthrough bus either. A real
+        // ICH9 southbridge has two distinct EHCI controllers, so this mirrors
+        // actual hardware rather than inventing a fictitious duplicate.
+        @"-device",@"ich9-usb-ehci2,id=usb2",
         // USB passthrough bus (USB 2 and 3). A fixed slot after the network
         // adapter's leaves existing device addresses and services unchanged.
         @"-device",xhciDevice,
         @"-device",@"usb-tablet,id=tablet,bus=usb.0,port=2",
+        // A second, relative-motion pointer alongside the absolute tablet.
+        // Many classic Mac games read the generic USB HID mouse class and
+        // treat whatever value arrives in its X/Y fields as a motion delta;
+        // fed the tablet's large absolute coordinates (0-32767) instead of
+        // small per-report deltas, that misreading looks like wildly
+        // oversensitive mouse movement. A true relative mouse alongside the
+        // tablet costs nothing for normal GUI use (both can be connected to
+        // a real Mac at once) and gives those games correct deltas. Port 1
+        // on usb2.0 stays reserved for the GPU driver disc's own hot-plugged
+        // usb-bot (see VIMOpenGLSetup.m); this is always present, port 2.
+        @"-device",@"usb-mouse,id=relative-mouse,bus=usb2.0,port=2",
         // Apple's Intel guest agent opens this exact VirtIO console name.
         // Keep its control endpoint inside the per-session private directory;
         // unlike network forwarding it is never exposed on a TCP interface.
@@ -1524,6 +1561,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         session.legacyTabletGuest=VIMUsesLegacyTabletCalibration(session.machine.guest);
         session.legacyTabletObserved=NO;session.legacyTabletObservationAttempts=0;
         session.tabletTrim=VIMInitialTabletTrim(session.machine.guest,classicInstaller);
+        if(!failure)session.displayView.relativeMouseModeObserver=^{[weakSelf installWindowControls:weakSelf.task.running];};
         if(!failure)session.displayView.inputHandler=^(NSArray *events){
             if([weakSelf.lastRunState isEqual:@"suspended"]) {
                 if(weakSelf.wakePending)return;
@@ -3849,6 +3887,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         if(result==NSAlertSecondButtonReturn)stop();
     }];
 }
+- (void)toggleRelativeMouse:(id)sender {
+    self.displayView.relativeMouseMode=!self.displayView.relativeMouseMode;
+}
 - (void)cleanUp {
     self.previewSetupNotice=NO;
     [self dismissSetupNotice];
@@ -3868,7 +3909,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     [self.guestTimer invalidate];self.guestTimer=nil;[self.guestAgent close];
     [self.statusTimer invalidate];self.statusTimer=nil;
     [self.resizeTimer invalidate];self.resizeTimer=nil;
-    self.displayView.inputHandler=nil;
+    self.displayView.inputHandler=nil;self.displayView.relativeMouseModeObserver=nil;
     [self.displayConnection stop];[self.displayView discardFrameStorage];
     [self.control close];[self.log closeFile];self.log=nil;
     if(self.runtimeDirectory) {

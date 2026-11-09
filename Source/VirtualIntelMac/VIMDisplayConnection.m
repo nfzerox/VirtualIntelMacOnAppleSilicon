@@ -237,8 +237,18 @@ static NSError *VIMDisplayError(NSString *message) {
             });continue;
         }
         if(frame.magic==VIMDisplayMagic && frame.operation==4 && !frame.sequence &&
-            frame.width<=1 && !frame.height && !frame.stride && !frame.reserved) {
-            dispatch_async(dispatch_get_main_queue(), ^{ if(!self.stopped)[self.view setGuestCursorVisible:frame.width!=0]; });
+            frame.width<=1 && !frame.reserved) {
+            // height/stride carry the guest's own tracked cursor position
+            // (SVGA_REG_CURSOR_X/Y), in current-mode guest pixels - see
+            // apple-gfx-app-wire.h. Authoritative: already past whatever
+            // pointer acceleration the guest OS applied, unlike any position
+            // estimated host-side from raw input deltas.
+            NSPoint position=NSMakePoint(frame.height,frame.stride);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if(self.stopped)return;
+                [self.view setGuestCursorVisible:frame.width!=0];
+                [self.view setGuestCursorTrackedPosition:position];
+            });
             continue;
         }
         if(frame.magic==VIMDisplayMagic && frame.operation==5 && !frame.sequence && !frame.reserved &&

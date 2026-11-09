@@ -13,6 +13,28 @@ NS_ASSUME_NONNULL_BEGIN
 /// Compositor sampling only; no guest mode, pixel copy or extra render pass.
 @property(nonatomic) BOOL nearestNeighborScaling;
 @property(nonatomic,readonly) BOOL inputCaptured;
+// Switches pointer movement between the always-present absolute tablet
+// (precise, matches the host cursor's position 1:1 - the default, right for
+// ordinary GUI use) and the always-present relative mouse (small per-move
+// deltas - some classic Mac games read the generic USB mouse class and
+// misinterpret the tablet's large absolute coordinates as deltas, which
+// looks like wildly oversensitive movement). Both USB devices are declared
+// in the guest the whole session; only which one actually receives events
+// changes live.
+@property(nonatomic) BOOL relativeMouseMode;
+// Fires whenever relativeMouseMode actually changes, from any path: the
+// menu/toolbar action, the ⌘⇧M tap-level shortcut while captured, or the
+// focus-loss/dealloc safety net. The toolbar button's own icon only updates
+// when its owner is told to refresh, so it needs to hear about all of these,
+// not just the one path that happened to originate the change.
+@property(nonatomic, copy, nullable) void (^relativeMouseModeObserver)(void);
+// The guest driver's own tracked cursor position (SVGA_REG_CURSOR_X/Y, in
+// current-mode guest pixels) - authoritative, already past whatever pointer
+// acceleration the guest OS applied. Drives the relative-mode cursor sprite
+// directly instead of a host-side position estimate accumulated from raw
+// input deltas, which drifts from the guest's real (accelerated) position
+// the more the mouse moves.
+- (void)setGuestCursorTrackedPosition:(NSPoint)guestPixelPosition;
 - (void)releaseInputCapture;
 - (void)capturePNG:(void (^)(NSData *_Nullable png))completion;
 - (void)releasePressedKeys;
