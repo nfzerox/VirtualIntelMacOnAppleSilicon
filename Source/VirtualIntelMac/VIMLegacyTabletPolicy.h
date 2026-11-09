@@ -7,9 +7,13 @@ static inline BOOL VIMUsesLegacyTabletCalibration(NSString *guest) {
 
 static inline NSUInteger VIMInitialTabletTrim(NSString *guest, BOOL installer) {
     // The installed 10.5–10.9 guests bind the tablet with a zero override.
-    // Tiger was measured trimming on the installed desktop. Legacy
-    // installer/recovery boots retain the separate native driver fallback.
-    return [guest isEqual:@"tiger"]||(installer&&VIMUsesLegacyTabletCalibration(guest))?15:0;
+    // Only Tiger's installer/recovery environment was actually measured
+    // trimming the tablet's absolute axis bounds; extending that guess to
+    // Leopard through Mavericks installer/recovery boots left clicks near
+    // the edge of the screen (including the menu bar) landing well inside
+    // it, since nothing observes/corrects the override before the OS is
+    // installed. Send those guests' full, unmodified pointer range instead.
+    return [guest isEqual:@"tiger"]?15:0;
 }
 
 // Period ioreg has no plist output. Only consume the override on the bound

@@ -125,14 +125,23 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
         self.payloadMediaDirectory=directory;
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
             NSError *error=nil;NSFileManager *fm=NSFileManager.defaultManager;
-            NSURL *media=[directory URLByAppendingPathComponent:@"Support.dmg"],*log=[directory URLByAppendingPathComponent:@"Preparation.log"];
+            NSURL *media=[directory URLByAppendingPathComponent:@"Support.iso"],*log=[directory URLByAppendingPathComponent:@"Preparation.log"];
             BOOL ok=[fm createDirectoryAtURL:directory withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:&error];
             NSFileHandle *handle=nil;
             if(ok)ok=[fm createFileAtPath:log.path contents:nil attributes:@{NSFilePosixPermissions:@0600}];
             if(ok)handle=[NSFileHandle fileHandleForWritingToURL:log error:&error];
             if(ok&&handle) {
+                // Attached to the guest as an ATAPI CD-ROM (ide-cd), which
+                // expects ISO9660 structure to consider the medium readable
+                // at all; an HFS-only image (no -iso) mounts fine on the
+                // host directly but is reported as unreadable by the guest.
+                // With -iso, makehybrid always appends .iso to the given
+                // base name itself, rather than reusing that exact -o path
+                // as HFS-only mode does; pass an extensionless base here and
+                // reference the actual <base>.iso result as payloadMedia.
+                NSURL *base=[directory URLByAppendingPathComponent:@"Support"];
                 NSTask *task=[NSTask new];task.executableURL=[NSURL fileURLWithPath:@"/usr/bin/hdiutil"];
-                task.arguments=@[@"makehybrid",@"-hfs",@"-hfs-volume-name",self.payloadVolumeName,@"-o",media.path,self.bundledSupport.path];
+                task.arguments=@[@"makehybrid",@"-hfs",@"-iso",@"-hfs-volume-name",self.payloadVolumeName,@"-o",base.path,self.bundledSupport.path];
                 task.standardInput=NSFileHandle.fileHandleWithNullDevice;task.standardOutput=handle;task.standardError=handle;
                 ok=[task launchAndReturnError:&error];if(ok){[task waitUntilExit];ok=task.terminationStatus==0;}[handle closeFile];
             }else ok=NO;

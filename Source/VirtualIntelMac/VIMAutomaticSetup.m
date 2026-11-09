@@ -128,16 +128,22 @@ static BOOL PrivateCredential(struct stat *st) {return S_ISREG(st->st_mode)&&st-
        !lstat(image.fileSystemRepresentation,&st)&&S_ISREG(st.st_mode)&&st.st_size>0)return image;
     NSFileManager *fm=NSFileManager.defaultManager;
     NSURL *job=[state URLByAppendingPathComponent:[@".SetupMedia-" stringByAppendingString:NSUUID.UUID.UUIDString]];
-    // HFS-only makehybrid uses a .dmg suffix, even for an explicit .iso name.
-    // The resulting blocks are raw APM/HFS, not a compressed UDIF container.
-    NSURL *content=[job URLByAppendingPathComponent:@"Content"],*output=[job URLByAppendingPathComponent:@"Setup.dmg"];
+    // This disc is attached to the guest as an ATAPI CD-ROM (ide-cd), which
+    // expects ISO9660 structure to consider the medium readable at all; an
+    // HFS-only image (no -iso) mounts fine when opened directly on the host
+    // but is reported as unreadable by the guest. With -iso, makehybrid always
+    // appends .iso to the given base name itself (even one that already ends
+    // in .dmg), rather than reusing that exact -o path as HFS-only mode does;
+    // pass an extensionless base and reference the actual <base>.iso result.
+    NSURL *content=[job URLByAppendingPathComponent:@"Content"],*base=[job URLByAppendingPathComponent:@"Setup"],
+        *output=[job URLByAppendingPathComponent:@"Setup.iso"];
     if(![fm createDirectoryAtURL:content withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:error])return nil;
     if(![policy writeToURL:[content URLByAppendingPathComponent:@"VirtualIntelMac.plist"] error:error])return nil;
     NSURL *log=[job URLByAppendingPathComponent:@"Media.log"];
     if(![fm createFileAtPath:log.path contents:nil attributes:@{NSFilePosixPermissions:@0600}]){SetupFailure(error,@"The automatic setup disc could not be prepared.");return nil;}
     NSFileHandle *handle=[NSFileHandle fileHandleForWritingToURL:log error:error];if(!handle)return nil;
     NSTask *task=[NSTask new];task.executableURL=[NSURL fileURLWithPath:@"/usr/bin/hdiutil"];
-    task.arguments=@[@"makehybrid",@"-hfs",@"-hfs-volume-name",@"VIM Setup",@"-o",output.path,content.path];
+    task.arguments=@[@"makehybrid",@"-hfs",@"-iso",@"-hfs-volume-name",@"VIM Setup",@"-o",base.path,content.path];
     task.standardInput=NSFileHandle.fileHandleWithNullDevice;task.standardOutput=handle;task.standardError=handle;
     BOOL launched=[task launchAndReturnError:error];if(launched)[task waitUntilExit];[handle closeFile];
     if(!launched||task.terminationStatus){SetupFailure(error,@"The automatic setup disc could not be prepared. Its diagnostic files were retained in this Mac’s State folder.");return nil;}
