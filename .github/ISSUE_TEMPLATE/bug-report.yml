@@ -14,9 +14,9 @@ body:
     attributes:
       label: To reproduce
       placeholder: |
-        "1. Open '...'
+        1. Open '...'
         2. Click on '...'
-        3. See error"
+        3. See error
   - type: textarea
     id: expected
     attributes:
@@ -32,9 +32,9 @@ body:
     attributes:
       label: Guest Info
       placeholder: |
-        "- OS: Mac OS X 10.6.8"
-        "- RAM: 4GB"
-        "- CPU Cores: 2 Cores"
+        - OS: Mac OS X 10.6.8
+        - RAM: 4GB
+        - CPU Cores: 2 Cores
     validations:
       required: true
   - type: textarea
@@ -42,11 +42,11 @@ body:
     attributes:
       label: Host Info
       placeholder: |
-        "- OS: macOS 27.3 Beta (26C5035r)
+        - OS: macOS 27.3 Beta (26C5035r)
         - Machine: MacBook Pro M5 Pro (15 core CPU)
         - RAM: 24GB
         - CPU: M5 Pro (15 core CPU)
-        - GPU: Integrated"
+        - GPU: Integrated
     validations:
       required: true
   - type: textarea
@@ -54,4 +54,3 @@ body:
     attributes:
       label: Diagnostics
       description: "To get diagnostics, go to *VirtualIntelMac -> Settings -> Diagnostics*. Then drag the exported diagnostics here."
-      placeholder: ""
