@@ -125,8 +125,13 @@ subjectKeyIdentifier = hash
                     "-keyout", str(key), "-out", str(cert)], check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     key.chmod(0o600)
+    # security import only verifies archives protected the legacy SHA-1/3DES
+    # way. OpenSSL 3 and later default to PBKDF2-SHA256, which macOS rejects as
+    # "MAC verification failed"; LibreSSL and OpenSSL both accept these flags.
     subprocess.run(["openssl", "pkcs12", "-export", "-inkey", str(key),
                     "-in", str(cert), "-name", name, "-out", str(archive),
+                    "-macalg", "sha1", "-certpbe", "PBE-SHA1-3DES",
+                    "-keypbe", "PBE-SHA1-3DES",
                     "-passout", "env:VIM_KEY_EXPORT_PASSWORD"], check=True, env=environment)
     subprocess.run(["security", "import", str(archive), "-k", keychain,
                     "-P", environment["VIM_KEY_EXPORT_PASSWORD"],
