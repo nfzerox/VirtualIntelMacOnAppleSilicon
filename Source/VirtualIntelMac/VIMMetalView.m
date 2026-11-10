@@ -90,6 +90,14 @@
 @property CFRunLoopSourceRef eventTapSource;
 @property CGFloat wheelRemainderX;
 @property CGFloat wheelRemainderY;
+// The real NSCursor always tracks the host's own pointer position, which in
+// relative mode has no relation to the guest's actual (delta-accumulated)
+// cursor position - so it stays hidden there (see -effectiveCursor) and this
+// sprite, independently positioned, stands in for it instead.
+@property NSImage *guestCursorImage;
+@property NSPoint guestCursorHotspotPoints;
+@property NSImageView *relativeCursorView;
+@property NSPoint relativeCursorPoint;
 - (void)routeCapturedKey:(NSEvent *)event;
 - (void)cancelPendingSurface;
 - (void)drainPendingSurface;
@@ -329,6 +337,10 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
     return self;
 }
 - (void)dealloc {
+    // Never leave the real Mac's own pointer decoupled from its hardware -
+    // that would strand the person's mouse system-wide, well outside this
+    // view/VM, if the window closed while relative mode was still active.
+    if(_relativeMouseMode)CGAssociateMouseAndMouseCursorPosition(true);
     [self cancelPendingSurface];
     if(self.keyMonitor)[NSEvent removeMonitor:self.keyMonitor];
     if(self.focusObserver)[NSNotificationCenter.defaultCenter removeObserver:self.focusObserver];
@@ -357,12 +369,26 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
     [self refreshNativeCursor];
 }
 - (void)releaseInputCapture {
+    // Also called on focus loss (see the NSWindowDidResignKeyNotification
+    // observer below): leaving relative mode on while some other app is
+    // frontmost would strand the real pointer there too, decoupled from the
+    // hardware well outside this VM's window.
+    self.relativeMouseMode=NO;
     self.inputCaptured=NO;[self releasePressedKeys];
     self.wheelRemainderX=0;self.wheelRemainderY=0;
     if(self.eventTap)CGEventTapEnable(self.eventTap,false);
     [self refreshNativeCursor];
 }
 - (void)routeCapturedKey:(NSEvent *)event {
+    // The capture tap intercepts every keyDown/keyUp system-wide while
+    // captured, including this app's own menu key equivalents - an ordinary
+    // keystroke-based shortcut (unlike the modifier-only combo just below)
+    // never reaches AppKit's menu matching at all, it would just get
+    // forwarded to the guest as a regular keypress. Handle it here instead.
+    if(event.type==NSEventTypeKeyDown&&(event.modifierFlags&NSEventModifierFlagDeviceIndependentFlagsMask)==(NSEventModifierFlagCommand|NSEventModifierFlagShift)&&
+       [event.charactersIgnoringModifiers.lowercaseString isEqualToString:@"m"]) {
+        self.relativeMouseMode=!self.relativeMouseMode;return;
+    }
     if((event.modifierFlags&(NSEventModifierFlagCommand|NSEventModifierFlagOption))==(NSEventModifierFlagCommand|NSEventModifierFlagOption)) {
         [self releaseInputCapture];
         // Releasing only the tap leaves AppKit's first responder forwarding
@@ -445,13 +471,58 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
     _softwareCursor=value;
     [self refreshNativeCursor];
 }
+- (void)setRelativeMouseMode:(BOOL)value {
+    if(_relativeMouseMode==value)return;
+    _relativeMouseMode=value;
+    if(value){CGRect frame=self.presentationLayer.frame;self.relativeCursorPoint=NSMakePoint(NSMidX(frame),NSMidY(frame));}
+    // Decouple the real cursor from physical mouse movement instead of
+    // clamping it at the window edge: it just sits still wherever it already
+    // was (invisible - see -effectiveCursor) while NSEvent's deltaX/deltaY
+    // keep reporting raw hardware motion regardless of screen edges, exactly
+    // like any other game's captured mouse-look. Restore normal coupling
+    // when leaving relative mode so the pointer can be seen/used again.
+    CGAssociateMouseAndMouseCursorPosition(!value);
+    [self refreshNativeCursor];[self updateRelativeCursorView];
+    if(self.relativeMouseModeObserver)self.relativeMouseModeObserver();
+}
+- (void)updateRelativeCursorView {
+    if(!self.relativeMouseMode||!self.guestCursorVisible||!self.guestCursorImage){self.relativeCursorView.hidden=YES;return;}
+    if(!self.relativeCursorView) {
+        self.relativeCursorView=[[NSImageView alloc] initWithFrame:NSZeroRect];
+        self.relativeCursorView.imageScaling=NSImageScaleNone;self.relativeCursorView.editable=NO;
+        [self addSubview:self.relativeCursorView];
+    }
+    self.relativeCursorView.image=self.guestCursorImage;
+    NSSize size=self.guestCursorImage.size;
+    // The hotspot is measured down from the image's top edge; this view's
+    // frame origin is its bottom-left corner in the (non-flipped) superview.
+    self.relativeCursorView.frame=NSMakeRect(self.relativeCursorPoint.x-self.guestCursorHotspotPoints.x,
+        self.relativeCursorPoint.y-(size.height-self.guestCursorHotspotPoints.y),size.width,size.height);
+    self.relativeCursorView.hidden=NO;
+}
+- (void)setGuestCursorTrackedPosition:(NSPoint)guestPixelPosition {
+    // drawableSize is the guest's current framebuffer resolution in pixels
+    // (the same quantity -updateGuestCursorScale divides by to convert the
+    // cursor glyph's own pixel size to view points); frame is where that
+    // framebuffer is actually presented within this view, in points.
+    CGSize pixels=self.presentationLayer.drawableSize;CGRect frame=self.presentationLayer.frame;
+    if(pixels.width<=0||pixels.height<=0||frame.size.width<=0||frame.size.height<=0)return;
+    CGFloat normalizedX=MAX(0,MIN(1,guestPixelPosition.x/pixels.width)),
+            normalizedY=MAX(0,MIN(1,guestPixelPosition.y/pixels.height));
+    // This view isn't flipped (Y increases upward); the guest's Y increases
+    // downward from the top, so it inverts here - the same flip
+    // -mouseMoved: already does, just in the opposite direction.
+    self.relativeCursorPoint=NSMakePoint(frame.origin.x+normalizedX*frame.size.width,
+        frame.origin.y+(1-normalizedY)*frame.size.height);
+    if(self.relativeMouseMode)[self updateRelativeCursorView];
+}
 - (BOOL)acceptsFirstMouse:(NSEvent *)event { return YES; }
 - (void)setGuestCursorVisible:(BOOL)visible {
     // QEMU also reports visibility while the mouse moves. Reinstalling the
     // identical cursor invalidates AppKit's cursor rectangles and registers
     // its image with WindowServer on every report, even during window drags.
     if(_guestCursorVisible==visible)return;
-    self.cursorVisibilityUpdates++;_guestCursorVisible=visible;[self refreshNativeCursor];
+    self.cursorVisibilityUpdates++;_guestCursorVisible=visible;[self refreshNativeCursor];[self updateRelativeCursorView];
 }
 - (void)setGuestCursorPixels:(NSData *)pixels width:(NSUInteger)width height:(NSUInteger)height hotspot:(NSPoint)hotspot {
     if(!width||!height||width>256||height>256||pixels.length!=width*height*4||!isfinite(hotspot.x)||!isfinite(hotspot.y)||hotspot.x<0||hotspot.y<0||hotspot.x>=width||hotspot.y>=height)return;
@@ -475,7 +546,9 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
         kCGBitmapByteOrder32Little|(CGBitmapInfo)kCGImageAlphaPremultipliedFirst,provider,NULL,NO,kCGRenderingIntentDefault);
     if(cg) {
         NSImage *image=[[NSImage alloc] initWithCGImage:cg size:NSMakeSize(width/scale,height/scale)];
-        self.guestCursor=[[NSCursor alloc] initWithImage:image hotSpot:NSMakePoint(hotspot.x/scale,hotspot.y/scale)];
+        NSPoint hotspotPoints=NSMakePoint(hotspot.x/scale,hotspot.y/scale);
+        self.guestCursor=[[NSCursor alloc] initWithImage:image hotSpot:hotspotPoints];
+        self.guestCursorImage=image;self.guestCursorHotspotPoints=hotspotPoints;[self updateRelativeCursorView];
         CGImageRelease(cg);[self refreshNativeCursor];
     }
     CGColorSpaceRelease(color);CGDataProviderRelease(provider);
@@ -487,7 +560,13 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
     // overlay a second host cursor while the installer view owns focus.
     BOOL hideSoftware=self.softwareCursor&&self.window.isKeyWindow&&
         (self.inputCaptured||self.ownsResponderFocus);
-    if(hideSoftware||(self.inputCaptured&&!self.guestCursorVisible)) {
+    // The glyph this app shows always tracks the host's own mouse position,
+    // correct only while that position IS the guest's cursor position
+    // (absolute/tablet mode). In relative mode the guest's actual cursor is
+    // wherever accumulated deltas have left it - no relation to where the
+    // host pointer is on screen - so showing it here would just mislead
+    // about where a click will actually land. Show nothing instead.
+    if(self.relativeMouseMode||hideSoftware||(self.inputCaptured&&!self.guestCursorVisible)) {
         if(!self.hiddenCursor)self.hiddenCursor=[[NSCursor alloc] initWithImage:[[NSImage alloc] initWithSize:NSMakeSize(1,1)] hotSpot:NSZeroPoint];
         cursor=self.hiddenCursor;
     }return cursor;
@@ -618,6 +697,22 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
 }
 - (void)mouseMoved:(NSEvent *)event {
     if(!self.window.isKeyWindow)return;
+    if(self.relativeMouseMode) {
+        // deltaX/deltaY are already the host's raw per-event motion, exactly
+        // what a real relative mouse's HID reports would carry - no need to
+        // derive it from successive absolute positions (which would also
+        // break at the window edge, where the tablet's clamped position
+        // stops moving but the physical mouse keeps going).
+        int dx=(int)MAX(-127,MIN(127,event.deltaX)),dy=(int)MAX(-127,MIN(127,event.deltaY));
+        // Only the deltas are sent here; the sprite's own position comes
+        // from -setGuestCursorTrackedPosition:, the guest's own authoritative
+        // tracked position, not a host-side estimate accumulated from these
+        // same deltas (which drifted from the guest's real, accelerated
+        // position the more the mouse moved).
+        if(dx||dy)[self emit:@[@{@"type":@"rel",@"data":@{@"axis":@"x",@"value":@(dx)}},
+                               @{@"type":@"rel",@"data":@{@"axis":@"y",@"value":@(dy)}}]];
+        return;
+    }
     NSPoint p=[self convertPoint:event.locationInWindow fromView:nil];CGRect frame=self.presentationLayer.frame;
     if(frame.size.width<=0||frame.size.height<=0)return;
     int x=(int)(MAX(0,MIN(1,(p.x-frame.origin.x)/frame.size.width))*32767);

@@ -27,6 +27,12 @@ typedef struct VIMDisplay {
     size_t input_used;
     QEMUCursor *cursor;
     bool cursor_dirty, visibility_dirty, cursor_visible;
+    /* The guest driver's own tracked position (SVGA_REG_CURSOR_X/Y, written
+     * through dpy_mouse_set) - authoritative, already past whatever
+     * acceleration curve the guest OS applied. Forwarded alongside
+     * visibility so the app can show a cursor that actually matches where a
+     * click will land, instead of estimating position from raw host input. */
+    int cursor_x, cursor_y;
     uint8_t *output;
     size_t output_size, output_sent;
     /* Explicit numeric diagnosis only; no pixel capture or normal logging. */
@@ -96,6 +102,8 @@ static void vim_mouse_set(DisplayChangeListener *dcl, int x, int y, bool on)
 {
     VIMDisplay *s = container_of(dcl, VIMDisplay, dcl);
     s->cursor_visible = on;
+    s->cursor_x = x;
+    s->cursor_y = y;
     s->visibility_dirty = true;
     vim_kick(s);
 }
@@ -207,8 +215,11 @@ static void vim_refresh_work_inner(DisplayChangeListener *dcl)
         }
     }
     if (s->visibility_dirty) {
+        /* height/stride repurposed to carry the guest's own tracked position
+         * alongside visibility - see the cursor_x/cursor_y comment above. */
         AppleGFXAppMessage state = {.magic = APPLE_GFX_APP_MAGIC,
-            .operation = APPLE_GFX_APP_CURSOR_STATE, .width = s->cursor_visible};
+            .operation = APPLE_GFX_APP_CURSOR_STATE, .width = s->cursor_visible,
+            .height = (uint32_t)s->cursor_x, .stride = (uint32_t)s->cursor_y};
         vim_send(s, &state, NULL, 0);
         s->visibility_dirty = false;
         if (s->output) {

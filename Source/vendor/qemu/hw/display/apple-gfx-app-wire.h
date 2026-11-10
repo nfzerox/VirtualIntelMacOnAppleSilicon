@@ -18,7 +18,10 @@ enum { APPLE_GFX_APP_HELLO = 1, APPLE_GFX_APP_FRAME = 2,
  * ACK still uses the frame sequence, not its power epoch. Legacy FRAME has
  * reserved=0 and is accepted only before the first power transition. */
 /* SET_MODE: width/height are requested backing pixels; remaining fields zero. */
-/* CURSOR_STATE: width is visibility (0/1), all other fields zero.
+/* CURSOR_STATE: width is visibility (0/1); height/stride are the guest's own
+ * tracked cursor position (x/y, in current-mode guest pixels - the exact
+ * SVGA_REG_CURSOR_X/Y value the guest driver set, already past whatever
+ * pointer acceleration the guest OS applied); reserved is zero.
  * CURSOR_GLYPH: width/height <=256, stride packs hotspot x(low16)/y(high16),
  * followed by width*height BGRA bytes. Neither cursor event expects an ACK. */
 typedef struct {
