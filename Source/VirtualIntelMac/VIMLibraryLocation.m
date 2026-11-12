@@ -54,11 +54,33 @@ static BOOL PrepareRoot(NSURL *root,NSURL *previousRoot,NSError **error) {
     NSMutableDictionary *moves=record?[[record objectForKey:@"Moves"] mutableCopy]:[NSMutableDictionary new];
     if(!moves)return finish(LocationError(error,1,@"The library’s layout record is unreadable. Its files have not been removed."));
     if(!record) {
-        for(NSURL *item in [fm contentsOfDirectoryAtURL:previousRoot includingPropertiesForKeys:nil options:0 error:nil]?:@[])
-            if([item.pathExtension isEqual:@"vintelmac"]&&![item.URLByDeletingLastPathComponent.path isEqual:machines.path])moves[item.path]=[machines URLByAppendingPathComponent:item.lastPathComponent].path;
+        // A legacy (pre-Layout2) root keeps .vintelmac packages loose at its top
+        // level; an already-organized Layout2 root keeps them under Machines/.
+        // Moving an existing library to a new location must find both.
+        NSURL *previousMachines=[previousRoot URLByAppendingPathComponent:@"Machines" isDirectory:YES];
+        for(NSURL *source in @[previousRoot,previousMachines]) {
+            if(![source.path isEqual:previousRoot.path]&&![fm fileExistsAtPath:source.path])continue;
+            for(NSURL *item in [fm contentsOfDirectoryAtURL:source includingPropertiesForKeys:nil options:0 error:nil]?:@[])
+                if([item.pathExtension isEqual:@"vintelmac"]&&![item.URLByDeletingLastPathComponent.path isEqual:machines.path])moves[item.path]=[machines URLByAppendingPathComponent:item.lastPathComponent].path;
+        }
         NSURL *downloads=[previousRoot URLByAppendingPathComponent:@"Downloads"],*preparation=[downloads URLByAppendingPathComponent:@"Preparation"];
         if([fm fileExistsAtPath:preparation.path])moves[preparation.path]=[root URLByAppendingPathComponent:@"Installers"].path;
-        if(![downloads.path isEqual:[root URLByAppendingPathComponent:@"Downloads"].path]&&[fm fileExistsAtPath:downloads.path])moves[downloads.path]=[root URLByAppendingPathComponent:@"Downloads"].path;
+        // The default library's Downloads folder always exists (prepareLayout
+        // recreates it on every launch even when an external library is in
+        // use), so plain existence is not evidence there is anything to move -
+        // require real content, or an already-relocated Downloads looks like a
+        // duplicate of the destination's.
+        if(![downloads.path isEqual:[root URLByAppendingPathComponent:@"Downloads"].path]&&
+           [fm contentsOfDirectoryAtURL:downloads includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:nil].count>0)
+            moves[downloads.path]=[root URLByAppendingPathComponent:@"Downloads"].path;
+        // A Layout2 root's own top-level Installers folder (downloaded install
+        // media, potentially many GB) is distinct from the legacy
+        // Downloads/Preparation case above and was otherwise never migrated -
+        // same existence-vs-content caveat as Downloads applies.
+        NSURL *installers=[previousRoot URLByAppendingPathComponent:@"Installers"];
+        if(![installers.path isEqual:[root URLByAppendingPathComponent:@"Installers"].path]&&
+           [fm contentsOfDirectoryAtURL:installers includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:nil].count>0)
+            moves[installers.path]=[root URLByAppendingPathComponent:@"Installers"].path;
     }
     // Longest prefix first is not sufficient for physical moves: move nested
     // Preparation before its old Downloads parent. Persist the exact plan.
@@ -209,7 +231,10 @@ static BOOL PrepareRoot(NSURL *root,NSURL *previousRoot,NSError **error) {
     NSURL *probe = [URL URLByAppendingPathComponent:[@".vim-write-check-" stringByAppendingString:NSUUID.UUID.UUIDString]];
     if (![[NSData data] writeToURL:probe options:NSDataWritingWithoutOverwriting error:error]) return NO;
     if (![NSFileManager.defaultManager removeItemAtURL:probe error:error]) return NO;
-    if(!PrepareRoot(URL,URL,error))return NO;
+    // Capture the real current root before touching VIMLibraryPath - PrepareRoot
+    // needs to know where the existing machines actually are, not the new folder.
+    NSURL *previousRoot=self.rootURL;
+    if(!PrepareRoot(URL,previousRoot,error))return NO;
     [NSUserDefaults.standardUserDefaults setObject:URL.path forKey:@"VIMLibraryPath"];
     return [self prepareLayout:error];
 }
