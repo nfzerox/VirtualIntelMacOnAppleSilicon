@@ -17,6 +17,7 @@
 #import "VIMGuestProgress.h"
 #import "VIMHostSupport.h"
 #import "VIMMachineSettings.h"
+#import "VIMDiskMaintenance.h"
 #import "VIMPlayButton.h"
 #import "VIMAlerts.h"
 #import "VIMDiscImage.h"
@@ -494,6 +495,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     return [self requestMachine:machine operation:VIMBootRepair error:error];
 }
 + (BOOL)performBootOperation:(VIMBootOperation)operation machine:(VIMMachine *)machine error:(NSError **)error {
+    if([VIMDiskMaintenance isMaintainingPackage:machine.URL]) {
+        if(error)*error=VIMSessionError(@"Wait for this Mac’s disk maintenance to finish before starting it.");return NO;
+    }
     switch(operation) {
         case VIMBootStart:return [self openMachineAfterHostCheck:machine error:error];
         case VIMBootPrepare:return [self prepareMachineAfterHostCheck:machine error:error];

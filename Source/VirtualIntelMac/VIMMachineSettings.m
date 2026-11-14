@@ -7,6 +7,8 @@
 #import "VIMSMBService.h"
 #import "VIMHostAudio.h"
 #import "VIMAlerts.h"
+#import "VIMDiskMaintenance.h"
+#import "VIMHostSupport.h"
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -88,6 +90,8 @@
 @property BOOL sizesReady;
 @property NSTimer *descriptionTimer;
 @property VIMConfigurationSidebar *sidebar;
+@property NSWindow *maintenanceWindow;
+@property VIMInstallationActivity *diskActivity;
 @end
 
 static NSTextField *VIMText(NSString *text,BOOL heading) {
@@ -98,6 +102,13 @@ static NSTextField *VIMText(NSString *text,BOOL heading) {
 static NSStackView *VIMColumn(NSArray<NSView *> *views) {
     NSStackView *stack=[NSStackView stackViewWithViews:views];stack.orientation=NSUserInterfaceLayoutOrientationVertical;
     stack.alignment=NSLayoutAttributeLeading;stack.spacing=16;return stack;
+}
+static NSImageView *VIMDiskSymbol(CGFloat size) {
+    NSImageView *icon=[NSImageView imageViewWithImage:[NSImage imageWithSystemSymbolName:@"internaldrive" accessibilityDescription:nil]];
+    icon.symbolConfiguration=[NSImageSymbolConfiguration configurationWithPointSize:size weight:NSFontWeightRegular];
+    icon.contentTintColor=NSColor.secondaryLabelColor;
+    [icon.widthAnchor constraintEqualToConstant:size+8].active=YES;
+    [icon.heightAnchor constraintEqualToConstant:size+8].active=YES;return icon;
 }
 static NSScrollView *VIMSharingScrollPane(NSView *pane) {
     NSScrollView *scroll=[NSScrollView new];scroll.hasVerticalScroller=YES;scroll.autohidesScrollers=YES;
@@ -189,14 +200,6 @@ static void VIMAlignFormBaselines(NSView *view) {
             if(self.window.visible&&[self.section isEqual:@"General"]&&![self.window.firstResponder isKindOfClass:NSTextView.class])[self render];
         });
     });
-}
-- (NSString *)storageSummary {
-    uint64_t capacity=self.machine.diskCapacityBytes;
-    NSString *disk=self.machine.configuration[@"Disk"];
-    NSNumber *allocated=nil;
-    if(disk.length)[[self.machine.URL URLByAppendingPathComponent:disk] getResourceValue:&allocated forKey:NSURLTotalFileAllocatedSizeKey error:nil];
-    NSString *size=allocated?[NSByteCountFormatter stringFromByteCount:allocated.longLongValue countStyle:NSByteCountFormatterCountStyleFile]:@"Unavailable";
-    return [NSString stringWithFormat:@"Disk capacity: %@\nDisk file space on this Mac: %@",capacity?[NSString stringWithFormat:@"%g GB",capacity/(double)(1ULL<<30)]:@"Not recorded",size];
 }
 - (NSArray *)toolbarDefaultItemIdentifiers:(NSToolbar *)toolbar {return @[@"General",@"Hardware",@"Sharing",NSToolbarFlexibleSpaceItemIdentifier];}
 - (NSArray *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar {return [self toolbarDefaultItemIdentifiers:toolbar];}
@@ -403,9 +406,103 @@ static void VIMAlignFormBaselines(NSView *view) {
         return VIMColumn(@[grid,VIMText(@"Connect ISO, CDR, Toast or unencrypted DMG images. Disconnect a drive’s current image before replacing it.",NO)]);
     }
     NSString *file=[self.machine.configuration[@"Disk"] lastPathComponent]?:@"System.qcow2";
-    NSPopUpButton *source=[NSPopUpButton new];[source addItemWithTitle:file];[source.widthAnchor constraintEqualToConstant:250].active=YES;
-    NSGridView *grid=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:@"Source:"],source]]];grid.columnSpacing=12;
-    return VIMColumn(@[grid,VIMText([self storageSummary],NO),[self button:@"Show in Finder" action:@selector(reveal:)],VIMText(@"Disk capacity is set when the Mac is created. The disk grows on demand up to that capacity.",NO)]);
+    NSPopUpButton *source=[NSPopUpButton new];[source addItemWithTitle:file];source.toolTip=file;
+    [source.widthAnchor constraintEqualToConstant:250].active=YES;
+    uint64_t capacity=self.machine.diskCapacityBytes;NSNumber *allocated=nil;
+    [[self.machine.URL URLByAppendingPathComponent:self.machine.configuration[@"Disk"]] getResourceValue:&allocated forKey:NSURLTotalFileAllocatedSizeKey error:nil];
+    NSString *size=allocated?[NSByteCountFormatter stringFromByteCount:allocated.longLongValue countStyle:NSByteCountFormatterCountStyleFile]:@"Unavailable";
+    NSButton *reclaim=[self button:@"Reclaim Space…" action:@selector(maintainDisk:)],*compress=[self button:@"Compress…" action:@selector(maintainDisk:)];compress.tag=1;
+    BOOL running=[VIMSession isRunningMachine:self.machine];reclaim.enabled=compress.enabled=!running&&![VIMDiskMaintenance hasActiveOperation];
+    reclaim.toolTip=@"Rebuild the disk image to recover unused storage.";
+    compress.toolTip=@"Reclaim unused storage and compress existing data.";
+    NSStackView *tools=[NSStackView stackViewWithViews:@[reclaim,compress]];tools.spacing=8;
+    NSGridView *grid=[NSGridView gridViewWithViews:@[
+        @[[NSTextField labelWithString:@"Source:"],source],
+        @[NSGridCell.emptyContentView,[self button:@"Show in Finder" action:@selector(reveal:)]],
+        @[[NSTextField labelWithString:@"Capacity:"],[NSTextField labelWithString:capacity?[NSString stringWithFormat:@"%g GB",capacity/(double)(1ULL<<30)]:@"Not recorded"]],
+        @[[NSTextField labelWithString:@"Space on this Mac:"],[NSTextField labelWithString:size]],
+        @[[NSTextField labelWithString:@"Maintenance:"],tools]]];
+    grid.columnSpacing=12;grid.rowSpacing=16;
+    [grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;[grid columnAtIndex:1].xPlacement=NSGridCellPlacementLeading;
+    return VIMColumn(@[grid,
+        VIMText(@"Reclaim Space recovers unused image storage. Compress also compresses existing data; new writes stay uncompressed.",NO),
+        VIMText(running?@"Shut down this Mac to use these tools. Capacity stays unchanged. Deleted files may still occupy space inside the image.":
+            @"Capacity stays unchanged. Deleted files may still occupy space inside the image.",NO)]);
+}
+- (void)maintainDisk:(NSButton *)sender {
+    if(self.maintenanceWindow||[VIMDiskMaintenance hasActiveOperation])return;
+    if([VIMSession isRunningMachine:self.machine]){self.feedback.stringValue=@"Shut down this Mac before maintaining its disk.";return;}
+    BOOL compressed=sender.tag==1;
+    NSAlert *alert=[NSAlert new];alert.messageText=compressed?@"Compress this Mac’s disk?":@"Reclaim space from this Mac’s disk?";
+    alert.informativeText=[NSString stringWithFormat:compressed?
+        @"Reclaim unused image storage and compress existing data for “%@”. New writes stay uncompressed.\n\nThis needs temporary free space. Wait for the operation to finish and keep the drive connected.":
+        @"Recover unused image storage for “%@”. Deleted files may still occupy space inside the image.\n\nThis needs temporary free space. Wait for the operation to finish and keep the drive connected.",self.machine.name];
+    [alert addButtonWithTitle:compressed?@"Compress":@"Reclaim Space"];[alert addButtonWithTitle:@"Cancel"];
+    VIMPresentAlert(alert,self.window,^(NSModalResponse response){
+        if(response==NSAlertFirstButtonReturn)[self runDiskMaintenance:compressed];
+    });
+}
+- (void)runDiskMaintenance:(BOOL)compressed {
+    if(self.maintenanceWindow||[VIMDiskMaintenance hasActiveOperation])return;
+    NSURL *image=[NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"Runtime/bin/qemu-img"];
+    NSString *root=VIMDevelopmentSourceRoot();
+    if(root.length)image=[[NSURL fileURLWithPath:root] URLByAppendingPathComponent:@"Build/qemu/build-arm64-pvg/qemu-img"];
+    NSWindow *window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,440,208) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+    window.title=self.machine.name;window.releasedWhenClosed=NO;
+    window.tabbingMode=NSWindowTabbingModeDisallowed;
+    NSTextField *title=VIMText(compressed?@"Compressing Disk":@"Reclaiming Disk Space",YES);title.font=[NSFont systemFontOfSize:15 weight:NSFontWeightSemibold];
+    NSTextField *machine=VIMText(self.machine.name,NO);machine.lineBreakMode=NSLineBreakByTruncatingMiddle;machine.maximumNumberOfLines=1;machine.toolTip=self.machine.name;
+    NSStackView *identity=VIMColumn(@[title,machine]);identity.spacing=4;
+    NSStackView *header=[NSStackView stackViewWithViews:@[VIMDiskSymbol(28),identity]];header.spacing=14;header.alignment=NSLayoutAttributeCenterY;
+    NSTextField *status=VIMText(@"Checking disk…",NO);status.textColor=NSColor.labelColor;
+    NSTextField *percentage=[NSTextField labelWithString:@""];percentage.font=[NSFont monospacedDigitSystemFontOfSize:12 weight:NSFontWeightRegular];
+    percentage.textColor=NSColor.secondaryLabelColor;percentage.alignment=NSTextAlignmentRight;
+    [percentage.widthAnchor constraintEqualToConstant:44].active=YES;
+    NSStackView *statusRow=[NSStackView stackViewWithViews:@[status,percentage]];statusRow.spacing=12;statusRow.alignment=NSLayoutAttributeFirstBaseline;
+    [status.widthAnchor constraintEqualToAnchor:statusRow.widthAnchor constant:-56].active=YES;
+    NSTextField *explanation=VIMText(@"Keep the drive connected. This window closes when the operation finishes.",NO);explanation.font=[NSFont systemFontOfSize:11];
+    NSProgressIndicator *progress=[NSProgressIndicator new];progress.style=NSProgressIndicatorStyleBar;progress.indeterminate=YES;
+    progress.minValue=0;progress.maxValue=1;[progress startAnimation:nil];
+    NSStackView *activity=VIMColumn(@[statusRow,progress]);activity.spacing=8;
+    NSStackView *content=VIMColumn(@[header,activity,explanation]);content.spacing=20;content.translatesAutoresizingMaskIntoConstraints=NO;
+    [window.contentView addSubview:content];
+    [NSLayoutConstraint activateConstraints:@[[content.leadingAnchor constraintEqualToAnchor:window.contentView.leadingAnchor constant:24],
+        [content.trailingAnchor constraintEqualToAnchor:window.contentView.trailingAnchor constant:-24],
+        [content.topAnchor constraintEqualToAnchor:window.contentView.topAnchor constant:24],
+        [content.bottomAnchor constraintEqualToAnchor:window.contentView.bottomAnchor constant:-24],
+        [header.widthAnchor constraintEqualToAnchor:content.widthAnchor],
+        [identity.widthAnchor constraintEqualToAnchor:header.widthAnchor constant:-50],
+        [activity.widthAnchor constraintEqualToAnchor:content.widthAnchor],
+        [statusRow.widthAnchor constraintEqualToAnchor:activity.widthAnchor],
+        [progress.widthAnchor constraintEqualToAnchor:activity.widthAnchor],
+        [explanation.widthAnchor constraintEqualToAnchor:content.widthAnchor]]];
+    self.maintenanceWindow=window;
+    __block NSDictionary *result=nil;__block NSError *failure=nil;NSError *error=nil;
+    BOOL started=[VIMDiskMaintenance startForPackage:self.machine.URL identifier:self.machine.configuration[@"Identifier"] qemuImage:image compressed:compressed
+        progress:^(NSString *phase,double fraction){
+            status.stringValue=phase;percentage.stringValue=fraction<0?@"":[NSString stringWithFormat:@"%.0f%%",floor(fraction*100)];
+            progress.accessibilityLabel=phase;
+            progress.indeterminate=fraction<0;
+            if(fraction<0)[progress startAnimation:nil];else {[progress stopAnimation:nil];progress.doubleValue=fraction;}
+        } completion:^(NSDictionary *value,NSError *issue){result=value;failure=issue;[NSApp stopModal];} error:&error];
+    if(!started){self.maintenanceWindow=nil;VIMPresentError(error,self.window);return;}
+    self.diskActivity=[VIMInstallationActivity beginWithReason:compressed?@"Compressing a virtual Mac disk":@"Reclaiming virtual Mac disk space"];
+    [window setFrameOrigin:NSMakePoint(NSMidX(self.window.frame)-NSWidth(window.frame)/2,NSMidY(self.window.frame)-NSHeight(window.frame)/2)];
+    [NSApp runModalForWindow:window];[window orderOut:nil];self.maintenanceWindow=nil;self.diskActivity=nil;
+    [self readStorageSizes];[self render];
+    [NSNotificationCenter.defaultCenter postNotificationName:@"VIMLibraryChanged" object:nil];
+    if(self.completion)self.completion();
+    if(failure){VIMPresentError(failure,self.window);return;}
+    NSAlert *finished=[NSAlert new];finished.messageText=[result[@"Changed"] boolValue]?(compressed?@"Disk compressed":@"Space reclaimed"):@"No additional space to reclaim";
+    if([result[@"Changed"] boolValue]) {
+        NSString *(^size)(NSNumber *)=^NSString *(NSNumber *bytes){return [NSByteCountFormatter stringFromByteCount:bytes.longLongValue countStyle:NSByteCountFormatterCountStyleFile];};
+        NSNumber *saved=@([result[@"BeforeBytes"] unsignedLongLongValue]-[result[@"AfterBytes"] unsignedLongLongValue]);
+        finished.informativeText=[NSString stringWithFormat:@"Saved %@ for “%@”. The virtual disk’s capacity is unchanged.",size(saved),self.machine.name];
+        NSGridView *summary=[NSGridView gridViewWithViews:@[@[VIMText(@"Before",NO),VIMText(size(result[@"BeforeBytes"]),NO)],
+            @[VIMText(@"After",NO),VIMText(size(result[@"AfterBytes"]),YES)]]];summary.columnSpacing=24;summary.rowSpacing=8;
+        [summary columnAtIndex:1].xPlacement=NSGridCellPlacementTrailing;finished.accessoryView=summary;
+    } else finished.informativeText=[NSString stringWithFormat:@"“%@” already uses the same or less storage. Its original disk was kept.",self.machine.name];
+    [finished addButtonWithTitle:@"OK"];VIMPresentAlert(finished,self.window,nil);
 }
 - (NSView *)sharingContentForHost:(BOOL)host {
     BOOL files=self.hardwareIndex==0;
@@ -629,6 +726,7 @@ static void VIMAlignFormBaselines(NSView *view) {
     }];
 }
 - (void)render {
+    if(self.maintenanceWindow)return;
     // AppKit can finish laying out an outgoing table during a section switch.
     // Retire its callbacks before replacing the body; each table also owns
     // its immutable row model instead of consulting the new section's list.
@@ -815,7 +913,7 @@ static void VIMAlignFormBaselines(NSView *view) {
     [self.descriptionTimer invalidate];self.descriptionTimer=nil;
     if(self.descriptionEditor&&![self.descriptionEditor.string isEqual:self.machine.editableConfiguration[@"Description"]?:@""])[self commitSettings:@{@"Description":self.descriptionEditor.string}];
 }
-- (BOOL)windowShouldClose:(NSWindow *)sender {[sender makeFirstResponder:nil];[self saveDescription];return !self.invalidField;}
+- (BOOL)windowShouldClose:(NSWindow *)sender {if(self.maintenanceWindow)return NO;[sender makeFirstResponder:nil];[self saveDescription];return !self.invalidField;}
 - (void)reveal:(id)sender {[NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[self.machine.URL]];}
 - (void)chooseDisc:(id)sender {[VIMSession chooseOpticalMediaForMachine:self.machine window:self.window];}
 - (void)ejectDisc:(id)sender {[VIMSession ejectOpticalMediaForMachine:self.machine window:self.window];}

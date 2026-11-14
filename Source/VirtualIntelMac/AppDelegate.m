@@ -11,6 +11,7 @@
 #import "VIMMenuController.h"
 #import "VIMMachineSettings.h"
 #import "VIMDiagnostics.h"
+#import "VIMDiskMaintenance.h"
 #import "VIMUSBClient.h"
 #import "VIMNetworkClient.h"
 #include <sys/sysctl.h>
@@ -248,6 +249,7 @@
 }
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+    if([VIMDiskMaintenance hasActiveOperation])return NSTerminateCancel;
     if(self.quitConfirmationPending)return NSTerminateCancel;
     if(VIMNewMachineWindow.isCreating) {
         self.quitApproved=NO;
