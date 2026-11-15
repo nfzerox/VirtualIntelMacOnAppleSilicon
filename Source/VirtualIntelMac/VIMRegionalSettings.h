@@ -12,7 +12,6 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)preflightRequest:(nullable NSDictionary *)request agent:(VIMGuestAgent *)agent executable:(NSString *)executable
               packageURL:(NSURL *)package completion:(void (^)(NSError *_Nullable error))completion;
 + (BOOL)storeResult:(id)result requested:(NSDictionary *)request packageURL:(NSURL *)package error:(NSError **)error;
-+ (NSString *)summaryForResult:(NSDictionary *)result;
 @end
 
 NS_ASSUME_NONNULL_END

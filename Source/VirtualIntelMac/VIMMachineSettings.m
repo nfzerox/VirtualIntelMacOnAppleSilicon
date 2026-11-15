@@ -1,5 +1,4 @@
 #import "VIMLocalization.h"
-#import "VIMRegionalSettings.h"
 #import "VIMMachineSettings.h"
 #import "VIMSettingsIcon.h"
 #import "VIMMachine.h"
@@ -257,14 +256,6 @@ static void VIMAlignFormBaselines(NSView *view) {
     NSButton *reveal=[self button:VIMLocalized(@"app.show-in-finder", @"Show in Finder") action:@selector(reveal:)];
     NSStackView *location=[NSStackView stackViewWithViews:@[VIMText(VIMLocalized(@"settings.location", @"Location:"),NO),reveal]];location.spacing=12;
     NSStackView *column=VIMColumn(@[grid,divider,storage,location]);column.spacing=16;
-    NSDictionary *regional=[NSDictionary dictionaryWithContentsOfURL:[self.machine.URL URLByAppendingPathComponent:@"State/RegionalSettings.plist"]];
-    if(regional){
-        NSString *summary=[VIMRegionalSettings summaryForResult:regional];
-        if(summary.length){
-            NSTextField *label=VIMText([NSString stringWithFormat:@"%@\n%@",VIMLocalized(@"regional.initial-settings", @"Initial regional settings"),summary],NO);
-            label.toolTip=summary;[column addArrangedSubview:label];[label.widthAnchor constraintEqualToAnchor:column.widthAnchor].active=YES;
-        }
-    }
     [divider.widthAnchor constraintEqualToAnchor:column.widthAnchor].active=YES;
     [storage.widthAnchor constraintEqualToAnchor:column.widthAnchor].active=YES;
     return column;

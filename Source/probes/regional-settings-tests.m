@@ -115,11 +115,6 @@ int main(void) { @autoreleasepool {
         NSButton *accept=[NSButton new];accept.tag=1;[options finishAutomaticOptions:accept];
         Check(optionsParent.acceptedOptions,@"Advanced options cannot be accepted while the experimental feature is disabled");
         fprintf(stderr,"Advanced regional section fitting size: %.0f x %.0f\n",advanced.fittingSize.width,advanced.fittingSize.height);
-        for(NSDictionary *invalid in @[@{@"Resolved":@{@"DesktopLanguage":@1}},@{@"Resolved":@{@"LocaleIdentifier":@[]}},@{@"Resolved":@{},@"Warnings":@"not a list"}]) {
-            BOOL rejected=NO;
-            @try { rejected=[[VIMRegionalSettings summaryForResult:invalid] isEqual:@""]; } @catch(NSException *exception) { (void)exception; }
-            Check(rejected,@"A damaged regional receipt must not crash settings or display an invented result");
-        }
         NSArray *globalLanguages=CFBridgingRelease(CFPreferencesCopyValue(CFSTR("AppleLanguages"),kCFPreferencesAnyApplication,kCFPreferencesCurrentUser,kCFPreferencesAnyHost));
         NSDictionary *host=[VIMRegionalSettings hostSnapshotWithError:NULL];
         Check([host[@"Source"] isEqual:@"host"]&&[host[@"PreferredLanguages"] count], @"Host snapshot is missing ordered preferences");
@@ -160,7 +155,6 @@ int main(void) { @autoreleasepool {
             Check([clean[@"Resolved"][@"LocaleIdentifier"] isEqual:@"en_VN"]&&!clean[@"Resolved"][@"Password"]&&!clean[@"Steps"], @"Diagnostic receipt did not filter unrelated guest fields");
             NSDictionary *mapping=[clean[@"Resolved"][@"LanguageMappings"] firstObject];
             Check([mapping[@"AcceptedLanguage"] isEqual:@"en-GB"]&&!mapping[@"Password"], @"Accepted regional language mapping was lost or leaked unrelated guest data");
-            Check([[VIMRegionalSettings summaryForResult:clean] containsString:@"→"], @"Regional result summary did not explain the actual language fallback");
             NSURL *receiptURL=[machine.URL URLByAppendingPathComponent:@"State/RegionalSettings.plist"];
             NSData *receiptBefore=[NSData dataWithContentsOfURL:receiptURL];
             for(NSDictionary *badResolution in @[@{@"DesktopLanguage":@1},@{@"UserLanguages":@"en"},@{@"LanguageMappings":@"not mappings"}]) {

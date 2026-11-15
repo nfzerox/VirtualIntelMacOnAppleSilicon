@@ -163,23 +163,4 @@ static BOOL VIMRegionalInvalidResult(NSError **error) {
     NSData *data=[NSPropertyListSerialization dataWithPropertyList:clean format:NSPropertyListBinaryFormat_v1_0 options:0 error:error];
     return data&&[data writeToURL:file options:NSDataWritingAtomic error:error];
 }
-+ (NSString *)summaryForResult:(NSDictionary *)result {
-    if(![result isKindOfClass:NSDictionary.class])return @"";
-    NSDictionary *resolved=result[@"Resolved"];if(![resolved isKindOfClass:NSDictionary.class])return @"";
-    for(NSString *key in @[@"DesktopLanguage",@"LocaleIdentifier",@"TimeZoneIdentifier"]) {
-        id value=resolved[key];if(value&&(![value isKindOfClass:NSString.class]||![value length]||[value length]>256))return @"";
-    }
-    if(result[@"Warnings"]&&!VIMRegionalStringList(result[@"Warnings"],64))return @"";
-    NSLocale *display=NSLocale.currentLocale;NSString *defaultValue=VIMLocalized(@"regional.guest-default", @"Guest default");
-    NSString *language=resolved[@"DesktopLanguage"],*locale=resolved[@"LocaleIdentifier"],*zone=resolved[@"TimeZoneIdentifier"];
-    NSString *summary=[NSString stringWithFormat:VIMLocalized(@"regional.result-summary", @"Language: %@\nRegion: %@\nTime zone: %@"),
-        language?([display localizedStringForLocaleIdentifier:language]?:language):defaultValue,
-        locale?([display localizedStringForLocaleIdentifier:locale]?:locale):defaultValue,zone?:defaultValue];
-    if([result[@"Warnings"] count])summary=[summary stringByAppendingFormat:@"\n%@",VIMLocalized(@"regional.fallback-summary", @"Some requested settings are unavailable in this macOS version. Supported alternatives or guest defaults were used.")];
-    for(NSDictionary *mapping in VIMRegionalCleanMappings(resolved[@"LanguageMappings"])) {
-        NSString *requested=mapping[@"RequestedLanguage"],*accepted=mapping[@"AcceptedLanguage"];
-        if(![requested isEqual:accepted])summary=[summary stringByAppendingFormat:@"\n%@ → %@",[display localizedStringForLocaleIdentifier:requested]?:requested,[display localizedStringForLocaleIdentifier:accepted]?:accepted];
-    }
-    return summary;
-}
 @end
