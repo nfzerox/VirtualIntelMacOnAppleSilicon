@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMMachine.h"
 #import "VIMToolPropertyList.h"
 #import "VIMImageSlots.h"
@@ -91,7 +92,7 @@ static int ConfigurationLock(NSURL *package,NSError **error) {
     NSURL *lock=[package URLByAppendingPathComponent:@"State/Configuration.lock"];
     int fd=open(lock.fileSystemRepresentation,O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC,0600);struct stat info;
     if(fd<0||fstat(fd,&info)||!S_ISREG(info.st_mode)||info.st_nlink!=1||flock(fd,LOCK_EX|LOCK_NB)) {
-        if(fd>=0)close(fd);Fail(error,@"This Mac’s settings are being saved. Please try again.");return -1;
+        if(fd>=0)close(fd);Fail(error,VIMLocalized(@"ui.this-mac-s-settings-are-being-saved-please-try-again", @"This Mac’s settings are being saved. Please try again."));return -1;
     }return fd;
 }
 static void RelocatedPackage(NSURL *old,NSURL *new,NSString *identifier) {
@@ -114,7 +115,7 @@ static void RelocatedPackage(NSURL *old,NSURL *new,NSString *identifier) {
 }
 static BOOL Run(NSURL *executable, NSArray *arguments, NSURL *log, NSError **error) {
     NSFileManager *fm = NSFileManager.defaultManager;
-    if (![fm createFileAtPath:log.path contents:nil attributes:nil]) return Fail(error, @"Cannot create import log.");
+    if (![fm createFileAtPath:log.path contents:nil attributes:nil]) return Fail(error, VIMLocalized(@"ui.cannot-create-import-log", @"Cannot create import log."));
     NSFileHandle *output = [NSFileHandle fileHandleForWritingToURL:log error:error];
     if (!output) return NO;
     NSTask *task = [NSTask new]; task.executableURL = executable; task.arguments = arguments;
@@ -124,7 +125,7 @@ static BOOL Run(NSURL *executable, NSArray *arguments, NSURL *log, NSError **err
     [output closeFile];
     if (!launched) return NO;
     return task.terminationStatus == 0 || Fail(error, [NSString stringWithFormat:
-        @"The disk tool could not complete the operation. See %@. Source disks were not modified.", log.path]);
+        VIMLocalized(@"ui.the-disk-tool-could-not-complete-the-operation-see-source-disks-were", @"The disk tool could not complete the operation. See %@. Source disks were not modified."), log.path]);
 }
 // Only called inside a freshly created, unpublished package. Never format an
 // existing guest disk. Sparse staging keeps large logical disks cheap on exFAT.
@@ -148,7 +149,7 @@ static BOOL CreateFormattedDisk(NSURL *stage, NSURL *qemuImage, NSUInteger diskG
     if(![device isKindOfClass:NSString.class] || ![pattern numberOfMatchesInString:device options:0 range:NSMakeRange(0,device.length)]) {
         // Detach by our exact image path if the plist was not understood.
         Run(hdiutil,@[@"detach",seed.path],log(@"DetachFormattingDisk.log"),nil);
-        return Fail(error,@"Cannot identify the newly formatted virtual disk. See AttachFormattingDisk.log.");
+        return Fail(error,VIMLocalized(@"ui.cannot-identify-the-newly-formatted-virtual-disk-see-attachformattingdisk-log", @"Cannot identify the newly formatted virtual disk. See AttachFormattingDisk.log."));
     }
     NSString *raw=[device stringByReplacingOccurrencesOfString:@"/dev/disk" withString:@"/dev/rdisk"];
     if(recordTarget) {
@@ -164,7 +165,7 @@ static BOOL CreateFormattedDisk(NSURL *stage, NSURL *qemuImage, NSUInteger diskG
         if(![UUID isKindOfClass:NSString.class]||![[NSUUID alloc] initWithUUIDString:UUID]||
            !Save(@{@"FormatVersion":@1,@"VolumeUUID":UUID,@"Filesystem":@"HFS+"},[stage URLByAppendingPathComponent:@"State/InstallationTarget.plist"],error)) {
             Run(hdiutil,@[@"detach",device],log(@"DetachFormattingDisk.log"),nil);
-            return Fail(error,@"The new Macintosh HD could not be identified safely for automatic installation.");
+            return Fail(error,VIMLocalized(@"ui.the-new-macintosh-hd-could-not-be-identified-safely-for-automatic-installation", @"The new Macintosh HD could not be identified safely for automatic installation."));
         }
     }
     BOOL converted=Run(qemuImage,@[@"convert",@"-f",@"raw",@"-O",@"qcow2",raw,disk.path],log(@"CreateDisk.log"),error);
@@ -250,13 +251,13 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
 - (NSString *)pendingName {id value=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"State/PendingConfiguration.plist"]][@"RequestedBundleName"];return NameValid(value)?value:nil;}
 + (instancetype)loadURL:(NSURL *)URL error:(NSError **)error {
     if (!URL.isFileURL || ![URL.pathExtension isEqual:@"vintelmac"]) {
-        Fail(error, @"Choose a .vintelmac package."); return nil;
+        Fail(error, VIMLocalized(@"ui.choose-a-vintelmac-package", @"Choose a .vintelmac package.")); return nil;
     }
     URL = URL.URLByResolvingSymlinksInPath;
     NSError *readError=nil;
     NSData *data = [NSData dataWithContentsOfURL:[URL URLByAppendingPathComponent:@"Machine.plist"] options:0 error:&readError];
     if (!data) {
-        if(error)*error=[NSError errorWithDomain:@"VirtualIntelMac.Machine" code:1 userInfo:@{NSLocalizedDescriptionKey:@"This Mac isn’t available. Reconnect its drive or locate its current folder.",NSUnderlyingErrorKey:readError?:[NSError errorWithDomain:NSCocoaErrorDomain code:NSFileNoSuchFileError userInfo:nil]}];
+        if(error)*error=[NSError errorWithDomain:@"VirtualIntelMac.Machine" code:1 userInfo:@{NSLocalizedDescriptionKey:VIMLocalized(@"ui.this-mac-isn-t-available-reconnect-its-drive-or-locate-its-current", @"This Mac isn’t available. Reconnect its drive or locate its current folder."),NSUnderlyingErrorKey:readError?:[NSError errorWithDomain:NSCocoaErrorDomain code:NSFileNoSuchFileError userInfo:nil]}];
         return nil;
     }
     id c = [NSPropertyListSerialization propertyListWithData:data options:0 format:nil error:error];
@@ -268,21 +269,21 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
         ![c[@"MemoryMiB"] isKindOfClass:NSNumber.class] || [c[@"MemoryMiB"] integerValue] < 1024 ||
         ![c[@"Identifier"] isKindOfClass:NSString.class] ||
         ![[NSUUID alloc] initWithUUIDString:c[@"Identifier"]]) {
-        Fail(error, @"This Mac’s configuration is invalid or not supported by this version."); return nil;
+        Fail(error, VIMLocalized(@"ui.this-mac-s-configuration-is-invalid-or-not-supported-by-this-version", @"This Mac’s configuration is invalid or not supported by this version.")); return nil;
     }
     NSMutableArray *fileKeys=[NSMutableArray arrayWithArray:@[@"Disk",@"Firmware",@"NVRAM",@"BootMedia"]];
     if([c[@"FirmwareSource"] isEqual:@"application"])[fileKeys removeObjectsInArray:@[@"Firmware",@"BootMedia"]];
     if(c[@"BootMediaKind"]&&![@[@"legacy-opencore-iso",@"efi-disk"] containsObject:c[@"BootMediaKind"]]) {
-        Fail(error,@"This Mac uses an unsupported boot media format.");return nil;
+        Fail(error,VIMLocalized(@"ui.this-mac-uses-an-unsupported-boot-media-format", @"This Mac uses an unsupported boot media format."));return nil;
     }
     if(c[@"InstallerMedia"]) {
         if(c[@"InstallerMediaKind"]&&![@[@"optical",@"disk"] containsObject:c[@"InstallerMediaKind"]]) {
-            Fail(error,@"Unsupported installer media device type.");return nil;
+            Fail(error,VIMLocalized(@"ui.unsupported-installer-media-device-type", @"Unsupported installer media device type."));return nil;
         }
         if(![@[@"installing",@"patching"] containsObject:c[@"InstallState"]] ||
            (![c[@"InstallerMedia"] isEqual:@"Installation/Installer.iso"]&&
             !([c[@"InstallerMediaShared"] isEqual:@YES]&&[c[@"InstallerMedia"] isKindOfClass:NSString.class]&&[c[@"InstallerMedia"] isAbsolutePath]))) {
-            Fail(error,@"Installer media is attached in an invalid installation state.");return nil;
+            Fail(error,VIMLocalized(@"ui.installer-media-is-attached-in-an-invalid-installation-state", @"Installer media is attached in an invalid installation state."));return nil;
         }
         [fileKeys addObject:@"InstallerMedia"];
     }
@@ -290,27 +291,27 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
         id path = c[key];
         if([key isEqual:@"InstallerMedia"]&&[c[@"InstallerMediaShared"] isEqual:@YES]) {
             if(![path isKindOfClass:NSString.class]||![path isAbsolutePath]) {
-                Fail(error,@"Shared installer path must be absolute.");return nil;
+                Fail(error,VIMLocalized(@"ui.shared-installer-path-must-be-absolute", @"Shared installer path must be absolute."));return nil;
             }
             NSNumber *regular=nil;
             if(![[NSURL fileURLWithPath:path] getResourceValue:&regular forKey:NSURLIsRegularFileKey error:error]||!regular.boolValue) {
-                Fail(error,@"The shared installer is missing. Restore it to its original location.");return nil;
+                Fail(error,VIMLocalized(@"ui.the-shared-installer-is-missing-restore-it-to-its-original-location", @"The shared installer is missing. Restore it to its original location."));return nil;
             }
             continue;
         }
         if (![path isKindOfClass:NSString.class] || ![path length] || [path isAbsolutePath]) {
-            Fail(error, @"The package contains an invalid file path."); return nil;
+            Fail(error, VIMLocalized(@"ui.the-package-contains-an-invalid-file-path", @"The package contains an invalid file path.")); return nil;
         }
         NSURL *file = [[URL URLByAppendingPathComponent:path] URLByResolvingSymlinksInPath];
         NSNumber *regular = nil;
         if (![file.path hasPrefix:[URL.path stringByAppendingString:@"/"]] ||
             ![file getResourceValue:&regular forKey:NSURLIsRegularFileKey error:error] || !regular.boolValue) {
-            Fail(error, [NSString stringWithFormat:@"The %@ file is missing or outside this package.", key]); return nil;
+            Fail(error, [NSString stringWithFormat:VIMLocalized(@"ui.the-file-is-missing-or-outside-this-package", @"The %@ file is missing or outside this package."), key]); return nil;
         }
     }
-    if(!SettingsValid(c)) { Fail(error,@"This Mac has invalid memory, processor or network settings.");return nil; }
+    if(!SettingsValid(c)) { Fail(error,VIMLocalized(@"ui.this-mac-has-invalid-memory-processor-or-network-settings", @"This Mac has invalid memory, processor or network settings."));return nil; }
     NSDictionary *state=[NSFileManager.defaultManager attributesOfItemAtPath:[URL URLByAppendingPathComponent:@"State"].path error:error];
-    if(![state[NSFileType] isEqual:NSFileTypeDirectory]){Fail(error,@"This Mac’s State folder is missing or is not a regular folder.");return nil;}
+    if(![state[NSFileType] isEqual:NSFileTypeDirectory]){Fail(error,VIMLocalized(@"ui.this-mac-s-state-folder-is-missing-or-is-not-a-regular", @"This Mac’s State folder is missing or is not a regular folder."));return nil;}
     VIMMachine *machine = [self new]; machine->_URL = URL; machine->_configuration = [c copy];
     (void)machine.diskCapacityBytes; // Warm on the library's background scan.
     return machine;
@@ -430,7 +431,7 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
 }
 - (BOOL)rename:(NSString *)name error:(NSError **)error {
     if(!NameValid(name)||[name hasPrefix:@"."]||[name rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"/:\n\r"]].location!=NSNotFound)
-        return Fail(error,@"Enter a name of 1–128 characters without slashes, colons, or a leading dot.");
+        return Fail(error,VIMLocalized(@"ui.enter-a-name-of-1-128-characters-without-slashes-colons-or-a", @"Enter a name of 1–128 characters without slashes, colons, or a leading dot."));
     int fd=ConfigurationLock(self.URL,error);if(fd<0)return NO;
     NSURL *URL=[self.URL URLByAppendingPathComponent:@"State/PendingConfiguration.plist"];
     NSMutableDictionary *pending=[[NSDictionary dictionaryWithContentsOfURL:URL] mutableCopy]?:[NSMutableDictionary dictionary];pending[@"RequestedBundleName"]=name;
@@ -440,31 +441,31 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
 - (BOOL)saveAutomaticSetup:(NSDictionary *)profile error:(NSError **)error {
     if(![VIMAutomaticSetup supportsGuest:self.guest]||![self.configuration[@"InstallState"] isEqual:@"installing"]||
        ![profile isKindOfClass:NSDictionary.class]||![profile[@"FormatVersion"] isEqual:@1]||![profile[@"Enabled"] isEqual:@YES])
-        return Fail(error,@"Automatic setup is only available for a new virtual Mac installation.");
+        return Fail(error,VIMLocalized(@"ui.automatic-setup-is-only-available-for-a-new-virtual-mac-installation", @"Automatic setup is only available for a new virtual Mac installation."));
     NSMutableSet *allowed=[NSMutableSet setWithArray:@[@"FormatVersion",@"Enabled",@"Username",@"FileSharing",@"RemoteLogin",@"CredentialIdentifier"]];
     // Old saved transactions retain their one-time-login behavior. New UI
     // and CLI transactions explicitly request persistent automatic login.
     if(profile[@"AutomaticLogin"]) [allowed addObject:@"AutomaticLogin"];
-    if(![allowed isEqual:[NSSet setWithArray:profile.allKeys]])return Fail(error,@"Automatic setup contains an unsupported option.");
+    if(![allowed isEqual:[NSSet setWithArray:profile.allKeys]])return Fail(error,VIMLocalized(@"ui.automatic-setup-contains-an-unsupported-option", @"Automatic setup contains an unsupported option."));
     if(![VIMAutomaticSetup validateUsername:profile[@"Username"] error:error]||
        ![profile[@"CredentialIdentifier"] isKindOfClass:NSString.class]||![[NSUUID alloc] initWithUUIDString:profile[@"CredentialIdentifier"]])
-        return Fail(error,@"Check the virtual Mac’s account and setup credential.");
+        return Fail(error,VIMLocalized(@"ui.check-the-virtual-mac-s-account-and-setup-credential", @"Check the virtual Mac’s account and setup credential."));
     for(NSString *key in (profile[@"AutomaticLogin"]?@[@"FileSharing",@"RemoteLogin",@"AutomaticLogin"]:@[@"FileSharing",@"RemoteLogin"]))
-        if(![profile[key] isKindOfClass:NSNumber.class]||([profile[key] doubleValue]!=0&&[profile[key] doubleValue]!=1))return Fail(error,@"Check the automatic sharing options.");
+        if(![profile[key] isKindOfClass:NSNumber.class]||([profile[key] doubleValue]!=0&&[profile[key] doubleValue]!=1))return Fail(error,VIMLocalized(@"ui.check-the-automatic-sharing-options", @"Check the automatic sharing options."));
     NSDictionary *target=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"State/InstallationTarget.plist"]];
     NSDictionary *installer=[VIMAutomaticSetup installerConfigurationForVolumeUUID:target[@"VolumeUUID"] error:error];
     if(!installer)return NO;
     NSURL *lock=[self.URL URLByAppendingPathComponent:@"State/Session.lock"];
     int fd=open(lock.fileSystemRepresentation,O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC,0600);
     struct stat lockInfo;
-    if(fd<0||fstat(fd,&lockInfo)||!S_ISREG(lockInfo.st_mode)||lockInfo.st_nlink!=1||flock(fd,LOCK_EX|LOCK_NB)){if(fd>=0)close(fd);return Fail(error,@"Stop this virtual Mac before changing its initial setup.");}
+    if(fd<0||fstat(fd,&lockInfo)||!S_ISREG(lockInfo.st_mode)||lockInfo.st_nlink!=1||flock(fd,LOCK_EX|LOCK_NB)){if(fd>=0)close(fd);return Fail(error,VIMLocalized(@"ui.stop-this-virtual-mac-before-changing-its-initial-setup", @"Stop this virtual Mac before changing its initial setup."));}
     @try {
         NSURL *journal=[self.URL URLByAppendingPathComponent:@"State/AutomaticSetup.plist"];
         if([NSFileManager.defaultManager fileExistsAtPath:journal.path]) {
             NSDictionary *existing=[NSDictionary dictionaryWithContentsOfURL:journal];
-            if(!existing)return Fail(error,@"The saved automatic setup state could not be read. It was not replaced.");
+            if(!existing)return Fail(error,VIMLocalized(@"ui.the-saved-automatic-setup-state-could-not-be-read-it-was-not", @"The saved automatic setup state could not be read. It was not replaced."));
             for(NSString *key in allowed)if(![existing[key] isEqual:profile[key]])
-                return Fail(error,@"This Mac’s initial account setup has already been saved. Resume that setup before changing it.");
+                return Fail(error,VIMLocalized(@"ui.this-mac-s-initial-account-setup-has-already-been-saved-resume-that", @"This Mac’s initial account setup has already been saved. Resume that setup before changing it."));
             return YES; // Never reset an in-progress/completed journal to pending.
         }
         NSMutableDictionary *state=[profile mutableCopy];state[@"Guest"]=self.guest;
@@ -474,14 +475,14 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
 }
 - (BOOL)saveSettings:(NSDictionary *)settings error:(NSError **)error {
     NSSet *allowed=EditableSettingKeys();
-    for(NSString *key in settings)if(![allowed containsObject:key])return Fail(error,@"Unsupported setting.");
+    for(NSString *key in settings)if(![allowed containsObject:key])return Fail(error,VIMLocalized(@"ui.unsupported-setting", @"Unsupported setting."));
     // Stage edits independently of the live launch snapshot. Never rewrite the
     // active configuration or move a live package. Session locking decides when
     // publication is safe, including when another app process owns the VM.
     int edit=ConfigurationLock(self.URL,error);if(edit<0)return NO;
     @try {
     NSMutableDictionary *candidate=[self.editableConfiguration mutableCopy];[candidate addEntriesFromDictionary:settings];
-    if(!SettingsValid(candidate))return Fail(error,@"Use 1–64 processors, 1–1024 GB of memory and distinct ports from 1024–65535.");
+    if(!SettingsValid(candidate))return Fail(error,VIMLocalized(@"ui.use-1-64-processors-1-1024-gb-of-memory-and-distinct-ports", @"Use 1–64 processors, 1–1024 GB of memory and distinct ports from 1024–65535."));
     NSURL *pendingURL=[self.URL URLByAppendingPathComponent:@"State/PendingConfiguration.plist"];
     NSMutableDictionary *pending=[[NSDictionary dictionaryWithContentsOfURL:pendingURL] mutableCopy]?:[NSMutableDictionary dictionary];
     NSMutableDictionary *values=[pending[@"Settings"] mutableCopy]?:[NSMutableDictionary dictionary];[values addEntriesFromDictionary:settings];pending[@"Settings"]=values;
@@ -494,9 +495,9 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
     int fd=open(lock.fileSystemRepresentation,O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC,0600);
     struct stat info;
     if(fd<0||fstat(fd,&info)||!S_ISREG(info.st_mode)||info.st_nlink!=1) {
-        if(fd>=0)close(fd);return Fail(error,@"This Mac’s configuration lock could not be opened.");
+        if(fd>=0)close(fd);return Fail(error,VIMLocalized(@"ui.this-mac-s-configuration-lock-could-not-be-opened", @"This Mac’s configuration lock could not be opened."));
     }
-    if(flock(fd,LOCK_EX|LOCK_NB)){int issue=errno;close(fd);return issue==EWOULDBLOCK?YES:Fail(error,@"This Mac’s configuration lock is unavailable.");}
+    if(flock(fd,LOCK_EX|LOCK_NB)){int issue=errno;close(fd);return issue==EWOULDBLOCK?YES:Fail(error,VIMLocalized(@"ui.this-mac-s-configuration-lock-is-unavailable", @"This Mac’s configuration lock is unavailable."));}
     int edit=ConfigurationLock(self.URL,error);if(edit<0){close(fd);return NO;}
     @try {
     VIMMachine *fresh=[VIMMachine loadURL:self.URL error:error];if(!fresh)return NO;
@@ -504,12 +505,12 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
     NSDictionary *pending=[NSDictionary dictionaryWithContentsOfURL:pendingURL];
     NSMutableDictionary *c=[fresh.configuration mutableCopy];
     if([pending[@"Settings"] isKindOfClass:NSDictionary.class]) {
-        for(NSString *key in pending[@"Settings"])if(![EditableSettingKeys() containsObject:key])return Fail(error,@"The queued configuration contains an unsupported setting.");
+        for(NSString *key in pending[@"Settings"])if(![EditableSettingKeys() containsObject:key])return Fail(error,VIMLocalized(@"ui.the-queued-configuration-contains-an-unsupported-setting", @"The queued configuration contains an unsupported setting."));
         [c addEntriesFromDictionary:pending[@"Settings"]];
     }
-    if(!SettingsValid(c))return Fail(error,@"Use 1–64 processors, 1–1024 GB of memory and distinct ports from 1024–65535.");
+    if(!SettingsValid(c))return Fail(error,VIMLocalized(@"ui.use-1-64-processors-1-1024-gb-of-memory-and-distinct-ports", @"Use 1–64 processors, 1–1024 GB of memory and distinct ports from 1024–65535."));
     NSDictionary *network=VIMNetworkConfigurationWithDefaults(c,self.URL.URLByDeletingLastPathComponent,self.URL);
-    if(!network)return Fail(error,@"No local connection ports are available. Close unused virtual Macs or network services, then try again.");
+    if(!network)return Fail(error,VIMLocalized(@"ui.no-local-connection-ports-are-available-close-unused-virtual-macs-or-network", @"No local connection ports are available. Close unused virtual Macs or network services, then try again."));
     [c addEntriesFromDictionary:network];
     NSString *requested=pending[@"RequestedBundleName"];
     if(!requested&&[[NSUUID alloc] initWithUUIDString:old.lastPathComponent.stringByDeletingPathExtension]&&[c[@"Name"] isKindOfClass:NSString.class])requested=c[@"Name"];
@@ -587,10 +588,10 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
         if(!claim)return YES;
         NSURL *directory=[self.URL URLByAppendingPathComponent:@"State/UpdateRepairs" isDirectory:YES];
         if(mkdir(directory.fileSystemRepresentation,0700)&&errno!=EEXIST)
-            return Fail(error,@"The macOS update’s graphics setup record could not be saved. Make sure the library drive is connected and writable, then restart the virtual Mac.");
+            return Fail(error,VIMLocalized(@"ui.the-macos-update-s-graphics-setup-record-could-not-be-saved-make", @"The macOS update’s graphics setup record could not be saved. Make sure the library drive is connected and writable, then restart the virtual Mac."));
         struct stat info;
         if(lstat(directory.fileSystemRepresentation,&info)||!S_ISDIR(info.st_mode))
-            return Fail(error,@"The macOS update repair records folder is not a regular folder. No automatic repair was started.");
+            return Fail(error,VIMLocalized(@"ui.the-macos-update-repair-records-folder-is-not-a-regular-folder-no", @"The macOS update repair records folder is not a regular folder. No automatic repair was started."));
         NSURL *claim=[directory URLByAppendingPathComponent:[build stringByAppendingPathExtension:@"plist"]];
         NSDictionary *record=@{@"FormatVersion":@1,@"MachineIdentifier":self.configuration[@"Identifier"],
             @"Phase":@"claimed",@"PreviousTransactionID":identity,@"PreviousBuild":previous,
@@ -638,14 +639,14 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
         if(!self.configuration[@"InstallerMedia"]||![installation[@"Phase"] isEqual:@"graphics-verified"])return YES;
         NSDictionary *observed=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"State/GuestStatus.plist"]];
         NSDictionary *report=observed[@"Report"];
-        if(![report isKindOfClass:NSDictionary.class])return Fail(error,@"Saved guest status is unavailable. Installer media was retained.");
+        if(![report isKindOfClass:NSDictionary.class])return Fail(error,VIMLocalized(@"ui.saved-guest-status-is-unavailable-installer-media-was-retained", @"Saved guest status is unavailable. Installer media was retained."));
         // finishInstallation rechecks the transaction, boot, volume, guest,
         // ownership and stopped-session lock before changing any media.
         return [self finishInstallationWithGuestReport:report error:error];
     }
     if(![pending[@"Identifier"] isEqual:self.configuration[@"Identifier"]]||
        ![pending[@"GuestReport"] isKindOfClass:NSDictionary.class])
-        return Fail(error,@"Saved installer cleanup does not match this Mac. Media was retained.");
+        return Fail(error,VIMLocalized(@"ui.saved-installer-cleanup-does-not-match-this-mac-media-was-retained", @"Saved installer cleanup does not match this Mac. Media was retained."));
     return [self finishInstallationWithGuestReport:pending[@"GuestReport"] error:error];
 }
 - (BOOL)validateOpenGLSetupReport:(NSDictionary *)report requirePixels:(BOOL)pixels error:(NSError **)error {
@@ -660,7 +661,7 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
        ![graphics[@"ProductBuildVersion"] isEqual:report[@"ProductBuildVersion"]]||
        ![graphics[@"Phase"] isEqual:@"installed"]||
        (tiger&&![report[@"GraphicsFilesVerified"] isEqual:@YES]))
-        return Fail(error,@"Matching installed-system and accelerated graphics evidence is required. The installer was retained.");
+        return Fail(error,VIMLocalized(@"ui.matching-installed-system-and-accelerated-graphics-evidence-is-required-the-installer-was", @"Matching installed-system and accelerated graphics evidence is required. The installer was retained."));
     return YES;
 }
 - (BOOL)prepareOpenGLRestartWithReport:(NSDictionary *)report error:(NSError **)error {
@@ -671,10 +672,10 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
     int lock=ConfigurationLock(self.URL,error);if(lock<0)return NO;
     @try {
         NSDictionary *current=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"Machine.plist"]];
-        if(![current[@"Identifier"] isEqual:self.configuration[@"Identifier"]])return Fail(error,@"This Mac’s configuration changed. Setup was not restarted.");
+        if(![current[@"Identifier"] isEqual:self.configuration[@"Identifier"]])return Fail(error,VIMLocalized(@"ui.this-mac-s-configuration-changed-setup-was-not-restarted", @"This Mac’s configuration changed. Setup was not restarted."));
         NSDictionary *owner=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"Installation/Ownership.plist"]];
         if(current[@"InstallerMedia"]&&(![owner[@"MachineIdentifier"] isEqual:current[@"Identifier"]]||
-            ![owner[@"Media"] isEqual:current[@"InstallerMedia"]]))return Fail(error,@"Installer ownership could not be confirmed. It was not detached.");
+            ![owner[@"Media"] isEqual:current[@"InstallerMedia"]]))return Fail(error,VIMLocalized(@"ui.installer-ownership-could-not-be-confirmed-it-was-not-detached", @"Installer ownership could not be confirmed. It was not detached."));
         NSURL *restart=[self.URL URLByAppendingPathComponent:@"State/LegacySetupRestart.plist"];
         if(!Save(@{@"FormatVersion":@1,@"MachineIdentifier":current[@"Identifier"],@"FromBootSessionUUID":report[@"BootSessionUUID"],
             @"GuestReport":report,@"RequestState":@"prepared"},restart,error))return NO;
@@ -690,7 +691,7 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
     @try {
         NSURL *path=[self.URL URLByAppendingPathComponent:@"State/LegacySetupRestart.plist"];
         NSMutableDictionary *state=[[NSDictionary dictionaryWithContentsOfURL:path] mutableCopy];
-        if(![state[@"MachineIdentifier"] isEqual:self.configuration[@"Identifier"]])return Fail(error,@"The restart record no longer matches this Mac.");
+        if(![state[@"MachineIdentifier"] isEqual:self.configuration[@"Identifier"]])return Fail(error,VIMLocalized(@"ui.the-restart-record-no-longer-matches-this-mac", @"The restart record no longer matches this Mac."));
         state[@"RequestState"]=@"acknowledged";return Save(state,path,error);
     } @finally {close(lock);}
 }
@@ -698,12 +699,12 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
     if(![self validateOpenGLSetupReport:report requirePixels:YES error:error]||![report[@"DesktopRunning"] isEqual:@YES])return NO;
     NSDictionary *profile=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"State/AutomaticSetup.plist"]];
     if([profile[@"Enabled"] boolValue]&&![report[@"Account"][@"Phase"] isEqual:@"complete"])
-        return Fail(error,@"The first-login handoff has not completed. Its recovery records were retained.");
+        return Fail(error,VIMLocalized(@"ui.the-first-login-handoff-has-not-completed-its-recovery-records-were-retained", @"The first-login handoff has not completed. Its recovery records were retained."));
     int lock=ConfigurationLock(self.URL,error);if(lock<0)return NO;
     @try {
         NSDictionary *current=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"Machine.plist"]];
         if(![current[@"Identifier"] isEqual:self.configuration[@"Identifier"]]||current[@"InstallerMedia"])
-            return Fail(error,@"Restart this Mac without its installer before completing setup.");
+            return Fail(error,VIMLocalized(@"ui.restart-this-mac-without-its-installer-before-completing-setup", @"Restart this Mac without its installer before completing setup."));
         NSDictionary *receipt=@{@"FormatVersion":@1,@"Phase":@"graphics-verified",@"Guest":self.guest,
             @"MachineIdentifier":current[@"Identifier"],@"GuestReport":report,@"VerifiedAt":NSDate.date};
         if(!Save(receipt,[self.URL URLByAppendingPathComponent:@"State/LegacyGuestInstallation.plist"],error))return NO;
@@ -724,14 +725,14 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
     // Called before session acquisition or after QEMU exit, never on a live
     // optical backend. Use the same lifetime lock as modern cleanup.
     int fd=open([[self.URL URLByAppendingPathComponent:@"State/Session.lock"] fileSystemRepresentation],O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC,0600);
-    if(fd<0||flock(fd,LOCK_EX|LOCK_NB)){if(fd>=0)close(fd);return Fail(error,@"Shut down this Mac before retiring its installer files.");}
+    if(fd<0||flock(fd,LOCK_EX|LOCK_NB)){if(fd>=0)close(fd);return Fail(error,VIMLocalized(@"ui.shut-down-this-mac-before-retiring-its-installer-files", @"Shut down this Mac before retiring its installer files."));}
     @try {
         VIMMachine *fresh=[VIMMachine loadURL:self.URL error:error];if(!fresh)return NO;
         if(fresh.configuration[@"InstallerMedia"]||![fresh.configuration[@"InstallState"] isEqual:@"installed"]||
-           ![receipt[@"MachineIdentifier"] isEqual:fresh.configuration[@"Identifier"]])return Fail(error,@"Installer cleanup is not yet authorized for this Mac.");
+           ![receipt[@"MachineIdentifier"] isEqual:fresh.configuration[@"Identifier"]])return Fail(error,VIMLocalized(@"ui.installer-cleanup-is-not-yet-authorized-for-this-mac", @"Installer cleanup is not yet authorized for this Mac."));
         NSDictionary *owner=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"Installation/Ownership.plist"]];
         if(!owner)return YES;
-        if(![owner[@"MachineIdentifier"] isEqual:fresh.configuration[@"Identifier"]])return Fail(error,@"Installer ownership changed. Its files were retained.");
+        if(![owner[@"MachineIdentifier"] isEqual:fresh.configuration[@"Identifier"]])return Fail(error,VIMLocalized(@"ui.installer-ownership-changed-its-files-were-retained", @"Installer ownership changed. Its files were retained."));
         BOOL removed=RemovePreparedMedia(owner[@"Media"],self.URL);
         NSDictionary *profile=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"State/AutomaticSetup.plist"]];
         if(profile[@"CredentialIdentifier"]&&![VIMAutomaticSetup removePasswordForIdentifier:profile[@"CredentialIdentifier"] error:error])return NO;
@@ -744,7 +745,7 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
     int fd=open(lock.fileSystemRepresentation,O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC,0600);
     struct stat info;
     if(fd<0||fstat(fd,&info)||!S_ISREG(info.st_mode)||info.st_nlink!=1||flock(fd,LOCK_EX|LOCK_NB)) {
-        if(fd>=0)close(fd);return Fail(error,@"Shut down this Mac before finishing installer cleanup.");
+        if(fd>=0)close(fd);return Fail(error,VIMLocalized(@"ui.shut-down-this-mac-before-finishing-installer-cleanup", @"Shut down this Mac before finishing installer cleanup."));
     }
     @try {
         VIMMachine *fresh=[VIMMachine loadURL:self.URL error:error];if(!fresh)return NO;
@@ -762,14 +763,14 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
            // requiring the original verification boot stranded installer media.
            ![verified[@"BootSessionUUID"] isKindOfClass:NSString.class]||![verified[@"BootSessionUUID"] length]||
            ![report[@"ProductBuildVersion"] isEqual:verified[@"ProductBuildVersion"]])
-            return Fail(error,@"Matching completed guest installation and graphics verification are required. Media was retained.");
+            return Fail(error,VIMLocalized(@"ui.matching-completed-guest-installation-and-graphics-verification-are-required-media-was-retained", @"Matching completed guest installation and graphics verification are required. Media was retained."));
         NSURL *media=[self.URL URLByAppendingPathComponent:@"Installation/Installer.iso"];
         NSDictionary *owner=[NSDictionary dictionaryWithContentsOfURL:[self.URL URLByAppendingPathComponent:@"Installation/Ownership.plist"]];
         // Shared library media belongs to the download cache, not this VM. Detach
         // it after verification, but never delete another VM's or user's ISO.
         if([fresh.configuration[@"InstallerMediaShared"] isEqual:@YES]) {
             if(![owner[@"MachineIdentifier"] isEqual:fresh.configuration[@"Identifier"]]||
-               ![owner[@"Media"] isEqual:fresh.configuration[@"InstallerMedia"]])return Fail(error,@"Installer reference does not match its record.");
+               ![owner[@"Media"] isEqual:fresh.configuration[@"InstallerMedia"]])return Fail(error,VIMLocalized(@"ui.installer-reference-does-not-match-its-record", @"Installer reference does not match its record."));
             NSMutableDictionary *config=[fresh.configuration mutableCopy];
             [config removeObjectsForKeys:@[@"InstallerMedia",@"InstallerMediaKind",@"InstallerMediaShared"]];
             config[@"InstallState"]=@"installed";
@@ -782,29 +783,29 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
         if(![owner[@"FormatVersion"] isEqual:@1]||![owner[@"MachineIdentifier"] isEqual:fresh.configuration[@"Identifier"]]||
            ![owner[@"Media"] isEqual:@"Installation/Installer.iso"]||
            (fresh.configuration[@"InstallerMedia"]&&![fresh.configuration[@"InstallerMedia"] isEqual:owner[@"Media"]]))
-            return Fail(error,@"Installer ownership could not be established. Media was retained.");
+            return Fail(error,VIMLocalized(@"ui.installer-ownership-could-not-be-established-media-was-retained", @"Installer ownership could not be established. Media was retained."));
         // Never follow a relocated Installation directory or delete a linked file.
         if(![media.URLByResolvingSymlinksInPath.path isEqual:media.path])
-            return Fail(error,@"Installer media has been relocated. Automatic cleanup is unavailable.");
+            return Fail(error,VIMLocalized(@"ui.installer-media-has-been-relocated-automatic-cleanup-is-unavailable", @"Installer media has been relocated. Automatic cleanup is unavailable."));
         BOOL exists=lstat(media.fileSystemRepresentation,&info)==0;
-        if(!exists&&errno!=ENOENT)return Fail(error,@"Cannot inspect installer media.");
+        if(!exists&&errno!=ENOENT)return Fail(error,VIMLocalized(@"ui.cannot-inspect-installer-media", @"Cannot inspect installer media."));
         if(exists&&(!S_ISREG(info.st_mode)||info.st_nlink!=1||info.st_size<=0||
                     (uint64_t)info.st_size!=[owner[@"Size"] unsignedLongLongValue]))
-            return Fail(error,@"Installer media no longer matches its ownership record.");
+            return Fail(error,VIMLocalized(@"ui.installer-media-no-longer-matches-its-ownership-record", @"Installer media no longer matches its ownership record."));
         NSFileManager *fm=NSFileManager.defaultManager;
         for(NSString *key in @[@"BootMedia",@"Disk",@"Firmware",@"NVRAM"])
             if([[[self.URL URLByAppendingPathComponent:fresh.configuration[key]] URLByResolvingSymlinksInPath].path isEqual:media.path])
-                return Fail(error,@"Installer media is still used by another device in this Mac.");
+                return Fail(error,VIMLocalized(@"ui.installer-media-is-still-used-by-another-device-in-this-mac", @"Installer media is still used by another device in this Mac."));
         NSArray *siblings=[fm contentsOfDirectoryAtURL:self.URL.URLByDeletingLastPathComponent includingPropertiesForKeys:nil options:0 error:error];
         if(!siblings)return NO;
         for(NSURL *sibling in siblings) {
             if(![sibling.pathExtension isEqual:@"vintelmac"]||[sibling.URLByResolvingSymlinksInPath.path isEqual:self.URL.path])continue;
             NSDictionary *config=[NSDictionary dictionaryWithContentsOfURL:[sibling URLByAppendingPathComponent:@"Machine.plist"]];
-            if(!config)return Fail(error,@"Another Mac's configuration could not be checked. Media was retained.");
+            if(!config)return Fail(error,VIMLocalized(@"ui.another-mac-s-configuration-could-not-be-checked-media-was-retained", @"Another Mac's configuration could not be checked. Media was retained."));
             for(NSString *key in @[@"InstallerMedia",@"BootMedia",@"Disk",@"Firmware",@"NVRAM"]) {
                 NSString *relative=config[key];if(![relative isKindOfClass:NSString.class])continue;
                 NSURL *reference=[sibling URLByAppendingPathComponent:relative].URLByResolvingSymlinksInPath;
-                if([reference.path isEqual:media.path])return Fail(error,@"Another Mac still references this installer.");
+                if([reference.path isEqual:media.path])return Fail(error,VIMLocalized(@"ui.another-mac-still-references-this-installer", @"Another Mac still references this installer."));
             }
         }
         NSMutableDictionary *config=[fresh.configuration mutableCopy];
@@ -828,7 +829,7 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
 + (instancetype)importDisk:(NSURL *)disk guest:(NSString *)guest name:(NSString *)name
     library:(NSURL *)library firmware:(NSURL *)firmware nvram:(NSURL *)nvram
     bootMedia:(NSURL *)bootMedia qemuImage:(NSURL *)qemuImage error:(NSError **)error {
-    if (!Supported(guest) || !NameValid(name)) { Fail(error, @"Unsupported guest or invalid name."); return nil; }
+    if (!Supported(guest) || !NameValid(name)) { Fail(error, VIMLocalized(@"ui.unsupported-guest-or-invalid-name", @"Unsupported guest or invalid name.")); return nil; }
     NSFileManager *fm = NSFileManager.defaultManager;
     library=[VIMLibraryLocation machinesURLForLibrary:library];
     if(![fm createDirectoryAtURL:library withIntermediateDirectories:YES attributes:nil error:error])return nil;
@@ -848,12 +849,12 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
     NSData *infoData = [NSData dataWithContentsOfURL:info];
     NSDictionary *metadata = infoData ? [NSJSONSerialization JSONObjectWithData:infoData options:0 error:error] : nil;
     if (![metadata isKindOfClass:NSDictionary.class] || ![metadata[@"format"] isEqual:@"qcow2"] ||
-        ![metadata[@"virtual-size"] isKindOfClass:NSNumber.class]) { Fail(error, @"Import requires a valid QCOW2 disk."); return nil; }
+        ![metadata[@"virtual-size"] isKindOfClass:NSNumber.class]) { Fail(error, VIMLocalized(@"ui.import-requires-a-valid-qcow2-disk", @"Import requires a valid QCOW2 disk.")); return nil; }
     NSDictionary *space = [fm attributesOfFileSystemForPath:library.path error:error];
     // Conservative worst-case admission; sparse output usually uses much less.
     unsigned long long required = [metadata[@"virtual-size"] unsignedLongLongValue];
     unsigned long long free = [space[NSFileSystemFreeSize] unsignedLongLongValue];
-    if (!required || free < required || free - required < (2ULL << 30)) { Fail(error, @"The selected library needs more free space for a safe import."); return nil; }
+    if (!required || free < required || free - required < (2ULL << 30)) { Fail(error, VIMLocalized(@"ui.the-selected-library-needs-more-free-space-for-a-safe-import", @"The selected library needs more free space for a safe import.")); return nil; }
     for (NSString *directory in @[@"Disks", @"Firmware", @"Logs", @"State"])
         if (![fm createDirectoryAtURL:[stage URLByAppendingPathComponent:directory] withIntermediateDirectories:NO attributes:nil error:error]) return nil;
     NSDictionary *journal = @{@"Phase":@"importing", @"Source":disk.path, @"Identifier":identifier};
@@ -865,7 +866,7 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
     NSDictionary *result = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:[stage URLByAppendingPathComponent:@"Disk.json"]]
         options:0 error:error];
     if (![result isKindOfClass:NSDictionary.class] || result[@"backing-filename"] ||
-        ![result[@"virtual-size"] isEqual:metadata[@"virtual-size"]]) { Fail(error, @"The imported disk did not pass the independence check."); return nil; }
+        ![result[@"virtual-size"] isEqual:metadata[@"virtual-size"]]) { Fail(error, VIMLocalized(@"ui.the-imported-disk-did-not-pass-the-independence-check", @"The imported disk did not pass the independence check.")); return nil; }
     NSArray *sources = @[firmware, nvram, bootMedia];
     BOOL efiDisk=EFIDisk(bootMedia);
     NSArray *paths = @[@"Firmware/CODE.fd", @"Firmware/NVRAM.fd", efiDisk?@"Firmware/EFI.img":@"Firmware/OpenCore.iso"];
@@ -875,7 +876,7 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
         @"Disk":@"Disks/System.qcow2", @"Firmware":paths[0], @"NVRAM":paths[1], @"BootMedia":paths[2],
         @"BootMediaKind":efiDisk?@"efi-disk":@"legacy-opencore-iso", @"CPUCount":@4, @"MemoryMiB":@4096,
         @"FirmwareSource":@"application", @"InstallState":@"imported-prepared", @"ImportedFrom":disk.path},library,destination);
-    if(!c){Fail(error,@"No local connection ports are available. Close unused virtual Macs or network services, then try again.");return nil;}
+    if(!c){Fail(error,VIMLocalized(@"ui.no-local-connection-ports-are-available-close-unused-virtual-macs-or-network", @"No local connection ports are available. Close unused virtual Macs or network services, then try again."));return nil;}
     if (!Save(c, [stage URLByAppendingPathComponent:@"Machine.plist"], error) ||
         !Save(@{@"Phase":@"complete", @"Source":disk.path}, [stage URLByAppendingPathComponent:@"State/Import.plist"], error) ||
         ![fm moveItemAtURL:stage toURL:destination error:error]) return nil;
@@ -885,7 +886,7 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
     library:(NSURL *)library firmware:(NSURL *)firmware nvram:(NSURL *)nvram
     bootMedia:(NSURL *)bootMedia installer:(NSURL *)installer qemuImage:(NSURL *)qemuImage error:(NSError **)error {
     if(!Supported(guest)||!NameValid(name)||diskGiB<40||diskGiB>2048||!library.isFileURL) {
-        Fail(error,@"Choose a supported macOS version, a name, and a disk size from 40 to 2048 GB.");return nil;
+        Fail(error,VIMLocalized(@"ui.choose-a-supported-macos-version-a-name-and-a-disk-size-from", @"Choose a supported macOS version, a name, and a disk size from 40 to 2048 GB."));return nil;
     }
     NSFileManager *fm=NSFileManager.defaultManager;
     library=[VIMLibraryLocation machinesURLForLibrary:library];
@@ -896,7 +897,7 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
         // Validate the actual file, just as copying and runtime lookup do;
         // NSURLIsRegularFileKey on the alias itself reports a symbolic link.
         if(!input.isFileURL||![input.URLByResolvingSymlinksInPath getResourceValue:&regular forKey:NSURLIsRegularFileKey error:error]||!regular.boolValue) {
-            Fail(error,@"A required firmware, installer, or disk tool file is missing.");return nil;
+            Fail(error,VIMLocalized(@"ui.a-required-firmware-installer-or-disk-tool-file-is-missing", @"A required firmware, installer, or disk tool file is missing."));return nil;
         }
     }
     NSDictionary *attributes=[fm attributesOfItemAtPath:installer.path error:error];
@@ -908,7 +909,7 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
     // is sparse: require room for an installed system, not its full capacity.
     uint64_t diskSize=MIN((uint64_t)diskGiB,24ULL)<<30;
     if(!imageSize||free<diskSize+(2ULL<<30)) {
-        Fail(error,@"The library needs enough free space for the requested disk.");return nil;
+        Fail(error,VIMLocalized(@"ui.the-library-needs-enough-free-space-for-the-requested-disk", @"The library needs enough free space for the requested disk."));return nil;
     }
     NSString *identifier=NSUUID.UUID.UUIDString;
     NSURL *stage=[library URLByAppendingPathComponent:[NSString stringWithFormat:@".%@.creating",identifier]];
@@ -936,7 +937,7 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
         @"Firmware":paths[0],@"NVRAM":paths[1],@"BootMedia":paths[2],@"BootMediaKind":efiDisk?@"efi-disk":@"legacy-opencore-iso",
         @"FirmwareSource":@"application",@"InstallerMediaShared":@YES,
         @"InstallerMedia":paths[3],@"InstallerMediaKind":EFIDisk(installer)?@"disk":@"optical",@"InstallState":@"installing"},library,destination) mutableCopy];
-    if(!configuration){Fail(error,@"No local connection ports are available. Close unused virtual Macs or network services, then try again.");return nil;}
+    if(!configuration){Fail(error,VIMLocalized(@"ui.no-local-connection-ports-are-available-close-unused-virtual-macs-or-network", @"No local connection ports are available. Close unused virtual Macs or network services, then try again."));return nil;}
     if(tigerResearch) {
         configuration[@"FirmwareSource"]=@"package";
     }

@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMQMPConnection.h"
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -39,7 +40,7 @@ static NSError *VIMQMPError(NSString *message) {
         if (!self.ready) {
             struct sockaddr_un address={.sun_family=AF_UNIX};
             if (strlen(self.path.fileSystemRepresentation)>=sizeof(address.sun_path)) {
-                error=VIMQMPError(@"The control connection path is too long.");
+                error=VIMQMPError(VIMLocalized(@"qmpconnection.the-control-connection-path-is-too-long", @"The control connection path is too long."));
             } else {
                 strlcpy(address.sun_path,self.path.fileSystemRepresentation,sizeof(address.sun_path));
                 // QEMU creates this socket shortly after process launch. Bounded retry,
@@ -63,19 +64,19 @@ static NSError *VIMQMPError(NSString *message) {
                     }
                     close(fd); usleep(100000);
                 }
-                if(self.descriptor<0) error=VIMQMPError(@"The virtual machine’s control connection did not become available.");
+                if(self.descriptor<0) error=VIMQMPError(VIMLocalized(@"qmpconnection.the-virtual-machine-s-control-connection-did-not-become-available", @"The virtual machine’s control connection did not become available."));
                 else {
                     if(self.guestAgent) {
                         uint64_t nonce=0;arc4random_buf(&nonce,sizeof(nonce));
                         NSNumber *token=@(nonce & INT64_MAX);
                         self.awaitingSentinel=YES;
                         id reply=[self request:@"guest-sync-delimited" arguments:@{@"id":token} error:&error];
-                        if(!error && ![reply isEqual:token])error=VIMQMPError(@"Guest-agent synchronization failed.");
+                        if(!error && ![reply isEqual:token])error=VIMQMPError(VIMLocalized(@"qmpconnection.guest-agent-synchronization-failed", @"Guest-agent synchronization failed."));
                     } else {
                         self.responseDeadline=NSProcessInfo.processInfo.systemUptime+5;
                         NSDictionary *greeting=[self readObject:&error];
                         if(greeting && ![greeting[@"QMP"] isKindOfClass:NSDictionary.class])
-                            error=VIMQMPError(@"The virtual machine sent an invalid control greeting.");
+                            error=VIMQMPError(VIMLocalized(@"qmpconnection.the-virtual-machine-sent-an-invalid-control-greeting", @"The virtual machine sent an invalid control greeting."));
                         if(!error)[self request:@"qmp_capabilities" arguments:@{} error:&error];
                     }
                     self.ready=error==nil;
@@ -103,21 +104,21 @@ static NSError *VIMQMPError(NSString *message) {
             [self.buffer replaceBytesInRange:NSMakeRange(0,length) withBytes:NULL length:0];
             id object=[NSJSONSerialization JSONObjectWithData:line options:0 error:error];
             if(![object isKindOfClass:NSDictionary.class]) {
-                if(error) *error=VIMQMPError(@"Invalid control response.");return nil;
+                if(error) *error=VIMQMPError(VIMLocalized(@"qmpconnection.invalid-control-response", @"Invalid control response."));return nil;
             }
             return object;
         }
         if(self.buffer.length>=1024*1024) {
-            if(error)*error=VIMQMPError(@"The control response exceeded its size limit.");return nil;
+            if(error)*error=VIMQMPError(VIMLocalized(@"qmpconnection.the-control-response-exceeded-its-size-limit", @"The control response exceeded its size limit."));return nil;
         }
         uint8_t chunk[4096];ssize_t n;
         double left=self.responseDeadline-NSProcessInfo.processInfo.systemUptime;
-        if(left<=0) { if(error)*error=VIMQMPError(@"The control response timed out.");return nil; }
+        if(left<=0) { if(error)*error=VIMQMPError(VIMLocalized(@"qmpconnection.the-control-response-timed-out", @"The control response timed out."));return nil; }
         struct timeval timeout={.tv_sec=(time_t)left,.tv_usec=(suseconds_t)((left-(time_t)left)*1000000)};
         if(!timeout.tv_sec&&!timeout.tv_usec)timeout.tv_usec=1;
         setsockopt(self.descriptor,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
         do { n=read(self.descriptor,chunk,sizeof(chunk)); } while(n<0&&errno==EINTR);
-        if(n<=0) { if(error)*error=VIMQMPError(@"The control connection ended or timed out.");return nil; }
+        if(n<=0) { if(error)*error=VIMQMPError(VIMLocalized(@"qmpconnection.the-control-connection-ended-or-timed-out", @"The control connection ended or timed out."));return nil; }
         [self.buffer appendBytes:chunk length:n];
     }
 }
@@ -139,7 +140,7 @@ static NSError *VIMQMPError(NSString *message) {
     while(remaining) {
         ssize_t n=write(self.descriptor,bytes,remaining);
         if(n<0&&errno==EINTR)continue;
-        if(n<=0) { if(error)*error=VIMQMPError(@"Could not send a virtual machine command.");return nil; }
+        if(n<=0) { if(error)*error=VIMQMPError(VIMLocalized(@"qmpconnection.could-not-send-a-virtual-machine-command", @"Could not send a virtual machine command."));return nil; }
         bytes+=n;remaining-=n;
     }
     for(unsigned events=0;events<1024;events++) {
@@ -165,26 +166,26 @@ static NSError *VIMQMPError(NSString *message) {
         if(self.guestAgent&&[command isEqual:@"guest-sync-delimited"]&&
            ![response[@"return"] isEqual:arguments[@"id"]])continue;
         if(![response[@"id"] isEqual:identifier]&&!(self.guestAgent&&!response[@"id"])) {
-            if(error)*error=VIMQMPError(@"An unexpected control response was received.");return nil;
+            if(error)*error=VIMQMPError(VIMLocalized(@"qmpconnection.an-unexpected-control-response-was-received", @"An unexpected control response was received."));return nil;
         }
         if(response[@"error"]) {
             id detail=[response[@"error"] isKindOfClass:NSDictionary.class]?response[@"error"][@"desc"]:nil;
             if(error)*error=[detail isEqual:@"VIMInputQueueFull"]?
                 [NSError errorWithDomain:@"VirtualIntelMac.Control" code:2
-                    userInfo:@{NSLocalizedDescriptionKey:@"The guest keyboard is busy."}]:
-                VIMQMPError([detail isKindOfClass:NSString.class]?detail:@"The virtual machine rejected this command.");
+                    userInfo:@{NSLocalizedDescriptionKey:VIMLocalized(@"qmpconnection.the-guest-keyboard-is-busy", @"The guest keyboard is busy.")}]:
+                VIMQMPError([detail isKindOfClass:NSString.class]?detail:VIMLocalized(@"qmpconnection.the-virtual-machine-rejected-this-command", @"The virtual machine rejected this command."));
             return nil;
         }
-        if(!response[@"return"]) { if(error)*error=VIMQMPError(@"The control response was incomplete.");return nil; }
+        if(!response[@"return"]) { if(error)*error=VIMQMPError(VIMLocalized(@"qmpconnection.the-control-response-was-incomplete", @"The control response was incomplete."));return nil; }
         return response[@"return"];
     }
-    if(error)*error=VIMQMPError(@"Too many unsolicited control events.");return nil;
+    if(error)*error=VIMQMPError(VIMLocalized(@"qmpconnection.too-many-unsolicited-control-events", @"Too many unsolicited control events."));return nil;
 }
 - (void)execute:(NSString *)command arguments:(NSDictionary *)arguments
     completion:(void (^)(id,NSError *))completion {
     dispatch_async(self.queue, ^{
         NSError *error=nil;id result=nil;
-        if(!self.ready)error=VIMQMPError(@"The virtual machine is not ready for commands.");
+        if(!self.ready)error=VIMQMPError(VIMLocalized(@"qmpconnection.the-virtual-machine-is-not-ready-for-commands", @"The virtual machine is not ready for commands."));
         else {
             // The emulator rejects a full keyboard batch before dispatching any
             // of it. Keep ordering on this serial queue and never block AppKit.

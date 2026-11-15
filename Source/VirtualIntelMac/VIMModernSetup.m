@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMModernSetup.h"
 #import "VIMMachine.h"
 #import "VIMGuestAgent.h"
@@ -42,7 +43,7 @@ static NSError *SetupError(NSString *text){return [NSError errorWithDomain:@"Vir
         [self.agent runExecutable:@"/bin/chmod" arguments:@[@"0700",[directory stringByAppendingPathComponent:@"guest-native-installer"],
             [directory stringByAppendingPathComponent:@"guest-create-account"]] timeout:0 completion:^(NSDictionary *mode,NSError *failure){
             if(!failure&&[mode[@"exitcode"] isEqual:@0]){self.helperDirectory=directory;self.helperBoot=boot;completion(nil);}
-            else completion(failure?:SetupError(@"The automatic setup tools could not be prepared."));
+            else completion(failure?:SetupError(VIMLocalized(@"modernsetup.the-automatic-setup-tools-could-not-be-prepared", @"The automatic setup tools could not be prepared.")));
         }];
     }];
 }
@@ -72,7 +73,7 @@ static NSError *SetupError(NSString *text){return [NSError errorWithDomain:@"Vir
        ![[NSUUID alloc] initWithUUIDString:target?:@""]||![report[@"Guest"] isEqual:self.machine.guest]||
        ![report[@"LiveRoot"] isEqual:@YES]||![report[@"KernelMatchesSystem"] isEqual:@YES]||![[NSUUID alloc] initWithUUIDString:boot?:@""]||
        (self.state.count&&(![self.state[@"MachineIdentifier"] isEqual:identifier]||![self.state[@"TargetVolumeUUID"] isEqual:target]))){
-        completion(nil,SetupError(@"This Mac’s automatic setup identity does not match its saved installation target."));return;
+        completion(nil,SetupError(VIMLocalized(@"modernsetup.this-mac-s-automatic-setup-identity-does-not-match-its", @"This Mac’s automatic setup identity does not match its saved installation target.")));return;
     }
     // A "failed" journal is only authoritative while the guest is still in
     // Recovery. startosinstall can print "Helper tool crashed..." and exit
@@ -84,7 +85,7 @@ static NSError *SetupError(NSString *text){return [NSError errorWithDomain:@"Vir
         NSError *saveError=nil;[self.state removeObjectForKey:@"Error"];
         if(![self savePhase:@"install-prepared" error:&saveError]){completion(nil,saveError);return;}
     }
-    if([self.state[@"Phase"] isEqual:@"failed"]){completion(nil,SetupError(self.state[@"Error"]?:@"Automatic installation could not finish. Its diagnostic files were retained."));return;}
+    if([self.state[@"Phase"] isEqual:@"failed"]){completion(nil,SetupError(self.state[@"Error"]?:VIMLocalized(@"modernsetup.automatic-installation-could-not-finish-its-diagnostic-files-were-retained", @"Automatic installation could not finish. Its diagnostic files were retained.")));return;}
     if([report[@"RecoveryToolsPresent"] isEqual:@YES]){
         if(self.state[@"InstallDispatched"]){
             // startosinstall staged the install, but the guest's own reboot
@@ -100,16 +101,16 @@ static NSError *SetupError(NSString *text){return [NSError errorWithDomain:@"Vir
                ![self.state[@"RecoveryRestartBootSessionUUID"] isEqual:boot]) {
                 NSUInteger attempts=[self.state[@"RecoveryRestarts"] unsignedIntegerValue];
                 if(attempts>=2){
-                    completion(nil,SetupError(@"The macOS installer did not start after restarting. Its prepared installation was kept; restart this Mac to try again."));return;
+                    completion(nil,SetupError(VIMLocalized(@"modernsetup.the-macos-installer-did-not-start-after-restarting-its-prepared", @"The macOS installer did not start after restarting. Its prepared installation was kept; restart this Mac to try again.")));return;
                 }
                 self.state[@"RecoveryRestarts"]=@(attempts+1);self.state[@"RecoveryRestartBootSessionUUID"]=boot;
                 NSError *issue=nil;if(![self savePhase:self.state[@"Phase"] error:&issue]){completion(nil,issue);return;}
-                if(self.progress)self.progress(@"Restarting into the macOS installer…");
+                if(self.progress)self.progress(VIMLocalized(@"modernsetup.restarting-into-the-macos-installer", @"Restarting into the macOS installer…"));
                 [self.agent requestRestartWithCompletion:^(NSError *ignored){
-                    completion(@{@"Handled":@YES,@"RecoveryInstall":@YES,@"Message":@"Restarting into the macOS installer…"},nil);
+                    completion(@{@"Handled":@YES,@"RecoveryInstall":@YES,@"Message":VIMLocalized(@"modernsetup.restarting-into-the-macos-installer", @"Restarting into the macOS installer…")},nil);
                 }];return;
             }
-            completion(@{@"Handled":@YES,@"RecoveryInstall":@YES,@"Message":@"Installing macOS…"},nil);return;
+            completion(@{@"Handled":@YES,@"RecoveryInstall":@YES,@"Message":VIMLocalized(@"session.installing-macos-2", @"Installing macOS…")},nil);return;
         }
         [self withHelpersForBoot:boot completion:^(NSError *error){
             if(error){completion(nil,error);return;}
@@ -118,49 +119,49 @@ static NSError *SetupError(NSString *text){return [NSError errorWithDomain:@"Vir
                 id plan=[reply[@"exitcode"] isEqual:@0]?[NSJSONSerialization JSONObjectWithData:reply[@"stdout"]?:NSData.data options:0 error:NULL]:nil;
                 if(failure||![plan isKindOfClass:NSDictionary.class]||![plan[@"VolumeUUID"] isEqual:target]){
                     NSString *detail=[[NSString alloc] initWithData:reply[@"stderr"]?:NSData.data encoding:NSUTF8StringEncoding];
-                    completion(nil,failure?:SetupError(detail.length?detail:@"The native installer could not confirm Macintosh HD."));return;
+                    completion(nil,failure?:SetupError(detail.length?detail:VIMLocalized(@"modernsetup.the-native-installer-could-not-confirm-macintosh-hd", @"The native installer could not confirm Macintosh HD.")));return;
                 }
                 self.state[@"InstallDispatched"]=@YES;self.state[@"InstallerPlan"]=plan;
                 self.state[@"DispatchBootSessionUUID"]=boot;
                 if([report[@"VolumeUUID"] isKindOfClass:NSString.class])self.state[@"DispatchRecoveryVolumeUUID"]=report[@"VolumeUUID"];
                 NSError *issue=nil;if(![self savePhase:@"install-dispatched" error:&issue]){completion(nil,issue);return;}
                 request[@"LicenseAccepted"]=@YES;
-                if(self.progress)self.progress(@"Preparing macOS installation…");
+                if(self.progress)self.progress(VIMLocalized(@"modernsetup.preparing-macos-installation", @"Preparing macOS installation…"));
                 NSTimeInterval previousPoll=self.agent.processPollInterval;
                 self.agent.processPollInterval=5; // cold long-running installer, not 4 status RPCs/second under TCG
                 [self run:@"guest-native-installer" mode:@"--start" request:request completion:^(NSDictionary *result,NSError *problem){
                     self.agent.processPollInterval=previousPoll;
                     // A real guest reboot closes this observer. Its durable
                     // dispatch record is intentionally not permission to retry.
-                    if(problem){completion(@{@"Handled":@YES,@"RecoveryInstall":@YES,@"Message":@"Waiting for macOS installation to restart…"},nil);return;}
+                    if(problem){completion(@{@"Handled":@YES,@"RecoveryInstall":@YES,@"Message":VIMLocalized(@"modernsetup.waiting-for-macos-installation-to-restart", @"Waiting for macOS installation to restart…")},nil);return;}
                     if(![result[@"exitcode"] isEqual:@0]){
                         NSString *detail=[[NSString alloc] initWithData:result[@"stderr"]?:NSData.data encoding:NSUTF8StringEncoding];
-                        self.state[@"Error"]=detail.length?detail:@"The native macOS installer reported a failure.";
+                        self.state[@"Error"]=detail.length?detail:VIMLocalized(@"modernsetup.the-native-macos-installer-reported-a-failure", @"The native macOS installer reported a failure.");
                         NSError *saveError=nil;[self savePhase:@"failed" error:&saveError];completion(nil,saveError?:SetupError(self.state[@"Error"]));return;
                     }
                     NSError *saveError=nil;[self savePhase:@"install-prepared" error:&saveError];
-                    completion(@{@"Handled":@YES,@"RecoveryInstall":@YES,@"Message":@"Installing macOS…"},saveError);
+                    completion(@{@"Handled":@YES,@"RecoveryInstall":@YES,@"Message":VIMLocalized(@"session.installing-macos-2", @"Installing macOS…")},saveError);
                 }];
             }];
         }];return;
     }
-    if(![report[@"InstalledRootPresent"] isEqual:@YES]){completion(@{@"Handled":@YES,@"Message":@"Finishing macOS installation…"},nil);return;}
+    if(![report[@"InstalledRootPresent"] isEqual:@YES]){completion(@{@"Handled":@YES,@"Message":VIMLocalized(@"modernsetup.finishing-macos-installation", @"Finishing macOS installation…")},nil);return;}
     BOOL finishing=[self.state[@"Phase"] isEqual:@"awaiting-first-login"]||[self.state[@"Phase"] isEqual:@"complete"];
     if(self.showAccountProgress&&(!finishing||[self.state[@"AccountBootSessionUUID"] isEqual:boot]))
         self.showAccountProgress([(self.profile[@"AutomaticLogin"]?:@YES) boolValue]);
     if([self.state[@"Phase"] isEqual:@"awaiting-first-login"]&&[self.state[@"AccountBootSessionUUID"] isEqual:boot]){
-        completion(@{@"Handled":@YES,@"Restart":@YES,@"Message":@"Restarting to sign in…"},nil);return;
+        completion(@{@"Handled":@YES,@"Restart":@YES,@"Message":VIMLocalized(@"session.restarting-to-sign-in", @"Restarting to sign in…")},nil);return;
     }
     [self withHelpersForBoot:boot completion:^(NSError *error){
         if(error){completion(nil,error);return;}
-        if(finishing&&![report[@"DesktopRunning"] isEqual:@YES]){completion(@{@"Handled":@YES,@"Message":@"Signing in to your virtual Mac…"},nil);return;}
+        if(finishing&&![report[@"DesktopRunning"] isEqual:@YES]){completion(@{@"Handled":@YES,@"Message":VIMLocalized(@"modernsetup.signing-in-to-your-virtual-mac", @"Signing in to your virtual Mac…")},nil);return;}
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
             NSError *issue=nil;NSString *password=finishing?@"":[VIMAutomaticSetup passwordForIdentifier:self.profile[@"CredentialIdentifier"] error:&issue];
             dispatch_async(dispatch_get_main_queue(),^{
-                if(!password){completion(nil,issue?:SetupError(@"The saved setup password is unavailable on this Mac."));return;}
+                if(!password){completion(nil,issue?:SetupError(VIMLocalized(@"modernsetup.the-saved-setup-password-is-unavailable-on-this-mac", @"The saved setup password is unavailable on this Mac.")));return;}
                 NSMutableDictionary *request=[[self requestForReport:report] mutableCopy];request[@"Password"]=password;
                 [self run:@"guest-create-account" mode:finishing?@"--finish-first-login":@"--create" request:request completion:^(NSDictionary *reply,NSError *failure){
-                    if(!failure&&[reply[@"exitcode"] isEqual:@75]){completion(@{@"Handled":@YES,@"Message":@"Preparing your account and sharing…"},nil);return;}
+                    if(!failure&&[reply[@"exitcode"] isEqual:@75]){completion(@{@"Handled":@YES,@"Message":VIMLocalized(@"modernsetup.preparing-your-account-and-sharing", @"Preparing your account and sharing…")},nil);return;}
                     id result=[reply[@"exitcode"] isEqual:@0]?[NSJSONSerialization JSONObjectWithData:reply[@"stdout"]?:NSData.data options:0 error:NULL]:nil;
                     if(failure||![result isKindOfClass:NSDictionary.class]){
                         NSString *detail=[[NSString alloc] initWithData:reply[@"stderr"]?:NSData.data encoding:NSUTF8StringEncoding];
@@ -178,21 +179,21 @@ static NSError *SetupError(NSString *text){return [NSError errorWithDomain:@"Vir
                                 completion(@{@"Handled":@NO},nil);return;
                             }
                         }
-                        completion(nil,failure?:SetupError(detail.length?detail:@"The automatic account setup did not finish. Its records were retained."));return;
+                        completion(nil,failure?:SetupError(detail.length?detail:VIMLocalized(@"modernsetup.the-automatic-account-setup-did-not-finish-its-records-were", @"The automatic account setup did not finish. Its records were retained.")));return;
                     }
                     NSError *saveError=nil;
                     if(finishing){
-                        if(![result[@"Phase"] isEqual:@"complete"]){completion(nil,SetupError(@"The first desktop login could not be verified."));return;}
+                        if(![result[@"Phase"] isEqual:@"complete"]){completion(nil,SetupError(VIMLocalized(@"modernsetup.the-first-desktop-login-could-not-be-verified", @"The first desktop login could not be verified.")));return;}
                         NSMutableDictionary *profile=[self.profile mutableCopy];profile[@"Phase"]=@"complete";
                         NSURL *file=[self.machine.URL URLByAppendingPathComponent:@"State/AutomaticSetup.plist"];
                         if(![profile writeToURL:file error:&saveError]){completion(nil,saveError);return;}self.profile=profile;
                         [VIMAutomaticSetup removePasswordForIdentifier:profile[@"CredentialIdentifier"] error:NULL];
                         [self savePhase:@"complete" error:&saveError];completion(@{@"Handled":@NO},saveError);
                     }else{
-                        if(![result[@"SetupCompleted"] isEqual:@YES]){completion(nil,SetupError(@"The automatic account handoff could not be confirmed."));return;}
+                        if(![result[@"SetupCompleted"] isEqual:@YES]){completion(nil,SetupError(VIMLocalized(@"modernsetup.the-automatic-account-handoff-could-not-be-confirmed", @"The automatic account handoff could not be confirmed.")));return;}
                         self.state[@"AccountBootSessionUUID"]=boot;
                         if(![self savePhase:@"awaiting-first-login" error:&saveError]){completion(nil,saveError);return;}
-                        completion(@{@"Handled":@YES,@"Restart":@YES,@"Message":@"Restarting to sign in…"},nil);
+                        completion(@{@"Handled":@YES,@"Restart":@YES,@"Message":VIMLocalized(@"session.restarting-to-sign-in", @"Restarting to sign in…")},nil);
                     }
                 }];
             });

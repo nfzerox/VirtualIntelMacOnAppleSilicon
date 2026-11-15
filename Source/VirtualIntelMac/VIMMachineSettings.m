@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMMachineSettings.h"
 #import "VIMSettingsIcon.h"
 #import "VIMMachine.h"
@@ -33,8 +34,8 @@
     NSWindow *window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,420,180) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
     if((self=[super initWithWindow:window])) {
         window.title=title;window.releasedWhenClosed=NO;
-        NSButton *cancel=[NSButton buttonWithTitle:@"Cancel" target:self action:@selector(cancel:)];cancel.keyEquivalent=@"\e";
-        NSButton *save=[NSButton buttonWithTitle:@"OK" target:self action:@selector(save:)];save.keyEquivalent=@"\r";
+        NSButton *cancel=[NSButton buttonWithTitle:VIMLocalized(@"common.cancel", @"Cancel") target:self action:@selector(cancel:)];cancel.keyEquivalent=@"\e";
+        NSButton *save=[NSButton buttonWithTitle:VIMLocalized(@"common.ok", @"OK") target:self action:@selector(save:)];save.keyEquivalent=@"\r";
         NSStackView *buttons=[NSStackView stackViewWithViews:@[cancel,save]];buttons.spacing=12;
         for(NSButton *button in @[cancel,save])[button.widthAnchor constraintGreaterThanOrEqualToConstant:80].active=YES;
         NSView *root=window.contentView;
@@ -157,7 +158,7 @@ static void VIMAlignFormBaselines(NSView *view) {
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(sessionStateChanged:) name:@"VIMLibraryChanged" object:nil];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(sessionStateChanged:) name:@"VIMNetworkChanged" object:nil];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(packageRelocated:) name:@"VIMMachineRelocated" object:nil];
-        window.title=[NSString stringWithFormat:@"“%@” Configuration",machine.name];
+        window.title=[NSString stringWithFormat:VIMLocalized(@"ui.configuration", @"“%@” Configuration"),machine.name];
         NSToolbar *toolbar=[[NSToolbar alloc] initWithIdentifier:@"VIMConfigurationToolbar"];
         toolbar.delegate=self;toolbar.displayMode=NSToolbarDisplayModeIconAndLabel;
         toolbar.allowsUserCustomization=NO;toolbar.autosavesConfiguration=NO;
@@ -177,7 +178,7 @@ static void VIMAlignFormBaselines(NSView *view) {
 - (void)packageRelocated:(NSNotification *)note {
     if(![note.userInfo[@"Identifier"] isEqual:self.machine.configuration[@"Identifier"]])return;
     VIMMachine *fresh=[VIMMachine loadURL:note.userInfo[@"URL"] error:nil];if(fresh)self.machine=fresh;
-    self.window.title=[NSString stringWithFormat:@"“%@” Configuration",self.machine.name];[self render];
+    self.window.title=[NSString stringWithFormat:VIMLocalized(@"ui.configuration", @"“%@” Configuration"),self.machine.name];[self render];
 }
 - (void)readStorageSizes {
     NSURL *package=self.machine.URL;NSString *disk=self.machine.configuration[@"Disk"];
@@ -205,9 +206,9 @@ static void VIMAlignFormBaselines(NSView *view) {
 - (NSArray *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar {return [self toolbarDefaultItemIdentifiers:toolbar];}
 - (NSArray *)toolbarSelectableItemIdentifiers:(NSToolbar *)toolbar {return @[@"General",@"Hardware",@"Sharing"];}
 - (NSToolbarItem *)toolbar:(NSToolbar *)toolbar itemForItemIdentifier:(NSString *)identifier willBeInsertedIntoToolbar:(BOOL)insert {
-    NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=identifier;
+    NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=VIMLocalizedLabel(identifier);
     NSString *symbol=@{@"General":@"gearshape",@"Hardware":@"cpu",@"Sharing":@"folder"}[identifier];
-    item.image=[[NSImage imageWithSystemSymbolName:symbol accessibilityDescription:identifier] imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:24 weight:NSFontWeightRegular]];item.target=self;item.action=@selector(selectSection:);return item;
+    item.image=[[NSImage imageWithSystemSymbolName:symbol accessibilityDescription:VIMLocalizedLabel(identifier)] imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:24 weight:NSFontWeightRegular]];item.target=self;item.action=@selector(selectSection:);return item;
 }
 - (void)selectSection:(NSToolbarItem *)sender {
     [self saveDescription];
@@ -244,23 +245,23 @@ static void VIMAlignFormBaselines(NSView *view) {
     self.descriptionEditor.textContainerInset=NSMakeSize(4,4);self.descriptionEditor.delegate=self;self.descriptionEditor.string=self.machine.editableConfiguration[@"Description"]?:@"";
     description.documentView=self.descriptionEditor;self.descriptionEditor.autoresizingMask=NSViewWidthSizable;
     [description.widthAnchor constraintEqualToConstant:472].active=YES;[description.heightAnchor constraintEqualToConstant:58].active=YES;
-    NSTextField *descriptionLabel=[NSTextField labelWithString:@"Description:"];
-    NSGridView *grid=[NSGridView gridViewWithViews:@[@[NSGridCell.emptyContentView,identity],@[[NSTextField labelWithString:@"Name:"],name],@[descriptionLabel,description]]];
+    NSTextField *descriptionLabel=[NSTextField labelWithString:VIMLocalized(@"settings.description", @"Description:")];
+    NSGridView *grid=[NSGridView gridViewWithViews:@[@[NSGridCell.emptyContentView,identity],@[[NSTextField labelWithString:VIMLocalized(@"settings.name", @"Name:")],name],@[descriptionLabel,description]]];
     grid.columnSpacing=8;grid.rowSpacing=12;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;[grid columnAtIndex:0].width=80;
     [grid columnAtIndex:1].xPlacement=NSGridCellPlacementLeading;[grid rowAtIndex:2].yPlacement=NSGridCellPlacementTop;
     NSGridCell *caption=[grid cellAtColumnIndex:0 rowIndex:2];caption.yPlacement=NSGridCellPlacementNone;
     caption.customPlacementConstraints=@[[descriptionLabel.topAnchor constraintEqualToAnchor:description.topAnchor]];
     NSBox *divider=[NSBox new];divider.boxType=NSBoxSeparator;
     NSView *storage=[self storageOverview];
-    NSButton *reveal=[self button:@"Show in Finder" action:@selector(reveal:)];
-    NSStackView *location=[NSStackView stackViewWithViews:@[VIMText(@"Location:",NO),reveal]];location.spacing=12;
+    NSButton *reveal=[self button:VIMLocalized(@"app.show-in-finder", @"Show in Finder") action:@selector(reveal:)];
+    NSStackView *location=[NSStackView stackViewWithViews:@[VIMText(VIMLocalized(@"settings.location", @"Location:"),NO),reveal]];location.spacing=12;
     NSStackView *column=VIMColumn(@[grid,divider,storage,location]);column.spacing=16;
     [divider.widthAnchor constraintEqualToAnchor:column.widthAnchor].active=YES;
     [storage.widthAnchor constraintEqualToAnchor:column.widthAnchor].active=YES;
     return column;
 }
 - (NSView *)storageOverview {
-    NSString *(^bytes)(uint64_t)=^NSString *(uint64_t value){return self.sizesReady?[NSByteCountFormatter stringFromByteCount:value countStyle:NSByteCountFormatterCountStyleFile]:@"Calculating…";};
+    NSString *(^bytes)(uint64_t)=^NSString *(uint64_t value){return self.sizesReady?[NSByteCountFormatter stringFromByteCount:value countStyle:NSByteCountFormatterCountStyleFile]:VIMLocalized(@"settings.calculating", @"Calculating…");};
     NSView *bar=[NSView new];bar.wantsLayer=YES;bar.layer.cornerRadius=4;bar.layer.masksToBounds=YES;
     NSView *disk=[NSView new],*other=[NSView new];
     NSColor *diskColor=[NSColor colorWithSRGBRed:.29 green:.67 blue:.91 alpha:1],*otherColor=[NSColor colorWithSRGBRed:.73 green:.48 blue:.83 alpha:1];
@@ -271,7 +272,7 @@ static void VIMAlignFormBaselines(NSView *view) {
         [disk.topAnchor constraintEqualToAnchor:bar.topAnchor],[disk.bottomAnchor constraintEqualToAnchor:bar.bottomAnchor],[other.leadingAnchor constraintEqualToAnchor:disk.trailingAnchor],
         [other.trailingAnchor constraintEqualToAnchor:bar.trailingAnchor],[other.topAnchor constraintEqualToAnchor:bar.topAnchor],[other.bottomAnchor constraintEqualToAnchor:bar.bottomAnchor]]];
     NSMutableArray *legends=[NSMutableArray new];
-    NSArray *colors=@[diskColor,otherColor],*titles=@[@"Hard Disks",@"Miscellaneous"],*values=@[bytes(self.diskBytes),bytes(self.otherBytes)];
+    NSArray *colors=@[diskColor,otherColor],*titles=@[VIMLocalized(@"settings.hard-disks", @"Hard Disks"),VIMLocalized(@"ui.miscellaneous", @"Miscellaneous")],*values=@[bytes(self.diskBytes),bytes(self.otherBytes)];
     for(NSUInteger i=0;i<2;i++) {
         NSView *swatch=[NSView new];swatch.wantsLayer=YES;swatch.layer.backgroundColor=[colors[i] CGColor];[swatch.widthAnchor constraintEqualToConstant:11].active=YES;[swatch.heightAnchor constraintEqualToConstant:11].active=YES;
         NSStackView *text=VIMColumn(@[VIMText(titles[i],YES),VIMText(values[i],NO)]);text.spacing=1;
@@ -280,36 +281,36 @@ static void VIMAlignFormBaselines(NSView *view) {
     NSStackView *legend=[NSStackView stackViewWithViews:legends];legend.spacing=20;legend.distribution=NSStackViewDistributionFillEqually;
     NSStackView *right=VIMColumn(@[bar,legend]);right.spacing=12;[bar.widthAnchor constraintEqualToAnchor:right.widthAnchor].active=YES;
     [legend.widthAnchor constraintEqualToAnchor:right.widthAnchor].active=YES;
-    NSTextField *total=VIMText([NSString stringWithFormat:@"Total size\n%@",bytes(self.diskBytes+self.otherBytes)],NO);total.alignment=NSTextAlignmentRight;[total.widthAnchor constraintEqualToConstant:80].active=YES;
+    NSTextField *total=VIMText([NSString stringWithFormat:VIMLocalized(@"settings.total-size", @"Total size\n%@"),bytes(self.diskBytes+self.otherBytes)],NO);total.alignment=NSTextAlignmentRight;[total.widthAnchor constraintEqualToConstant:80].active=YES;
     NSStackView *row=[NSStackView stackViewWithViews:@[total,right]];row.alignment=NSLayoutAttributeTop;row.spacing=8;[right.widthAnchor constraintEqualToAnchor:row.widthAnchor constant:-88].active=YES;return row;
 }
 - (NSView *)hardware {
     NSDictionary *c=self.machine.editableConfiguration;
     if(self.hardwareIndex==0) {
         NSPopUpButton *cpu=[NSPopUpButton new];cpu.identifier=@"CPUCount";cpu.target=self;cpu.action=@selector(processorsChanged:);
-        for(NSInteger i=1;i<=NSProcessInfo.processInfo.processorCount;i++)[cpu addItemWithTitle:[NSString stringWithFormat:@"%ld%@",(long)i,i==MIN(4,NSProcessInfo.processInfo.processorCount)?@" (Recommended)":@""]];
+        for(NSInteger i=1;i<=NSProcessInfo.processInfo.processorCount;i++)[cpu addItemWithTitle:[NSString stringWithFormat:@"%ld%@",(long)i,i==MIN(4,NSProcessInfo.processInfo.processorCount)?VIMLocalized(@"ui.recommended", @" (Recommended)"):@""]];
         [cpu selectItemAtIndex:MAX(0,[c[@"CPUCount"] integerValue]-1)];[cpu.widthAnchor constraintEqualToConstant:170].active=YES;self.fields[@"CPUCount"]=cpu;
         NSTextField *memory=[self field:@"MemoryMiB" value:[c[@"MemoryMiB"] stringValue]];self.memoryValue=memory;
         NSStepper *stepper=[NSStepper new];stepper.minValue=1024;stepper.maxValue=NSProcessInfo.processInfo.physicalMemory/(1024*1024);stepper.increment=1024;stepper.doubleValue=memory.doubleValue;stepper.target=self;stepper.action=@selector(memoryStepped:);
         NSStackView *memoryRow=[NSStackView stackViewWithViews:@[memory,[NSTextField labelWithString:@"MB"],stepper]];memoryRow.spacing=4;
         double maxGiB=MAX(1,NSProcessInfo.processInfo.physicalMemory/(1024*1024*1024));
         self.memorySlider=[NSSlider sliderWithValue:memory.doubleValue/1024 minValue:1 maxValue:maxGiB target:self action:@selector(memorySlid:)];
-        self.memorySlider.continuous=NO;self.memorySlider.numberOfTickMarks=(NSInteger)maxGiB;self.memorySlider.allowsTickMarkValuesOnly=YES;self.memorySlider.accessibilityLabel=@"Memory allocation in gigabytes";
+        self.memorySlider.continuous=NO;self.memorySlider.numberOfTickMarks=(NSInteger)maxGiB;self.memorySlider.allowsTickMarkValuesOnly=YES;self.memorySlider.accessibilityLabel=VIMLocalized(@"settings.memory-allocation-in-gigabytes", @"Memory allocation in gigabytes");
         [self.memorySlider.widthAnchor constraintEqualToConstant:280].active=YES;
         NSTextField *low=VIMText(@"1 GB",NO),*mid=VIMText([NSString stringWithFormat:@"%.0f GB",round((maxGiB+1)/2)],NO),*high=VIMText([NSString stringWithFormat:@"%.0f GB",maxGiB],NO);mid.alignment=NSTextAlignmentCenter;high.alignment=NSTextAlignmentRight;
         NSStackView *ticks=[NSStackView stackViewWithViews:@[low,mid,high]];ticks.distribution=NSStackViewDistributionFillEqually;[ticks.widthAnchor constraintEqualToConstant:280].active=YES;
         NSStackView *memoryColumn=VIMColumn(@[memoryRow,self.memorySlider,ticks]);memoryColumn.spacing=10;
         NSGridView *grid=[NSGridView gridViewWithViews:@[
-            @[[NSTextField labelWithString:@"Processors:"],cpu],@[[NSTextField labelWithString:@"Memory:"],memoryColumn]]];
+            @[[NSTextField labelWithString:VIMLocalized(@"settings.processors", @"Processors:")],cpu],@[[NSTextField labelWithString:VIMLocalized(@"settings.memory", @"Memory:")],memoryColumn]]];
         grid.columnSpacing=12;grid.rowSpacing=22;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;[grid columnAtIndex:1].xPlacement=NSGridCellPlacementLeading;[grid rowAtIndex:1].yPlacement=NSGridCellPlacementTop;
         return VIMColumn(@[grid,
-            VIMText([NSString stringWithFormat:@"This Mac has %lu logical processors and %llu GB of memory. Leave resources available for other apps.",(unsigned long)NSProcessInfo.processInfo.processorCount,NSProcessInfo.processInfo.physicalMemory/(1024ULL*1024*1024)],NO),
-            VIMText(@"Changes take effect the next time this virtual Mac starts.",NO)]);
+            VIMText([NSString stringWithFormat:VIMLocalized(@"settings.this-mac-has-lu-logical-processors-and-llu-gb-of", @"This Mac has %lu logical processors and %llu GB of memory. Leave resources available for other apps."),(unsigned long)NSProcessInfo.processInfo.processorCount,NSProcessInfo.processInfo.physicalMemory/(1024ULL*1024*1024)],NO),
+            VIMText(VIMLocalized(@"settings.changes-take-effect-the-next-time-this-virtual-mac-starts", @"Changes take effect the next time this virtual Mac starts."),NO)]);
     }
     if(self.hardwareIndex==1) {
         NSMutableArray *views=[NSMutableArray new];
-        NSArray *modes=@[@"space",@"retina",@"scaled"],*titles=@[@"More Space",@"Best for Retina display",@"Scaled"];
-        NSArray *descriptions=@[@"Graphics at full Retina resolution. Text and interface are small.",@"",@"Graphics scaled to full size."];
+        NSArray *modes=@[@"space",@"retina",@"scaled"],*titles=@[VIMLocalized(@"settings.more-space", @"More Space"),VIMLocalized(@"settings.best-for-retina-display", @"Best for Retina display"),VIMLocalized(@"ui.scaled", @"Scaled")];
+        NSArray *descriptions=@[VIMLocalized(@"settings.graphics-at-full-retina-resolution-text-and-interface-are-small", @"Graphics at full Retina resolution. Text and interface are small."),@"",VIMLocalized(@"settings.graphics-scaled-to-full-size", @"Graphics scaled to full size.")];
         NSButton *firstOption=nil;
         for(NSUInteger i=0;i<modes.count;i++) {
             if(i==1&&!VIMGuestSupportsRetinaDisplay(c))continue;
@@ -317,7 +318,7 @@ static void VIMAlignFormBaselines(NSView *view) {
             if(!firstOption)firstOption=option;
             option.state=[VIMDisplayMode(c) isEqual:modes[i]];
             if(![descriptions[i] length]){[views addObject:option];continue;}
-            NSString *copy=i==0&&!VIMGuestSupportsRetinaDisplay(c)?@"Graphics at full display resolution. Text and interface are small.":descriptions[i];
+            NSString *copy=i==0&&!VIMGuestSupportsRetinaDisplay(c)?VIMLocalized(@"settings.graphics-at-full-display-resolution-text-and-interface-are-small", @"Graphics at full display resolution. Text and interface are small."):descriptions[i];
             NSTextField *description=VIMText(copy,NO);
             NSView *pair=[NSView new];
             for(NSView *view in @[option,description]){view.translatesAutoresizingMaskIntoConstraints=NO;[pair addSubview:view];}
@@ -330,7 +331,7 @@ static void VIMAlignFormBaselines(NSView *view) {
                 [description.bottomAnchor constraintEqualToAnchor:pair.bottomAnchor]]];[views addObject:pair];
         }
         NSStackView *options=VIMColumn(views);options.spacing=18;
-        NSView *form=[NSView new];NSTextField *label=[NSTextField labelWithString:@"Resolution:"];
+        NSView *form=[NSView new];NSTextField *label=[NSTextField labelWithString:VIMLocalized(@"settings.resolution", @"Resolution:")];
         for(NSView *view in @[label,options]){view.translatesAutoresizingMaskIntoConstraints=NO;[form addSubview:view];}
         [NSLayoutConstraint activateConstraints:@[[label.leadingAnchor constraintEqualToAnchor:form.leadingAnchor],
             [label.firstBaselineAnchor constraintEqualToAnchor:firstOption.firstBaselineAnchor],
@@ -339,49 +340,49 @@ static void VIMAlignFormBaselines(NSView *view) {
             [options.topAnchor constraintEqualToAnchor:form.topAnchor],
             [options.bottomAnchor constraintEqualToAnchor:form.bottomAnchor]]];
         NSPopUpButton *filter=[NSPopUpButton new];
-        [filter addItemsWithTitles:@[@"Nearest Neighbor",@"Linear"]];
+        [filter addItemsWithTitles:@[VIMLocalized(@"settings.nearest-neighbor", @"Nearest Neighbor"),VIMLocalized(@"ui.linear", @"Linear")]];
         [filter selectItemAtIndex:[VIMDisplayScalingFilter(c) isEqual:@"nearest"]?0:1];
         filter.target=self;filter.action=@selector(scalingFilterChanged:);
-        NSGridView *sampling=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:@"Scaling Filter:"],filter]]];
+        NSGridView *sampling=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:VIMLocalized(@"settings.scaling-filter", @"Scaling Filter:")],filter]]];
         sampling.columnSpacing=12;[sampling columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
-        return VIMColumn(@[form,sampling,VIMText(@"Resolution changes take effect the next time this Mac starts. The scaling filter applies immediately.",NO)]);
+        return VIMColumn(@[form,sampling,VIMText(VIMLocalized(@"settings.resolution-changes-take-effect-the-next-time-this-mac-starts", @"Resolution changes take effect the next time this Mac starts. The scaling filter applies immediately."),NO)]);
     }
     if(self.hardwareIndex==4) {
         NSPopUpButton *output=[self audioPopup:NO],*input=[self audioPopup:YES];
-        NSGridView *grid=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:@"Sound Output:"],output],@[[NSTextField labelWithString:@"Microphone:"],input]]];grid.rowSpacing=20;grid.columnSpacing=12;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
-        NSButton *hostAccess=[self button:@"This Mac’s Access…" action:@selector(microphone:)];
-        hostAccess.toolTip=@"Allow Virtual Intel Mac to use this Mac’s microphone.";
+        NSGridView *grid=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:VIMLocalized(@"settings.sound-output", @"Sound Output:")],output],@[[NSTextField labelWithString:VIMLocalized(@"settings.microphone", @"Microphone:")],input]]];grid.rowSpacing=20;grid.columnSpacing=12;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
+        NSButton *hostAccess=[self button:VIMLocalized(@"settings.this-mac-s-access", @"This Mac’s Access…") action:@selector(microphone:)];
+        hostAccess.toolTip=VIMLocalized(@"settings.allow-virtual-intel-mac-to-use-this-mac-s-microphone", @"Allow Virtual Intel Mac to use this Mac’s microphone.");
         NSStackView *access=[NSStackView stackViewWithViews:@[hostAccess,
-            [self guestSettingsButton:@"Virtual Mac’s Access…" pane:@"microphone"]]];access.spacing=8;
+            [self guestSettingsButton:VIMLocalized(@"settings.virtual-mac-s-access", @"Virtual Mac’s Access…") pane:@"microphone"]]];access.spacing=8;
         return VIMColumn(@[grid,access,
-            VIMText(@"Inside the virtual Mac, also allow access in System Preferences → Security & Privacy → Privacy → Microphone.",NO),
-            VIMText(@"Changes take effect the next time the virtual Mac starts.",NO)]);
+            VIMText(VIMLocalized(@"settings.inside-the-virtual-mac-also-allow-access-in-system-preferences", @"Inside the virtual Mac, also allow access in System Preferences → Security & Privacy → Privacy → Microphone."),NO),
+            VIMText(VIMLocalized(@"settings.changes-take-effect-the-next-time-the-virtual-mac-starts", @"Changes take effect the next time the virtual Mac starts."),NO)]);
     }
     if(self.hardwareIndex==3) {
         NSPopUpButton *source=[NSPopUpButton new];source.target=self;source.action=@selector(networkChanged:);
-        [source addItemsWithTitles:@[@"Disconnected",@"Shared Network (Recommended)",@"Host-Only Network",@"Bridged Network"]];
+        [source addItemsWithTitles:@[VIMLocalized(@"settings.disconnected", @"Disconnected"),VIMLocalized(@"settings.shared-network-recommended", @"Shared Network (Recommended)"),VIMLocalized(@"settings.host-only-network", @"Host-Only Network"),VIMLocalized(@"settings.bridged-network", @"Bridged Network")]];
         NSArray *modes=@[@"shared",@"host",@"bridged"];NSString *mode=VIMNetworkMode(c);
         [source selectItemAtIndex:c[@"NetworkConnected"]&&![c[@"NetworkConnected"] boolValue]?0:1+[modes indexOfObject:mode]];
         [source.widthAnchor constraintEqualToConstant:270].active=YES;
-        NSMutableArray *rows=[NSMutableArray arrayWithObject:@[[NSTextField labelWithString:@"Source:"],source]];
+        NSMutableArray *rows=[NSMutableArray arrayWithObject:@[[NSTextField labelWithString:VIMLocalized(@"settings.source", @"Source:")],source]];
         if([mode isEqual:@"bridged"]) {
             NSPopUpButton *bridge=[NSPopUpButton new];bridge.target=self;bridge.action=@selector(bridgeChanged:);
-            [bridge addItemWithTitle:@"Automatic"];bridge.lastItem.representedObject=@"";
+            [bridge addItemWithTitle:VIMLocalized(@"settings.automatic", @"Automatic")];bridge.lastItem.representedObject=@"";
             for(NSDictionary *interface in VIMNetworkBridgeInterfaces()){[bridge addItemWithTitle:interface[@"Name"]];bridge.lastItem.representedObject=interface[@"Identifier"];}
             for(NSMenuItem *item in bridge.itemArray)if([item.representedObject isEqual:c[@"BridgeInterface"]?:@""])[bridge selectItem:item];
-            [rows addObject:@[[NSTextField labelWithString:@"Interface:"],bridge]];
+            [rows addObject:@[[NSTextField labelWithString:VIMLocalized(@"settings.interface", @"Interface:")],bridge]];
         }
-        [rows addObject:@[NSGridCell.emptyContentView,[self button:@"Advanced…" action:@selector(networkAdvanced:)]]];
+        [rows addObject:@[NSGridCell.emptyContentView,[self button:VIMLocalized(@"settings.advanced", @"Advanced…") action:@selector(networkAdvanced:)]]];
         NSGridView *grid=[NSGridView gridViewWithViews:rows];grid.columnSpacing=12;grid.rowSpacing=20;
         [grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;[grid columnAtIndex:1].xPlacement=NSGridCellPlacementLeading;
-        NSString *explanation=[mode isEqual:@"host"]?@"Connects to this Mac and other host-only virtual Macs, without access to the internet.":([mode isEqual:@"bridged"]?@"Connects directly to your local network. Other devices can reach services you enable inside the virtual Mac.":@"The virtual Mac shares this Mac’s internet connection.");
+        NSString *explanation=[mode isEqual:@"host"]?VIMLocalized(@"settings.connects-to-this-mac-and-other-host-only-virtual-macs", @"Connects to this Mac and other host-only virtual Macs, without access to the internet."):([mode isEqual:@"bridged"]?VIMLocalized(@"settings.connects-directly-to-your-local-network-other-devices-can-reach", @"Connects directly to your local network. Other devices can reach services you enable inside the virtual Mac."):VIMLocalized(@"settings.the-virtual-mac-shares-this-mac-s-internet-connection", @"The virtual Mac shares this Mac’s internet connection."));
         return VIMColumn(@[grid,VIMText(explanation,NO)]);
     }
     if(self.hardwareIndex==2) {
-        NSPopUpButton *mode=[NSPopUpButton new];[mode addItemWithTitle:@"Automatic"];
+        NSPopUpButton *mode=[NSPopUpButton new];[mode addItemWithTitle:VIMLocalized(@"settings.automatic", @"Automatic")];
         [mode.widthAnchor constraintEqualToConstant:220].active=YES;
-        NSGridView *grid=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:@"Mouse & Keyboard:"],mode]]];grid.columnSpacing=12;
-        return VIMColumn(@[grid,VIMText(@"Click inside this Mac to use its mouse and Mac keyboard. Press Command–Option to release them.",NO)]);
+        NSGridView *grid=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:VIMLocalized(@"settings.mouse-keyboard", @"Mouse & Keyboard:")],mode]]];grid.columnSpacing=12;
+        return VIMColumn(@[grid,VIMText(VIMLocalized(@"settings.click-inside-this-mac-to-use-its-mouse-and-mac", @"Click inside this Mac to use its mouse and Mac keyboard. Press Command–Option to release them."),NO)]);
     }
     if(self.hardwareIndex==6) {
         NSArray *images=[VIMSession connectedImagesForMachine:self.machine];NSMutableArray *rows=[NSMutableArray new];
@@ -391,53 +392,53 @@ static void VIMAlignFormBaselines(NSView *view) {
             NSPopUpButton *source=[NSPopUpButton new];source.target=self;source.action=@selector(opticalChanged:);source.tag=(NSInteger)slot;
             [source addItemWithTitle:path.lastPathComponent];source.selectedItem.tag=0;
             source.selectedItem.image=[NSImage imageWithSystemSymbolName:@"opticaldisc" accessibilityDescription:nil];
-            [source.menu addItem:NSMenuItem.separatorItem];[source addItemWithTitle:@"Disconnect"];source.lastItem.tag=2;
+            [source.menu addItem:NSMenuItem.separatorItem];[source addItemWithTitle:VIMLocalized(@"ui.disconnect", @"Disconnect")];source.lastItem.tag=2;
             [source.widthAnchor constraintEqualToConstant:280].active=YES;
-            [rows addObject:@[[NSTextField labelWithString:[NSString stringWithFormat:@"Drive %lu:",(unsigned long)++driveNumber]],source]];
+            [rows addObject:@[[NSTextField labelWithString:[NSString stringWithFormat:VIMLocalized(@"settings.drive-lu", @"Drive %lu:"),(unsigned long)++driveNumber]],source]];
         }
         if(!images.count) {
             NSPopUpButton *source=[NSPopUpButton new];source.target=self;source.action=@selector(opticalChanged:);source.tag=0;
-            [source addItemWithTitle:@"No Disc"];[source.menu addItem:NSMenuItem.separatorItem];
-            [source addItemWithTitle:@"Choose Image…"];source.lastItem.tag=1;
+            [source addItemWithTitle:VIMLocalized(@"settings.no-disc", @"No Disc")];[source.menu addItem:NSMenuItem.separatorItem];
+            [source addItemWithTitle:VIMLocalized(@"settings.choose-image", @"Choose Image…")];source.lastItem.tag=1;
             [source.widthAnchor constraintEqualToConstant:280].active=YES;
-            [rows addObject:@[[NSTextField labelWithString:@"Source:"],source]];
-        } else if(images.count<VIMImageSlotCount)[rows addObject:@[NSGridCell.emptyContentView,[self button:@"Connect Image…" action:@selector(chooseDisc:)]]];
+            [rows addObject:@[[NSTextField labelWithString:VIMLocalized(@"settings.source", @"Source:")],source]];
+        } else if(images.count<VIMImageSlotCount)[rows addObject:@[NSGridCell.emptyContentView,[self button:VIMLocalized(@"settings.connect-image", @"Connect Image…") action:@selector(chooseDisc:)]]];
         NSGridView *grid=[NSGridView gridViewWithViews:rows];grid.columnSpacing=12;grid.rowSpacing=14;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
-        return VIMColumn(@[grid,VIMText(@"Connect ISO, CDR, Toast or unencrypted DMG images. Disconnect a drive’s current image before replacing it.",NO)]);
+        return VIMColumn(@[grid,VIMText(VIMLocalized(@"settings.connect-iso-cdr-toast-or-unencrypted-dmg-images-disconnect-a", @"Connect ISO, CDR, Toast or unencrypted DMG images. Disconnect a drive’s current image before replacing it."),NO)]);
     }
     NSString *file=[self.machine.configuration[@"Disk"] lastPathComponent]?:@"System.qcow2";
     NSPopUpButton *source=[NSPopUpButton new];[source addItemWithTitle:file];source.toolTip=file;
     [source.widthAnchor constraintEqualToConstant:250].active=YES;
     uint64_t capacity=self.machine.diskCapacityBytes;NSNumber *allocated=nil;
     [[self.machine.URL URLByAppendingPathComponent:self.machine.configuration[@"Disk"]] getResourceValue:&allocated forKey:NSURLTotalFileAllocatedSizeKey error:nil];
-    NSString *size=allocated?[NSByteCountFormatter stringFromByteCount:allocated.longLongValue countStyle:NSByteCountFormatterCountStyleFile]:@"Unavailable";
-    NSButton *reclaim=[self button:@"Reclaim Space…" action:@selector(maintainDisk:)],*compress=[self button:@"Compress…" action:@selector(maintainDisk:)];compress.tag=1;
+    NSString *size=allocated?[NSByteCountFormatter stringFromByteCount:allocated.longLongValue countStyle:NSByteCountFormatterCountStyleFile]:VIMLocalized(@"library.unavailable", @"Unavailable");
+    NSButton *reclaim=[self button:VIMLocalized(@"diskmaintenance.reclaim-space", @"Reclaim Space…") action:@selector(maintainDisk:)],*compress=[self button:VIMLocalized(@"diskmaintenance.compress", @"Compress…") action:@selector(maintainDisk:)];compress.tag=1;
     BOOL running=[VIMSession isRunningMachine:self.machine];reclaim.enabled=compress.enabled=!running&&![VIMDiskMaintenance hasActiveOperation];
-    reclaim.toolTip=@"Rebuild the disk image to recover unused storage.";
-    compress.toolTip=@"Reclaim unused storage and compress existing data.";
+    reclaim.toolTip=VIMLocalized(@"diskmaintenance.rebuild-the-disk-image-to-recover-unused-storage", @"Rebuild the disk image to recover unused storage.");
+    compress.toolTip=VIMLocalized(@"diskmaintenance.reclaim-unused-storage-and-compress-existing-data", @"Reclaim unused storage and compress existing data.");
     NSStackView *tools=[NSStackView stackViewWithViews:@[reclaim,compress]];tools.spacing=8;
     NSGridView *grid=[NSGridView gridViewWithViews:@[
-        @[[NSTextField labelWithString:@"Source:"],source],
-        @[NSGridCell.emptyContentView,[self button:@"Show in Finder" action:@selector(reveal:)]],
-        @[[NSTextField labelWithString:@"Capacity:"],[NSTextField labelWithString:capacity?[NSString stringWithFormat:@"%g GB",capacity/(double)(1ULL<<30)]:@"Not recorded"]],
-        @[[NSTextField labelWithString:@"Space on this Mac:"],[NSTextField labelWithString:size]],
-        @[[NSTextField labelWithString:@"Maintenance:"],tools]]];
+        @[[NSTextField labelWithString:VIMLocalized(@"settings.source", @"Source:")],source],
+        @[NSGridCell.emptyContentView,[self button:VIMLocalized(@"app.show-in-finder", @"Show in Finder") action:@selector(reveal:)]],
+        @[[NSTextField labelWithString:VIMLocalized(@"diskmaintenance.capacity", @"Capacity:")],[NSTextField labelWithString:capacity?[NSString stringWithFormat:@"%g GB",capacity/(double)(1ULL<<30)]:VIMLocalized(@"settings.not-recorded", @"Not recorded")]],
+        @[[NSTextField labelWithString:VIMLocalized(@"diskmaintenance.space-on-this-mac", @"Space on this Mac:")],[NSTextField labelWithString:size]],
+        @[[NSTextField labelWithString:VIMLocalized(@"diskmaintenance.maintenance", @"Maintenance:")],tools]]];
     grid.columnSpacing=12;grid.rowSpacing=16;
     [grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;[grid columnAtIndex:1].xPlacement=NSGridCellPlacementLeading;
     return VIMColumn(@[grid,
-        VIMText(@"Reclaim Space recovers unused image storage. Compress also compresses existing data; new writes stay uncompressed.",NO),
-        VIMText(running?@"Shut down this Mac to use these tools. Capacity stays unchanged. Deleted files may still occupy space inside the image.":
-            @"Capacity stays unchanged. Deleted files may still occupy space inside the image.",NO)]);
+        VIMText(VIMLocalized(@"diskmaintenance.reclaim-space-recovers-unused-image-storage-compress-also-compresses-existing-data-new", @"Reclaim Space recovers unused image storage. Compress also compresses existing data; new writes stay uncompressed."),NO),
+        VIMText(running?VIMLocalized(@"diskmaintenance.shut-down-this-mac-to-use-these-tools-capacity-stays-unchanged-deleted", @"Shut down this Mac to use these tools. Capacity stays unchanged. Deleted files may still occupy space inside the image."):
+            VIMLocalized(@"diskmaintenance.capacity-stays-unchanged-deleted-files-may-still-occupy-space-inside-the-image", @"Capacity stays unchanged. Deleted files may still occupy space inside the image."),NO)]);
 }
 - (void)maintainDisk:(NSButton *)sender {
     if(self.maintenanceWindow||[VIMDiskMaintenance hasActiveOperation])return;
-    if([VIMSession isRunningMachine:self.machine]){self.feedback.stringValue=@"Shut down this Mac before maintaining its disk.";return;}
+    if([VIMSession isRunningMachine:self.machine]){self.feedback.stringValue=VIMLocalized(@"diskmaintenance.shut-down-this-mac-before-maintaining-its-disk", @"Shut down this Mac before maintaining its disk.");return;}
     BOOL compressed=sender.tag==1;
-    NSAlert *alert=[NSAlert new];alert.messageText=compressed?@"Compress this Mac’s disk?":@"Reclaim space from this Mac’s disk?";
+    NSAlert *alert=[NSAlert new];alert.messageText=compressed?VIMLocalized(@"diskmaintenance.compress-this-mac-s-disk", @"Compress this Mac’s disk?"):VIMLocalized(@"diskmaintenance.reclaim-space-from-this-mac-s-disk", @"Reclaim space from this Mac’s disk?");
     alert.informativeText=[NSString stringWithFormat:compressed?
-        @"Reclaim unused image storage and compress existing data for “%@”. New writes stay uncompressed.\n\nThis needs temporary free space. Wait for the operation to finish and keep the drive connected.":
-        @"Recover unused image storage for “%@”. Deleted files may still occupy space inside the image.\n\nThis needs temporary free space. Wait for the operation to finish and keep the drive connected.",self.machine.name];
-    [alert addButtonWithTitle:compressed?@"Compress":@"Reclaim Space"];[alert addButtonWithTitle:@"Cancel"];
+        VIMLocalized(@"diskmaintenance.reclaim-unused-image-storage-and-compress-existing-data-for-new-writes-stay", @"Reclaim unused image storage and compress existing data for “%@”. New writes stay uncompressed.\n\nThis needs temporary free space. Wait for the operation to finish and keep the drive connected."):
+        VIMLocalized(@"diskmaintenance.recover-unused-image-storage-for-deleted-files-may-still-occupy-space-inside", @"Recover unused image storage for “%@”. Deleted files may still occupy space inside the image.\n\nThis needs temporary free space. Wait for the operation to finish and keep the drive connected."),self.machine.name];
+    [alert addButtonWithTitle:compressed?VIMLocalized(@"diskmaintenance.compress-2", @"Compress"):VIMLocalized(@"diskmaintenance.reclaim-space-2", @"Reclaim Space")];[alert addButtonWithTitle:VIMLocalized(@"common.cancel", @"Cancel")];
     VIMPresentAlert(alert,self.window,^(NSModalResponse response){
         if(response==NSAlertFirstButtonReturn)[self runDiskMaintenance:compressed];
     });
@@ -450,17 +451,17 @@ static void VIMAlignFormBaselines(NSView *view) {
     NSWindow *window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,440,208) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
     window.title=self.machine.name;window.releasedWhenClosed=NO;
     window.tabbingMode=NSWindowTabbingModeDisallowed;
-    NSTextField *title=VIMText(compressed?@"Compressing Disk":@"Reclaiming Disk Space",YES);title.font=[NSFont systemFontOfSize:15 weight:NSFontWeightSemibold];
+    NSTextField *title=VIMText(compressed?VIMLocalized(@"diskmaintenance.compressing-disk-2", @"Compressing Disk"):VIMLocalized(@"diskmaintenance.reclaiming-disk-space-2", @"Reclaiming Disk Space"),YES);title.font=[NSFont systemFontOfSize:15 weight:NSFontWeightSemibold];
     NSTextField *machine=VIMText(self.machine.name,NO);machine.lineBreakMode=NSLineBreakByTruncatingMiddle;machine.maximumNumberOfLines=1;machine.toolTip=self.machine.name;
     NSStackView *identity=VIMColumn(@[title,machine]);identity.spacing=4;
     NSStackView *header=[NSStackView stackViewWithViews:@[VIMDiskSymbol(28),identity]];header.spacing=14;header.alignment=NSLayoutAttributeCenterY;
-    NSTextField *status=VIMText(@"Checking disk…",NO);status.textColor=NSColor.labelColor;
+    NSTextField *status=VIMText(VIMLocalized(@"diskmaintenance.checking-disk", @"Checking disk…"),NO);status.textColor=NSColor.labelColor;
     NSTextField *percentage=[NSTextField labelWithString:@""];percentage.font=[NSFont monospacedDigitSystemFontOfSize:12 weight:NSFontWeightRegular];
     percentage.textColor=NSColor.secondaryLabelColor;percentage.alignment=NSTextAlignmentRight;
     [percentage.widthAnchor constraintEqualToConstant:44].active=YES;
     NSStackView *statusRow=[NSStackView stackViewWithViews:@[status,percentage]];statusRow.spacing=12;statusRow.alignment=NSLayoutAttributeFirstBaseline;
     [status.widthAnchor constraintEqualToAnchor:statusRow.widthAnchor constant:-56].active=YES;
-    NSTextField *explanation=VIMText(@"Keep the drive connected. This window closes when the operation finishes.",NO);explanation.font=[NSFont systemFontOfSize:11];
+    NSTextField *explanation=VIMText(VIMLocalized(@"diskmaintenance.keep-the-drive-connected-this-window-closes-when-the-operation-finishes", @"Keep the drive connected. This window closes when the operation finishes."),NO);explanation.font=[NSFont systemFontOfSize:11];
     NSProgressIndicator *progress=[NSProgressIndicator new];progress.style=NSProgressIndicatorStyleBar;progress.indeterminate=YES;
     progress.minValue=0;progress.maxValue=1;[progress startAnimation:nil];
     NSStackView *activity=VIMColumn(@[statusRow,progress]);activity.spacing=8;
@@ -486,56 +487,56 @@ static void VIMAlignFormBaselines(NSView *view) {
             if(fraction<0)[progress startAnimation:nil];else {[progress stopAnimation:nil];progress.doubleValue=fraction;}
         } completion:^(NSDictionary *value,NSError *issue){result=value;failure=issue;[NSApp stopModal];} error:&error];
     if(!started){self.maintenanceWindow=nil;VIMPresentError(error,self.window);return;}
-    self.diskActivity=[VIMInstallationActivity beginWithReason:compressed?@"Compressing a virtual Mac disk":@"Reclaiming virtual Mac disk space"];
+    self.diskActivity=[VIMInstallationActivity beginWithReason:compressed?VIMLocalized(@"diskmaintenance.compressing-a-virtual-mac-disk", @"Compressing a virtual Mac disk"):VIMLocalized(@"diskmaintenance.reclaiming-virtual-mac-disk-space", @"Reclaiming virtual Mac disk space")];
     [window setFrameOrigin:NSMakePoint(NSMidX(self.window.frame)-NSWidth(window.frame)/2,NSMidY(self.window.frame)-NSHeight(window.frame)/2)];
     [NSApp runModalForWindow:window];[window orderOut:nil];self.maintenanceWindow=nil;self.diskActivity=nil;
     [self readStorageSizes];[self render];
     [NSNotificationCenter.defaultCenter postNotificationName:@"VIMLibraryChanged" object:nil];
     if(self.completion)self.completion();
     if(failure){VIMPresentError(failure,self.window);return;}
-    NSAlert *finished=[NSAlert new];finished.messageText=[result[@"Changed"] boolValue]?(compressed?@"Disk compressed":@"Space reclaimed"):@"No additional space to reclaim";
+    NSAlert *finished=[NSAlert new];finished.messageText=[result[@"Changed"] boolValue]?(compressed?VIMLocalized(@"diskmaintenance.disk-compressed", @"Disk compressed"):VIMLocalized(@"diskmaintenance.space-reclaimed", @"Space reclaimed")):VIMLocalized(@"diskmaintenance.no-additional-space-to-reclaim", @"No additional space to reclaim");
     if([result[@"Changed"] boolValue]) {
         NSString *(^size)(NSNumber *)=^NSString *(NSNumber *bytes){return [NSByteCountFormatter stringFromByteCount:bytes.longLongValue countStyle:NSByteCountFormatterCountStyleFile];};
         NSNumber *saved=@([result[@"BeforeBytes"] unsignedLongLongValue]-[result[@"AfterBytes"] unsignedLongLongValue]);
-        finished.informativeText=[NSString stringWithFormat:@"Saved %@ for “%@”. The virtual disk’s capacity is unchanged.",size(saved),self.machine.name];
-        NSGridView *summary=[NSGridView gridViewWithViews:@[@[VIMText(@"Before",NO),VIMText(size(result[@"BeforeBytes"]),NO)],
-            @[VIMText(@"After",NO),VIMText(size(result[@"AfterBytes"]),YES)]]];summary.columnSpacing=24;summary.rowSpacing=8;
+        finished.informativeText=[NSString stringWithFormat:VIMLocalized(@"diskmaintenance.saved-for-the-virtual-disk-s-capacity-is-unchanged", @"Saved %@ for “%@”. The virtual disk’s capacity is unchanged."),size(saved),self.machine.name];
+        NSGridView *summary=[NSGridView gridViewWithViews:@[@[VIMText(VIMLocalized(@"diskmaintenance.before", @"Before"),NO),VIMText(size(result[@"BeforeBytes"]),NO)],
+            @[VIMText(VIMLocalized(@"diskmaintenance.after", @"After"),NO),VIMText(size(result[@"AfterBytes"]),YES)]]];summary.columnSpacing=24;summary.rowSpacing=8;
         [summary columnAtIndex:1].xPlacement=NSGridCellPlacementTrailing;finished.accessoryView=summary;
-    } else finished.informativeText=[NSString stringWithFormat:@"“%@” already uses the same or less storage. Its original disk was kept.",self.machine.name];
-    [finished addButtonWithTitle:@"OK"];VIMPresentAlert(finished,self.window,nil);
+    } else finished.informativeText=[NSString stringWithFormat:VIMLocalized(@"diskmaintenance.already-uses-the-same-or-less-storage-its-original-disk-was-kept", @"“%@” already uses the same or less storage. Its original disk was kept."),self.machine.name];
+    [finished addButtonWithTitle:VIMLocalized(@"common.ok", @"OK")];VIMPresentAlert(finished,self.window,nil);
 }
 - (NSView *)sharingContentForHost:(BOOL)host {
     BOOL files=self.hardwareIndex==0;
     NSDictionary *network=[VIMSession networkDetailsForMachine:self.machine];BOOL shared=[network[@"Mode"] isEqual:@"shared"];
     NSInteger hostVersion=NSProcessInfo.processInfo.operatingSystemVersion.majorVersion;
-    NSString *hostSettings=hostVersion>=13?@"System Settings → General → Sharing":@"System Preferences → Sharing";
+    NSString *hostSettings=hostVersion>=13?VIMLocalized(@"settings.system-settings-general-sharing", @"System Settings → General → Sharing"):VIMLocalized(@"settings.system-preferences-sharing", @"System Preferences → Sharing");
     if(host) {
         BOOL windowsFileSharing=files&&
             [@[@"tiger",@"leopard",@"snowleopard"] containsObject:self.machine.guest];
         NSString *sharingInstructions=windowsFileSharing?
-            @"1. On this Mac, go to System Settings → General → Sharing. Click the info button next to File Sharing and turn it on. Click Options, turn on SMB sharing, then select your account under Windows File Sharing and enter its password.":
-            [NSString stringWithFormat:@"1. On this Mac, open %@ and enable %@.",hostSettings,files?@"File Sharing":@"Remote Login"];
+            VIMLocalized(@"settings.1-on-this-mac-go-to-system-settings-general-sharing", @"1. On this Mac, go to System Settings → General → Sharing. Click the info button next to File Sharing and turn it on. Click Options, turn on SMB sharing, then select your account under Windows File Sharing and enter its password."):
+            [NSString stringWithFormat:VIMLocalized(@"settings.1-on-this-mac-open-and-enable", @"1. On this Mac, open %@ and enable %@."),hostSettings,files?VIMLocalized(@"settings.file-sharing", @"File Sharing"):VIMLocalized(@"settings.remote-login", @"Remote Login")];
         NSString *username=[NSUserName() stringByReplacingOccurrencesOfString:@"'" withString:@"'\\''"];
         NSString *hostIP=network[@"HostAddress"];
         NSString *address=hostIP.length?(files?[@"smb://" stringByAppendingString:hostIP]:[NSString stringWithFormat:@"ssh -l '%@' %@",username,hostIP]):@"";
         if(!files&&self.machine.preMetalGuest&&hostIP.length)
             address=[NSString stringWithFormat:@"'/Library/Application Support/Virtual Intel Mac/GuestTools/guest-ssh' -l '%@' %@",username,hostIP];
-        NSButton *copy=[self button:files?@"Copy Address":@"Copy Command" action:@selector(copyConnection:)];copy.identifier=address;
+        NSButton *copy=[self button:files?VIMLocalized(@"settings.copy-address", @"Copy Address"):VIMLocalized(@"settings.copy-command", @"Copy Command") action:@selector(copyConnection:)];copy.identifier=address;
         copy.enabled=address.length>0;
         NSURLComponents *connection=[NSURLComponents new];connection.scheme=files?@"smb":@"ssh";connection.host=hostIP;if(!files)connection.user=NSUserName();
-        NSButton *open=[self button:files?@"Open in Finder":@"Open in Terminal" action:@selector(openGuestConnection:)];open.identifier=address.length?connection.URL.absoluteString:@"";open.enabled=[network[@"Connected"] boolValue]&&address.length;
+        NSButton *open=[self button:files?VIMLocalized(@"settings.open-in-finder", @"Open in Finder"):VIMLocalized(@"settings.open-in-terminal", @"Open in Terminal") action:@selector(openGuestConnection:)];open.identifier=address.length?connection.URL.absoluteString:@"";open.enabled=[network[@"Connected"] boolValue]&&address.length;
         NSStackView *actions=[NSStackView stackViewWithViews:@[open,copy]];actions.spacing=12;
-        return VIMColumn(@[VIMText(files?@"Open this Mac’s files inside the virtual Mac":@"Connect to this Mac from the virtual Mac",YES),
+        return VIMColumn(@[VIMText(files?VIMLocalized(@"settings.open-this-mac-s-files-inside-the-virtual-mac", @"Open this Mac’s files inside the virtual Mac"):VIMLocalized(@"settings.connect-to-this-mac-from-the-virtual-mac", @"Connect to this Mac from the virtual Mac"),YES),
             VIMText(sharingInstructions,NO),
-            [self button:@"Open Sharing Settings" action:@selector(openSharing:)],
-            VIMText(files?@"2. In the virtual Mac’s Finder, choose Go → Connect to Server and enter:":@"2. In the virtual Mac’s Terminal, run:",NO),
-            VIMText(address.length?address:@"Start the virtual Mac and connect its network to discover this Mac’s address.",NO),actions,VIMText(@"Use this Mac’s account and password, not the virtual Mac’s.",NO)]);
+            [self button:VIMLocalized(@"settings.open-sharing-settings", @"Open Sharing Settings") action:@selector(openSharing:)],
+            VIMText(files?VIMLocalized(@"settings.2-in-the-virtual-mac-s-finder-choose-go-connect", @"2. In the virtual Mac’s Finder, choose Go → Connect to Server and enter:"):VIMLocalized(@"settings.2-in-the-virtual-mac-s-terminal-run", @"2. In the virtual Mac’s Terminal, run:"),NO),
+            VIMText(address.length?address:VIMLocalized(@"settings.start-the-virtual-mac-and-connect-its-network-to-discover", @"Start the virtual Mac and connect its network to discover this Mac’s address."),NO),actions,VIMText(VIMLocalized(@"settings.use-this-mac-s-account-and-password-not-the-virtual", @"Use this Mac’s account and password, not the virtual Mac’s."),NO)]);
     }
     NSString *key=files?@"FileSharingEnabled":@"SSHEnabled";
     NSString *portKey=files?@"FileSharingPort":@"SSHPort";
     NSDictionary *ports=VIMSuggestedForwardPorts(self.machine.URL.URLByDeletingLastPathComponent,self.machine.URL);
     NSNumber *port=self.machine.editableConfiguration[portKey]?:ports[portKey];
-    NSButton *enabled=[self toggle:key title:files?@"Allow connections to this virtual Mac’s shared files":@"Allow SSH connections to this virtual Mac"];
+    NSButton *enabled=[self toggle:key title:files?VIMLocalized(@"settings.allow-connections-to-this-virtual-mac-s-shared-files", @"Allow connections to this virtual Mac’s shared files"):VIMLocalized(@"settings.allow-ssh-connections-to-this-virtual-mac", @"Allow SSH connections to this virtual Mac")];
     NSString *address=files?[VIMSMBService URLForMachine:self.machine].absoluteString:
         [NSString stringWithFormat:@"ssh -p %@ -l '%@' 127.0.0.1",port,self.guestUsername];
     NSString *guestIP=[network[@"GuestAddresses"] firstObject];
@@ -548,48 +549,48 @@ static void VIMAlignFormBaselines(NSView *view) {
         address=[NSString stringWithFormat:@"ssh -o HostKeyAlgorithms=+ssh-rsa -c aes128-ctr -o HostKeyAlias=vim-%@ -p %@ -l '%@' '%@'",
             [self.machine.configuration[@"Identifier"] lowercaseString],shared?port:@22,user,shared?@"127.0.0.1":guestIP];
     }
-    NSButton *copy=[self button:files?@"Copy Address":@"Copy Command" action:@selector(copyConnection:)];copy.identifier=address;
+    NSButton *copy=[self button:files?VIMLocalized(@"settings.copy-address", @"Copy Address"):VIMLocalized(@"settings.copy-command", @"Copy Command") action:@selector(copyConnection:)];copy.identifier=address;
     copy.enabled=address.length&&(files||self.guestUsername.length>0);
     NSURLComponents *connection=[NSURLComponents new];connection.scheme=files?@"smb":@"ssh";connection.host=@"127.0.0.1";connection.port=port;if(!files)connection.user=self.guestUsername;
     if(!shared){connection.host=guestIP;connection.port=nil;}
-    NSButton *open=[self button:files?@"Open in Finder":@"Open in Terminal" action:@selector(openConnection:)];open.identifier=files||self.machine.preMetalGuest?address:(address.length?connection.URL.absoluteString:@"");open.enabled=[network[@"Connected"] boolValue]&&(!shared||enabled.state==NSControlStateValueOn)&&address.length&&(files||self.guestUsername.length>0);
+    NSButton *open=[self button:files?VIMLocalized(@"settings.open-in-finder", @"Open in Finder"):VIMLocalized(@"settings.open-in-terminal", @"Open in Terminal") action:@selector(openConnection:)];open.identifier=files||self.machine.preMetalGuest?address:(address.length?connection.URL.absoluteString:@"");open.enabled=[network[@"Connected"] boolValue]&&(!shared||enabled.state==NSControlStateValueOn)&&address.length&&(files||self.guestUsername.length>0);
     NSStackView *actions=[NSStackView stackViewWithViews:@[open,copy]];actions.spacing=12;
-    NSMutableArray *views=[NSMutableArray arrayWithArray:@[VIMText(files?@"Open the virtual Mac’s files on this Mac":@"Connect to the virtual Mac with SSH",YES),
-        VIMText(files?@"1. In the virtual Mac, open System Preferences → Sharing and turn on File Sharing. In Options, enable SMB for your account.":@"1. In the virtual Mac, open System Preferences → Sharing and turn on Remote Login.",NO)]];
+    NSMutableArray *views=[NSMutableArray arrayWithArray:@[VIMText(files?VIMLocalized(@"settings.open-the-virtual-mac-s-files-on-this-mac", @"Open the virtual Mac’s files on this Mac"):VIMLocalized(@"settings.connect-to-the-virtual-mac-with-ssh", @"Connect to the virtual Mac with SSH"),YES),
+        VIMText(files?VIMLocalized(@"settings.1-in-the-virtual-mac-open-system-preferences-sharing-and", @"1. In the virtual Mac, open System Preferences → Sharing and turn on File Sharing. In Options, enable SMB for your account."):VIMLocalized(@"settings.1-in-the-virtual-mac-open-system-preferences-sharing-and-2", @"1. In the virtual Mac, open System Preferences → Sharing and turn on Remote Login."),NO)]];
     if(files) {
-        [views addObject:[self guestSettingsButton:@"Open Sharing in Virtual Mac…" pane:@"sharing"]];
+        [views addObject:[self guestSettingsButton:VIMLocalized(@"settings.open-sharing-in-virtual-mac", @"Open Sharing in Virtual Mac…") pane:@"sharing"]];
     }
     if(!files) {
-        NSButton *automatic=[self button:@"Set Up Remote Login…" action:@selector(enableGuestRemoteLogin:)];
+        NSButton *automatic=[self button:VIMLocalized(@"settings.set-up-remote-login", @"Set Up Remote Login…") action:@selector(enableGuestRemoteLogin:)];
         automatic.enabled=[VIMSession isRunningMachine:self.machine];
-        automatic.toolTip=@"Uses the built-in guest tools. Start the virtual Mac first.";
+        automatic.toolTip=VIMLocalized(@"settings.uses-the-built-in-guest-tools-start-the-virtual-mac", @"Uses the built-in guest tools. Start the virtual Mac first.");
         [views addObject:automatic];
-        NSTextField *username=[self field:@"GuestUsername" value:self.guestUsername];username.placeholderString=@"Guest account short name";
-        username.accessibilityLabel=@"Guest account short name";[views addObject:username];
+        NSTextField *username=[self field:@"GuestUsername" value:self.guestUsername];username.placeholderString=VIMLocalized(@"settings.guest-account-short-name", @"Guest account short name");
+        username.accessibilityLabel=VIMLocalized(@"settings.guest-account-short-name", @"Guest account short name");[views addObject:username];
     }
-    if(shared)[actions addArrangedSubview:[self button:@"Advanced…" action:@selector(toggleAdvancedSharing:)]];
-    [views addObjectsFromArray:@[VIMText(files?@"2. On this Mac, connect using the virtual Mac’s account and password:":@"2. Run this command in Terminal on this Mac:",NO),
-        VIMText(!files&&!self.guestUsername.length?@"Enter your guest account’s short name above.":(address.length?address:@"Start the virtual Mac and wait for its network address."),NO),actions]];
-    if(shared&&enabled.state!=NSControlStateValueOn)[views addObject:VIMText(@"Local connections are turned off. Enable them in Advanced, then restart this Mac.",NO)];
-    if(!shared)[views addObject:VIMText(@"Connect directly using the address above. Service access is controlled by Sharing and Firewall settings inside the virtual Mac; local port forwarding is not used.",NO)];
+    if(shared)[actions addArrangedSubview:[self button:VIMLocalized(@"settings.advanced", @"Advanced…") action:@selector(toggleAdvancedSharing:)]];
+    [views addObjectsFromArray:@[VIMText(files?VIMLocalized(@"settings.2-on-this-mac-connect-using-the-virtual-mac-s", @"2. On this Mac, connect using the virtual Mac’s account and password:"):VIMLocalized(@"settings.2-run-this-command-in-terminal-on-this-mac", @"2. Run this command in Terminal on this Mac:"),NO),
+        VIMText(!files&&!self.guestUsername.length?VIMLocalized(@"settings.enter-your-guest-account-s-short-name-above", @"Enter your guest account’s short name above."):(address.length?address:VIMLocalized(@"settings.start-the-virtual-mac-and-wait-for-its-network-address", @"Start the virtual Mac and wait for its network address.")),NO),actions]];
+    if(shared&&enabled.state!=NSControlStateValueOn)[views addObject:VIMText(VIMLocalized(@"settings.local-connections-are-turned-off-enable-them-in-advanced-then", @"Local connections are turned off. Enable them in Advanced, then restart this Mac."),NO)];
+    if(!shared)[views addObject:VIMText(VIMLocalized(@"settings.connect-directly-using-the-address-above-service-access-is-controlled", @"Connect directly using the address above. Service access is controlled by Sharing and Firewall settings inside the virtual Mac; local port forwarding is not used."),NO)];
     return VIMColumn(views);
 }
 - (NSView *)sharing {
     if(self.hardwareIndex==2) {
-        NSView *pane=[NSView new];NSButton *enabled=[self toggle:@"ClipboardEnabled" title:@"Share copied text with this Mac"];
+        NSView *pane=[NSView new];NSButton *enabled=[self toggle:@"ClipboardEnabled" title:VIMLocalized(@"settings.share-copied-text-with-this-mac", @"Share copied text with this Mac")];
         enabled.translatesAutoresizingMaskIntoConstraints=NO;[pane addSubview:enabled];
         [NSLayoutConstraint activateConstraints:@[[enabled.leadingAnchor constraintEqualToAnchor:pane.leadingAnchor constant:24],
             [enabled.centerYAnchor constraintEqualToAnchor:pane.centerYAnchor],
             [enabled.trailingAnchor constraintLessThanOrEqualToAnchor:pane.trailingAnchor constant:-20]]];
         NSTabView *tabs=[NSTabView new];tabs.tabViewType=NSTopTabsBezelBorder;
         NSTabViewItem *item=[[NSTabViewItem alloc] initWithIdentifier:@"guest"];
-        item.label=@"Virtual Mac";item.view=pane;[tabs addTabViewItem:item];return tabs;
+        item.label=VIMLocalized(@"settings.virtual-mac", @"Virtual Mac");item.view=pane;[tabs addTabViewItem:item];return tabs;
     }
     NSTabView *tabs=[NSTabView new];tabs.identifier=@"SharingDirections";tabs.tabViewType=NSTopTabsBezelBorder;
-    tabs.accessibilityLabel=@"Which Mac to connect to";
+    tabs.accessibilityLabel=VIMLocalized(@"settings.which-mac-to-connect-to", @"Which Mac to connect to");
     for(NSNumber *host in @[@YES,@NO]) {
         NSTabViewItem *item=[[NSTabViewItem alloc] initWithIdentifier:host.boolValue?@"host":@"guest"];
-        item.label=host.boolValue?@"This Mac":@"Virtual Mac";
+        item.label=host.boolValue?VIMLocalized(@"settings.this-mac", @"This Mac"):VIMLocalized(@"settings.virtual-mac", @"Virtual Mac");
         NSView *pane=[self sharingContentForHost:host.boolValue];VIMAlignFormBaselines(pane);
         item.view=VIMSharingScrollPane(pane);[tabs addTabViewItem:item];
     }
@@ -610,22 +611,22 @@ static void VIMAlignFormBaselines(NSView *view) {
     [self.window makeFirstResponder:nil];if(self.invalidField)return;
     BOOL files=self.hardwareIndex==0;NSString *key=files?@"FileSharingEnabled":@"SSHEnabled",*portKey=files?@"FileSharingPort":@"SSHPort";
     NSDictionary *c=self.machine.editableConfiguration;
-    NSButton *allowed=[NSButton checkboxWithTitle:files?@"Allow connections to shared files":@"Allow SSH connections" target:nil action:nil];allowed.state=c[key]?[c[key] boolValue]:YES;
+    NSButton *allowed=[NSButton checkboxWithTitle:files?VIMLocalized(@"settings.allow-connections-to-shared-files", @"Allow connections to shared files"):VIMLocalized(@"settings.allow-ssh-connections", @"Allow SSH connections") target:nil action:nil];allowed.state=c[key]?[c[key] boolValue]:YES;
     NSNumber *port=c[portKey]?:VIMSuggestedForwardPorts(self.machine.URL.URLByDeletingLastPathComponent,self.machine.URL)[portKey];
     NSTextField *field=[NSTextField textFieldWithString:port.stringValue];[field.widthAnchor constraintEqualToConstant:100].active=YES;
-    NSGridView *grid=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:@"Local port:"],field]]];grid.columnSpacing=12;
+    NSGridView *grid=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:VIMLocalized(@"settings.local-port", @"Local port:")],field]]];grid.columnSpacing=12;
     grid.rowAlignment=NSGridRowAlignmentFirstBaseline;
     [grid columnAtIndex:0].width=80;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;[grid columnAtIndex:1].xPlacement=NSGridCellPlacementLeading;
     [grid.widthAnchor constraintEqualToConstant:240].active=YES;
-    NSTextField *explanation=VIMText(@"Accessible only from this Mac. Changes take effect at the next start.",NO);
+    NSTextField *explanation=VIMText(VIMLocalized(@"settings.accessible-only-from-this-mac-changes-take-effect-at-the", @"Accessible only from this Mac. Changes take effect at the next start."),NO);
     [explanation.widthAnchor constraintEqualToConstant:360].active=YES;
-    VIMConfigurationSheet *sheet=[[VIMConfigurationSheet alloc] initWithTitle:files?@"File Sharing — Advanced":@"Remote Login — Advanced"
+    VIMConfigurationSheet *sheet=[[VIMConfigurationSheet alloc] initWithTitle:files?VIMLocalized(@"settings.file-sharing-advanced", @"File Sharing — Advanced"):VIMLocalized(@"settings.remote-login-advanced", @"Remote Login — Advanced")
         content:VIMColumn(@[allowed,grid,explanation])];
     __weak typeof(self) weakSelf=self;
     sheet.save=^BOOL(NSWindow *window){
         NSScanner *scanner=[NSScanner scannerWithString:field.stringValue];long long value=0;NSError *error=nil;
         if(![scanner scanLongLong:&value]||!scanner.isAtEnd||value<1024||value>65535)
-            error=[NSError errorWithDomain:@"VirtualIntelMac.Settings" code:1 userInfo:@{NSLocalizedDescriptionKey:@"Enter a local port from 1024 to 65535."}];
+            error=[NSError errorWithDomain:@"VirtualIntelMac.Settings" code:1 userInfo:@{NSLocalizedDescriptionKey:VIMLocalized(@"settings.enter-a-local-port-from-1024-to-65535", @"Enter a local port from 1024 to 65535.")}];
         if(!error)[weakSelf.machine saveSettings:@{key:@(allowed.state==NSControlStateValueOn),portKey:@(value)} error:&error];
         if(error){VIMPresentError(error,window);return NO;}
         if(weakSelf.completion)weakSelf.completion();[weakSelf render];return YES;
@@ -634,15 +635,15 @@ static void VIMAlignFormBaselines(NSView *view) {
 - (NSPopUpButton *)audioPopup:(BOOL)input {
     NSPopUpButton *popup=[NSPopUpButton new];popup.identifier=input?@"AudioInputDevice":@"AudioOutputDevice";
     popup.target=self;popup.action=@selector(audioChanged:);[popup.widthAnchor constraintEqualToConstant:240].active=YES;
-    [popup addItemWithTitle:@"Default"];popup.lastItem.representedObject=@"default";
+    [popup addItemWithTitle:VIMLocalized(@"app.default", @"Default")];popup.lastItem.representedObject=@"default";
     NSString *selected=VIMAudioSelection(self.machine.editableConfiguration,input);
     for(NSDictionary *device in VIMHostAudioDevices(input)) {
         [popup addItemWithTitle:device[@"Name"]];popup.lastItem.representedObject=device[@"UID"];
     }
     NSMenuItem *choice=nil;for(NSMenuItem *item in popup.itemArray)if([item.representedObject isEqual:selected])choice=item;
-    if(!choice&&![selected isEqual:@"disabled"]){[popup addItemWithTitle:@"Selected Device (Disconnected)"];choice=popup.lastItem;choice.representedObject=selected;}
+    if(!choice&&![selected isEqual:@"disabled"]){[popup addItemWithTitle:VIMLocalized(@"settings.selected-device-disconnected", @"Selected Device (Disconnected)")];choice=popup.lastItem;choice.representedObject=selected;}
     [popup.menu addItem:NSMenuItem.separatorItem];
-    [popup addItemWithTitle:@"Disconnected"];popup.lastItem.representedObject=@"disabled";
+    [popup addItemWithTitle:VIMLocalized(@"settings.disconnected", @"Disconnected")];popup.lastItem.representedObject=@"disabled";
     if([selected isEqual:@"disabled"])choice=popup.lastItem;
     [popup selectItem:choice];return popup;
 }
@@ -659,7 +660,7 @@ static void VIMAlignFormBaselines(NSView *view) {
 - (void)bridgeChanged:(NSPopUpButton *)sender {
     if([self commitSettings:@{@"BridgeInterface":sender.selectedItem.representedObject?:@""}]) {
         if([VIMSession isRunningMachine:self.machine]) {
-            NSAlert *alert=[NSAlert new];alert.messageText=@"Restart to change the bridge interface";alert.informativeText=@"Your selection is saved for the next start.";[alert addButtonWithTitle:@"OK"];VIMPresentAlert(alert,self.window,nil);
+            NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"settings.restart-to-change-the-bridge-interface", @"Restart to change the bridge interface");alert.informativeText=VIMLocalized(@"settings.your-selection-is-saved-for-the-next-start", @"Your selection is saved for the next start.");[alert addButtonWithTitle:VIMLocalized(@"common.ok", @"OK")];VIMPresentAlert(alert,self.window,nil);
         }[self render];
     }
 }
@@ -670,11 +671,11 @@ static void VIMAlignFormBaselines(NSView *view) {
 }
 - (void)networkAdvanced:(id)sender {
     NSTextField *mac=[NSTextField textFieldWithString:VIMNetworkMACAddress(self.machine.editableConfiguration)];[mac.widthAnchor constraintEqualToConstant:175].active=YES;
-    NSButton *generate=[self button:@"Generate" action:@selector(generateMAC:)];generate.cell.representedObject=mac;
+    NSButton *generate=[self button:VIMLocalized(@"ui.generate", @"Generate") action:@selector(generateMAC:)];generate.cell.representedObject=mac;
     NSStackView *macRow=[NSStackView stackViewWithViews:@[mac,generate]];macRow.spacing=12;
     macRow.alignment=NSLayoutAttributeFirstBaseline;
     NSPopUpButton *type=[NSPopUpButton new];[type addItemWithTitle:@"Intel 82545EM Gigabit Ethernet"];type.toolTip=@"QEMU e1000-82545em · PCI 8086:100F";
-    NSGridView *grid=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:@"MAC:"],macRow],@[[NSTextField labelWithString:@"Type:"],type]]];grid.rowSpacing=16;grid.columnSpacing=12;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
+    NSGridView *grid=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:VIMLocalized(@"settings.mac", @"MAC:")],macRow],@[[NSTextField labelWithString:VIMLocalized(@"settings.type", @"Type:")],type]]];grid.rowSpacing=16;grid.columnSpacing=12;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
     // A stack's bounds and a popup's bezel are not text baselines. Align the
     // captions with the actual editable/control text, not their outer frames.
     for(NSInteger row=0;row<2;row++) {
@@ -682,11 +683,11 @@ static void VIMAlignFormBaselines(NSView *view) {
         caption.yPlacement=NSGridCellPlacementNone;
         caption.customPlacementConstraints=@[[caption.contentView.firstBaselineAnchor constraintEqualToAnchor:(row==0?mac:type).firstBaselineAnchor]];
     }
-    VIMConfigurationSheet *sheet=[[VIMConfigurationSheet alloc] initWithTitle:@"Network — Advanced" content:VIMColumn(@[grid,VIMText(@"Changes take effect the next time this Mac starts.",NO)])];
+    VIMConfigurationSheet *sheet=[[VIMConfigurationSheet alloc] initWithTitle:VIMLocalized(@"ui.network-advanced", @"Network — Advanced") content:VIMColumn(@[grid,VIMText(VIMLocalized(@"settings.changes-take-effect-the-next-time-this-mac-starts", @"Changes take effect the next time this Mac starts."),NO)])];
     __weak typeof(self) weakSelf=self;
     sheet.save=^BOOL(NSWindow *window){
         NSError *error=nil;
-        if(!VIMNetworkMACAddressIsValid(mac.stringValue))error=[NSError errorWithDomain:@"VirtualIntelMac.Settings" code:1 userInfo:@{NSLocalizedDescriptionKey:@"Enter a valid MAC address, such as 52:54:00:12:34:56. Use a unicast address unique to this network."}];
+        if(!VIMNetworkMACAddressIsValid(mac.stringValue))error=[NSError errorWithDomain:@"VirtualIntelMac.Settings" code:1 userInfo:@{NSLocalizedDescriptionKey:VIMLocalized(@"settings.enter-a-valid-mac-address-such-as-52-54-00", @"Enter a valid MAC address, such as 52:54:00:12:34:56. Use a unicast address unique to this network.")}];
         if(!error)[weakSelf.machine saveSettings:@{@"MACAddress":mac.stringValue.uppercaseString} error:&error];
         if(error){VIMPresentError(error,window);return NO;}if(weakSelf.completion)weakSelf.completion();[weakSelf render];return YES;
     };[self presentEditor:sheet];
@@ -699,7 +700,7 @@ static void VIMAlignFormBaselines(NSView *view) {
 - (NSButton *)guestSettingsButton:(NSString *)title pane:(NSString *)pane {
     NSButton *button=[self button:title action:@selector(openGuestSettings:)];button.identifier=pane;
     button.enabled=[VIMSession isRunningMachine:self.machine];
-    button.toolTip=@"Uses the built-in guest tools. Start the virtual Mac and sign in first.";return button;
+    button.toolTip=VIMLocalized(@"settings.uses-the-built-in-guest-tools-start-the-virtual-mac-2", @"Uses the built-in guest tools. Start the virtual Mac and sign in first.");return button;
 }
 - (void)openGuestSettings:(NSButton *)sender {
     sender.enabled=NO;
@@ -717,12 +718,12 @@ static void VIMAlignFormBaselines(NSView *view) {
         NSError *saveError=nil;
         if(![self.machine saveSettings:@{@"SSHEnabled":@YES} error:&saveError]){VIMPresentError(saveError,self.window);return;}
         [self render];
-        NSAlert *alert=[NSAlert new];alert.messageText=@"Remote Login is on";
+        NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"settings.remote-login-is-on", @"Remote Login is on");
         BOOL restart=![self.machine.configuration[@"SSHEnabled"] boolValue]||
             ![self.machine.configuration[@"SSHPort"] isEqual:self.machine.editableConfiguration[@"SSHPort"]];
-        alert.informativeText=restart?@"Remote Login is enabled in the virtual Mac. You previously turned off or changed its local connection port; restart the virtual Mac to apply that change, then use the command shown here.":
-            @"Remote Login is enabled. Use the command shown here with your virtual Mac’s account and password—there’s no need to restart.";
-        [alert addButtonWithTitle:@"OK"];VIMPresentAlert(alert,self.window,nil);
+        alert.informativeText=restart?VIMLocalized(@"settings.remote-login-is-enabled-in-the-virtual-mac-you-previously", @"Remote Login is enabled in the virtual Mac. You previously turned off or changed its local connection port; restart the virtual Mac to apply that change, then use the command shown here."):
+            VIMLocalized(@"settings.remote-login-is-enabled-use-the-command-shown-here-with", @"Remote Login is enabled. Use the command shown here with your virtual Mac’s account and password—there’s no need to restart.");
+        [alert addButtonWithTitle:VIMLocalized(@"common.ok", @"OK")];VIMPresentAlert(alert,self.window,nil);
     }];
 }
 - (void)render {
@@ -749,7 +750,7 @@ static void VIMAlignFormBaselines(NSView *view) {
         table.headerView=nil;table.style=NSTableViewStylePlain;table.rowHeight=40;table.intercellSpacing=NSZeroSize;table.selectionHighlightStyle=NSTableViewSelectionHighlightStyleRegular;table.backgroundColor=NSColor.textBackgroundColor;
         table.allowsEmptySelection=NO;table.allowsMultipleSelection=NO;
         NSTableColumn *column=[[NSTableColumn alloc] initWithIdentifier:@"category"];column.width=187;[table addTableColumn:column];
-        table.columnAutoresizingStyle=NSTableViewLastColumnOnlyAutoresizingStyle;table.accessibilityLabel=[self.section isEqual:@"Hardware"]?@"Hardware categories":@"Sharing categories";
+        table.columnAutoresizingStyle=NSTableViewLastColumnOnlyAutoresizingStyle;table.accessibilityLabel=[self.section isEqual:@"Hardware"]?VIMLocalized(@"settings.hardware-categories", @"Hardware categories"):VIMLocalized(@"settings.sharing-categories", @"Sharing categories");
         table.dataSource=self;sidebar.documentView=table;[content addSubview:sidebar];
         [NSLayoutConstraint activateConstraints:@[[sidebar.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:12],
             [sidebar.topAnchor constraintEqualToAnchor:content.topAnchor constant:12],[sidebar.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-12],
@@ -798,7 +799,7 @@ static void VIMAlignFormBaselines(NSView *view) {
         [pane.topAnchor constraintEqualToAnchor:document.topAnchor],
         [pane.bottomAnchor constraintEqualToAnchor:document.bottomAnchor]]];
     if(hasRestore) {
-        NSButton *restore=[self button:@"Restore Defaults" action:@selector(restoreDefaults:)];restore.translatesAutoresizingMaskIntoConstraints=NO;[content addSubview:restore];
+        NSButton *restore=[self button:VIMLocalized(@"settings.restore-defaults", @"Restore Defaults") action:@selector(restoreDefaults:)];restore.translatesAutoresizingMaskIntoConstraints=NO;[content addSubview:restore];
         [NSLayoutConstraint activateConstraints:@[[restore.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-32],[restore.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-30]]];
     }
     if([self.section isEqual:@"General"]) {
@@ -827,7 +828,7 @@ static void VIMAlignFormBaselines(NSView *view) {
         @"File Sharing":NSColor.systemBlueColor,@"Remote Login":NSColor.darkGrayColor,@"Clipboard":NSColor.systemOrangeColor,
         @"CD/DVD":NSColor.systemTealColor}[title]?:NSColor.systemBlueColor;
     NSView *icon=[[VIMSettingsIcon alloc] initWithSymbol:symbol color:color glyphSize:[title isEqual:@"Clipboard"]?16:20];
-    NSTextField *label=[NSTextField labelWithString:title];label.font=[NSFont systemFontOfSize:13];
+    NSTextField *label=[NSTextField labelWithString:VIMLocalizedLabel(title)];label.font=[NSFont systemFontOfSize:13];
     icon.translatesAutoresizingMaskIntoConstraints=NO;label.translatesAutoresizingMaskIntoConstraints=NO;[cell addSubview:icon];[cell addSubview:label];
     [NSLayoutConstraint activateConstraints:@[[icon.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:8],[icon.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],[icon.widthAnchor constraintEqualToConstant:32],[icon.heightAnchor constraintEqualToConstant:32],
         [label.leadingAnchor constraintEqualToAnchor:icon.trailingAnchor constant:8],[label.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],[label.trailingAnchor constraintLessThanOrEqualToAnchor:cell.trailingAnchor constant:-8]]];
@@ -844,7 +845,7 @@ static void VIMAlignFormBaselines(NSView *view) {
     if([key isEqual:@"GuestUsername"]) {
         NSString *value=field.stringValue;
         NSCharacterSet *allowed=[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"];
-        if([value rangeOfCharacterFromSet:allowed.invertedSet].location!=NSNotFound){self.feedback.stringValue=@"Use the guest account’s short name (letters, numbers, dots, hyphens or underscores).";self.invalidField=YES;return;}
+        if([value rangeOfCharacterFromSet:allowed.invertedSet].location!=NSNotFound){self.feedback.stringValue=VIMLocalized(@"settings.use-the-guest-account-s-short-name-letters-numbers-dots", @"Use the guest account’s short name (letters, numbers, dots, hyphens or underscores).");self.invalidField=YES;return;}
         if([value isEqual:self.guestUsername]){self.feedback.stringValue=@"";return;}
         self.guestUsername=value;[NSUserDefaults.standardUserDefaults setObject:value forKey:[@"VIMGuestUsername-" stringByAppendingString:self.machine.URL.path]];
         dispatch_async(dispatch_get_main_queue(),^{[self render];});return;
@@ -852,14 +853,14 @@ static void VIMAlignFormBaselines(NSView *view) {
     if([key isEqual:@"Name"]) {
         if([field.stringValue isEqual:self.machine.pendingName?:self.machine.name]){self.feedback.stringValue=@"";return;}
         if(![self.machine rename:field.stringValue error:&error]){self.feedback.stringValue=error.localizedDescription;self.invalidField=YES;}
-        else {self.feedback.stringValue=@"";self.window.title=[NSString stringWithFormat:@"“%@” Configuration",self.machine.name];if(self.completion)self.completion();}
+        else {self.feedback.stringValue=@"";self.window.title=[NSString stringWithFormat:VIMLocalized(@"ui.configuration", @"“%@” Configuration"),self.machine.name];if(self.completion)self.completion();}
         return;
     }
     NSScanner *scanner=[NSScanner scannerWithString:field.stringValue];long long value=0;
     BOOL port=[key hasSuffix:@"Port"];
     BOOL megabytes=[key isEqual:@"MemoryMiB"];
     if(![scanner scanLongLong:&value]||!scanner.isAtEnd||value<(port||megabytes?1024:1)||value>(port?65535:(megabytes?NSProcessInfo.processInfo.physicalMemory/(1024*1024):([key isEqual:@"CPUCount"]?NSProcessInfo.processInfo.processorCount:1024)))) {
-        self.feedback.stringValue=port?@"Enter a local port from 1024–65535.":[NSString stringWithFormat:@"Use up to %lu processors or %llu MB of memory.",(unsigned long)NSProcessInfo.processInfo.processorCount,NSProcessInfo.processInfo.physicalMemory/(1024ULL*1024)];self.invalidField=YES;return;
+        self.feedback.stringValue=port?VIMLocalized(@"settings.enter-a-local-port-from-1024-65535", @"Enter a local port from 1024–65535."):[NSString stringWithFormat:VIMLocalized(@"settings.use-up-to-lu-processors-or-llu-mb-of-memory", @"Use up to %lu processors or %llu MB of memory."),(unsigned long)NSProcessInfo.processInfo.processorCount,NSProcessInfo.processInfo.physicalMemory/(1024ULL*1024)];self.invalidField=YES;return;
     }
     if([key isEqual:@"MemoryGiB"]){key=@"MemoryMiB";value*=1024;}
     if([self.machine.editableConfiguration[key] longLongValue]==value){self.feedback.stringValue=@"";return;}
@@ -927,7 +928,7 @@ static void VIMAlignFormBaselines(NSView *view) {
         NSURL *profile=[directory URLByAppendingPathComponent:[self.machine.configuration[@"Identifier"] stringByAppendingPathExtension:@"terminal"]];NSError *failure=nil;
         NSDictionary *settings=@{@"type":@"Window Settings",@"name":self.machine.name,@"CommandString":sender.identifier,@"RunCommandAsShell":@NO,@"ProfileCurrentVersion":@2.08};
         if(![NSFileManager.defaultManager createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:&failure]||![settings writeToURL:profile error:&failure]||![NSWorkspace.sharedWorkspace openURL:profile])
-            VIMPresentError(failure?:[NSError errorWithDomain:@"VirtualIntelMac.RemoteLogin" code:1 userInfo:@{NSLocalizedDescriptionKey:@"Terminal couldn’t open this connection. Use Copy Command and paste it into Terminal."}],self.window);
+            VIMPresentError(failure?:[NSError errorWithDomain:@"VirtualIntelMac.RemoteLogin" code:1 userInfo:@{NSLocalizedDescriptionKey:VIMLocalized(@"settings.terminal-couldn-t-open-this-connection-use-copy-command-and", @"Terminal couldn’t open this connection. Use Copy Command and paste it into Terminal.")}],self.window);
         return;
     }
     // Finder connects over the VM's network, not the guest-control socket.
@@ -936,7 +937,7 @@ static void VIMAlignFormBaselines(NSView *view) {
     if(url)[NSWorkspace.sharedWorkspace openURL:url];
 }
 - (void)openGuestConnection:(NSButton *)sender {
-    NSString *title=sender.title;sender.enabled=NO;sender.title=@"Opening…";
+    NSString *title=sender.title;sender.enabled=NO;sender.title=VIMLocalized(@"settings.opening", @"Opening…");
     [VIMSession openHostConnection:[NSURL URLWithString:sender.identifier] inMachine:self.machine completion:^(NSError *error){
         sender.title=title;sender.enabled=YES;if(error)VIMPresentError(error,self.window);
     }];
@@ -977,13 +978,13 @@ static void VIMAlignFormBaselines(NSView *view) {
         [view cacheDisplayInRect:view.bounds toBitmapImageRep:bitmap];
         return [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToURL:URL options:NSDataWritingAtomic error:error];
     }
-    if(error)*error=[NSError errorWithDomain:@"VirtualIntelMac.Configuration" code:1 userInfo:@{NSLocalizedDescriptionKey:@"Open this Mac’s configuration before capturing its preview."}];
+    if(error)*error=[NSError errorWithDomain:@"VirtualIntelMac.Configuration" code:1 userInfo:@{NSLocalizedDescriptionKey:VIMLocalized(@"settings.open-this-mac-s-configuration-before-capturing-its-preview", @"Open this Mac’s configuration before capturing its preview.")}];
     return NO;
 }
 + (void)requestMicrophoneAccessFromWindow:(NSWindow *)window {
     if([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio]==AVAuthorizationStatusNotDetermined) {
         [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:^(BOOL granted){
-            if(!granted)dispatch_async(dispatch_get_main_queue(),^{NSAlert *alert=[NSAlert new];alert.messageText=@"Microphone access is turned off";alert.informativeText=@"You can allow Virtual Intel Mac to use this Mac’s microphone in Privacy settings.";[alert addButtonWithTitle:@"OK"];VIMPresentAlert(alert,window,nil);});
+            if(!granted)dispatch_async(dispatch_get_main_queue(),^{NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"settings.microphone-access-is-turned-off", @"Microphone access is turned off");alert.informativeText=VIMLocalized(@"settings.you-can-allow-virtual-intel-mac-to-use-this-mac", @"You can allow Virtual Intel Mac to use this Mac’s microphone in Privacy settings.");[alert addButtonWithTitle:VIMLocalized(@"common.ok", @"OK")];VIMPresentAlert(alert,window,nil);});
         }];
     } else [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"]];
 }

@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMInstallerSource.h"
 #import "VIMInstallerCatalog.h"
 #import <CommonCrypto/CommonDigest.h>
@@ -32,7 +33,7 @@ static NSData *RecoveryRequest(NSURLSession *session,NSMutableURLRequest *reques
     }] resume];
     dispatch_semaphore_wait(done,DISPATCH_TIME_FOREVER);
     if(failure||http.statusCode!=200||body.length>65536){
-        SourceFailure(error,@"Apple’s recovery service could not authorize the Mavericks download. Your partial download is saved; try again later.");return nil;
+        SourceFailure(error,VIMLocalized(@"installersource.apple-s-recovery-service-could-not-authorize-the-mavericks-download", @"Apple’s recovery service could not authorize the Mavericks download. Your partial download is saved; try again later."));return nil;
     }
     if(response)*response=http;return body;
 }
@@ -82,7 +83,7 @@ static NSData *RecoveryRequest(NSURLSession *session,NSMutableURLRequest *reques
 }
 + (NSDictionary<NSString *,NSString *> *)headersForURL:(NSURL *)URL error:(NSError **)error {
     NSAssert(!NSThread.isMainThread,@"Recovery authorization is worker-only");
-    if(![self isApprovedURL:URL]){SourceFailure(error,@"This installer download location is not supported.");return nil;}
+    if(![self isApprovedURL:URL]){SourceFailure(error,VIMLocalized(@"installersource.this-installer-download-location-is-not-supported", @"This installer download location is not supported."));return nil;}
     if(![self isMavericksRecoveryAsset:URL])return @{};
     NSURLSessionConfiguration *config=NSURLSessionConfiguration.ephemeralSessionConfiguration;
     config.timeoutIntervalForRequest=30;config.timeoutIntervalForResource=60;
@@ -91,7 +92,7 @@ static NSData *RecoveryRequest(NSURLSession *session,NSMutableURLRequest *reques
     NSHTTPURLResponse *response=nil;
     NSDictionary *recovery=[VIMInstallerCatalog installerForURL:URL][@"Recovery"];
     NSURL *sessionURL=[NSURL URLWithString:recovery[@"SessionURL"]?:@""],*payloadURL=[NSURL URLWithString:recovery[@"PayloadURL"]?:@""];
-    if(!sessionURL||!payloadURL){[session invalidateAndCancel];SourceFailure(error,@"The installer catalog has no recovery service for this download.");return nil;}
+    if(!sessionURL||!payloadURL){[session invalidateAndCancel];SourceFailure(error,VIMLocalized(@"installersource.the-installer-catalog-has-no-recovery-service-for-this-download", @"The installer catalog has no recovery service for this download."));return nil;}
     NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:sessionURL];
     if(!RecoveryRequest(session,request,&response,error)){[session invalidateAndCancel];return nil;}
     NSString *server=nil;
@@ -100,7 +101,7 @@ static NSData *RecoveryRequest(NSURLSession *session,NSMutableURLRequest *reques
     NSArray *parts=[server componentsSeparatedByString:@"~"];
     NSData *challenge=parts.count==2?Unhex(parts[1]):nil;
     unsigned char random[8];
-    if(!challenge.length||SecRandomCopyBytes(kSecRandomDefault,sizeof(random),random)!=errSecSuccess){[session invalidateAndCancel];SourceFailure(error,@"Apple’s recovery service returned an invalid challenge.");return nil;}
+    if(!challenge.length||SecRandomCopyBytes(kSecRandomDefault,sizeof(random),random)!=errSecSuccess){[session invalidateAndCancel];SourceFailure(error,VIMLocalized(@"installersource.apple-s-recovery-service-returned-an-invalid-challenge", @"Apple’s recovery service returned an invalid challenge."));return nil;}
     NSData *client=[NSData dataWithBytes:random length:sizeof(random)];
     // Public recovery-compatible identifiers supplied by Mavericks Forever,
     // not this host's hardware identity.
@@ -126,23 +127,23 @@ static NSData *RecoveryRequest(NSURLSession *session,NSMutableURLRequest *reques
     NSString *token=fields[@"AT"];
     if(![self isMavericksRecoveryAsset:asset.URL]||![asset.URL isEqual:URL]||!token.length||token.length>8192||
        [token rangeOfCharacterFromSet:NSCharacterSet.controlCharacterSet].location!=NSNotFound) {
-        SourceFailure(error,@"Apple’s recovery service did not provide the expected Mavericks installer.");return nil;
+        SourceFailure(error,VIMLocalized(@"installersource.apple-s-recovery-service-did-not-provide-the-expected-mavericks", @"Apple’s recovery service did not provide the expected Mavericks installer."));return nil;
     }
     return @{@"Cookie":[@"AssetToken=" stringByAppendingString:token]};
 }
 + (BOOL)verifyFile:(NSURL *)file source:(NSURL *)URL error:(NSError **)error {
     NSString *expected=[VIMInstallerCatalog fileForURL:URL][@"SHA256"];
     if([self isMavericksRecoveryAsset:URL]&&!expected)
-        return SourceFailure(error,@"The recovery download has no matching verification record in the installer catalog.");
+        return SourceFailure(error,VIMLocalized(@"installersource.the-recovery-download-has-no-matching-verification-record-in-the", @"The recovery download has no matching verification record in the installer catalog."));
     if(!expected)return YES;
     int fd=open(file.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
-    if(fd<0)return SourceFailure(error,@"The downloaded installer could not be read.");
+    if(fd<0)return SourceFailure(error,VIMLocalized(@"installersource.the-downloaded-installer-could-not-be-read", @"The downloaded installer could not be read."));
     CC_SHA256_CTX hash;CC_SHA256_Init(&hash);unsigned char bytes[65536];ssize_t n;
     do{n=read(fd,bytes,sizeof(bytes));if(n>0)CC_SHA256_Update(&hash,bytes,(CC_LONG)n);}while(n>0||(n<0&&errno==EINTR));
-    close(fd);if(n<0)return SourceFailure(error,@"The downloaded installer could not be verified.");
+    close(fd);if(n<0)return SourceFailure(error,VIMLocalized(@"installersource.the-downloaded-installer-could-not-be-verified", @"The downloaded installer could not be verified."));
     unsigned char digest[CC_SHA256_DIGEST_LENGTH];CC_SHA256_Final(digest,&hash);
     if(![Hex([NSData dataWithBytes:digest length:sizeof(digest)]) isEqual:expected.uppercaseString])
-        return SourceFailure(error,@"The download did not match the expected Apple installer. It was not used. Remove the saved download and try again.");
+        return SourceFailure(error,VIMLocalized(@"installersource.the-download-did-not-match-the-expected-apple-installer-it", @"The download did not match the expected Apple installer. It was not used. Remove the saved download and try again."));
     return YES;
 }
 @end

@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMSession.h"
 #import "VIMSymbolImages.h"
 #import "AppDelegate.h"
@@ -79,7 +80,7 @@ static NSError *VIMSessionError(NSString *message) {
 static BOOL VIMPrepareOpenGLSurfaceEndpoint(VIMDisplayConnection *connection,pid_t pid,
     NSString *runtimeDirectory,NSError **error) {
     NSError *failure=nil;NSString *service=[connection enableSurfaceTransportForRendererPID:pid error:&failure];
-    if(!service){if(error)*error=failure?:VIMSessionError(@"The OpenGL renderer could not be connected.");return NO;}
+    if(!service){if(error)*error=failure?:VIMSessionError(VIMLocalized(@"session.the-opengl-renderer-could-not-be-connected", @"The OpenGL renderer could not be connected."));return NO;}
     NSMutableArray<NSString *> *paths=[NSMutableArray arrayWithObject:[runtimeDirectory stringByAppendingPathComponent:@"graphics-endpoint.plist"]];
     NSString *explicitEndpoint=NSProcessInfo.processInfo.environment[@"VIM_OPENGL_DISPLAY_ENDPOINT"];
     if(explicitEndpoint.length)[paths addObject:explicitEndpoint];
@@ -91,7 +92,7 @@ static BOOL VIMPrepareOpenGLSurfaceEndpoint(VIMDisplayConnection *connection,pid
             !([attributes[NSFilePosixPermissions] unsignedIntValue]&0077);
         if(!privateDirectory || ![description writeToFile:path atomically:YES] ||
            ![NSFileManager.defaultManager setAttributes:@{NSFilePosixPermissions:@0600} ofItemAtPath:path error:NULL]) {
-            if(error)*error=VIMSessionError(@"The graphics display connection could not be prepared.");return NO;
+            if(error)*error=VIMSessionError(VIMLocalized(@"session.the-graphics-display-connection-could-not-be-prepared", @"The graphics display connection could not be prepared."));return NO;
         }
     }
     return YES;
@@ -141,7 +142,7 @@ static NSString *VIMMultiMachineDiagnosticDirectory(NSArray<NSString *> *argumen
         self.playButton=[VIMPlayButton new];self.playButton.target=target;self.playButton.action=action;
         self.playButton.bordered=NO;self.playButton.contentTintColor=NSColor.controlAccentColor;
         self.playButton.imageScaling=NSImageScaleProportionallyDown;
-        self.playButton.toolTip=@"Start this Mac";self.playButton.accessibilityLabel=[@"Start " stringByAppendingString:name];self.playButton.keyEquivalent=@"\r";
+        self.playButton.toolTip=VIMLocalized(@"session.start-this-mac", @"Start this Mac");self.playButton.accessibilityLabel=[NSString stringWithFormat:VIMLocalized(@"ui.start", @"Start %@"),name];self.playButton.keyEquivalent=@"\r";
         [self addSubview:self.playButton];
         NSImage *product=[NSImage imageNamed:[guest stringByAppendingString:@"ProductIcon"]];
         if(!product&&![@[@"tiger",@"leopard",@"snowleopard"] containsObject:guest])
@@ -336,7 +337,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         [self.machine.configuration[@"InstallState"] isEqual:@"host-populated"];
     BOOL halted=[@[@"paused",@"suspended",@"shutdown",@"io-error",@"guest-panicked",@"internal-error",@"watchdog"] containsObject:self.lastRunState?:@""];
     BOOL active=self.task.running&&!halted&&(self.preparing||self.preparationRequested||self.installationRequested||(setup&&!self.completionGuestReport));
-    if(active&&!self.sleepActivity)self.sleepActivity=[VIMInstallationActivity beginWithReason:@"Installing macOS in a virtual Mac"];
+    if(active&&!self.sleepActivity)self.sleepActivity=[VIMInstallationActivity beginWithReason:VIMLocalized(@"session.installing-macos-in-a-virtual-mac", @"Installing macOS in a virtual Mac")];
     else if(!active)self.sleepActivity=nil;
 }
 - (void)setPreparing:(BOOL)value {_preparing=value;[self updateInstallationActivity];}
@@ -411,7 +412,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
 - (NSToolbarItem *)toolbar:(NSToolbar *)toolbar itemForItemIdentifier:(NSToolbarItemIdentifier)identifier willBeInsertedIntoToolbar:(BOOL)insert {
     if([identifier isEqual:@"GuestDevices"]) {
         NSToolbarItemGroup *group=[[NSToolbarItemGroup alloc] initWithItemIdentifier:identifier];
-        group.label=@"Devices";group.controlRepresentation=NSToolbarItemGroupControlRepresentationExpanded;group.bordered=YES;
+        group.label=VIMLocalized(@"menu.devices", @"Devices");group.controlRepresentation=NSToolbarItemGroupControlRepresentationExpanded;group.bordered=YES;
         group.selectionMode=NSToolbarItemGroupSelectionModeMomentary;
         NSMutableArray *items=[NSMutableArray new];
         // SDL device selection is currently next-start only. Keep it in Sound
@@ -423,18 +424,18 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     if([identifier isEqual:@"GuestMouse"]) {
         BOOL relative=self.displayView.relativeMouseMode;
         NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];
-        item.label=relative?@"Relative Mouse":@"Tablet Mouse";
-        item.toolTip=relative?@"Using a relative mouse, for games with their own cursor or aim. Click to switch back to the tablet pointer for normal use.":
-            @"Using the absolute tablet pointer, for normal use. Click to switch to a relative mouse for games (⌘⇧M).";
+        item.label=relative?VIMLocalized(@"session.relative-mouse", @"Relative Mouse"):VIMLocalized(@"session.tablet-mouse", @"Tablet Mouse");
+        item.toolTip=relative?VIMLocalized(@"session.using-a-relative-mouse-for-games-with-their-own-cursor", @"Using a relative mouse, for games with their own cursor or aim. Click to switch back to the tablet pointer for normal use."):
+            VIMLocalized(@"session.using-the-absolute-tablet-pointer-for-normal-use-click-to", @"Using the absolute tablet pointer, for normal use. Click to switch to a relative mouse for games (⌘⇧M).");
         item.image=[NSImage imageWithSystemSymbolName:relative?@"computermouse.fill":@"computermouse" accessibilityDescription:item.label];
         item.target=self;item.action=@selector(toggleRelativeMouse:);return item;
     }
     if([identifier isEqual:@"GuestExpand"]) {
         BOOL expanded=[self deviceToolbarExpanded];
-        NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=expanded?@"Hide Devices":@"Show Devices";item.toolTip=item.label;
+        NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=expanded?VIMLocalized(@"session.hide-devices", @"Hide Devices"):VIMLocalized(@"session.show-devices", @"Show Devices");item.toolTip=item.label;
         item.image=[NSImage imageWithSystemSymbolName:expanded?@"chevron.left":@"chevron.down" accessibilityDescription:item.label];item.target=self;item.action=@selector(toggleDeviceToolbar:);return item;
     }
-    NSDictionary *devices=@{@"GuestApps":@[@"Download Apps…",@"appstore",@"downloadApps:"],@"GuestCPU":@[@"CPU & Memory",@"cpu",@"showCPUSettings:"],@"GuestSharing":@[@"Shared Folders",@"folder",@"showSharingSettings:"]};
+    NSDictionary *devices=@{@"GuestApps":@[VIMLocalized(@"menu.download-apps", @"Download Apps…"),@"appstore",@"downloadApps:"],@"GuestCPU":@[VIMLocalizedLabel(@"CPU & Memory"),@"cpu",@"showCPUSettings:"],@"GuestSharing":@[VIMLocalized(@"session.shared-folders", @"Shared Folders"),@"folder",@"showSharingSettings:"]};
     NSArray *device=devices[identifier];if(device){NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=device[0];item.toolTip=device[0];item.image=[identifier isEqual:@"GuestApps"]?VIMAppsSymbolImage():[NSImage imageWithSystemSymbolName:device[1] accessibilityDescription:device[0]];item.target=self;item.action=NSSelectorFromString(device[2]);return item;}
     if([identifier isEqual:@"GuestOptical"]) {
         NSMenuToolbarItem *item=[[NSMenuToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"CD/DVD";item.toolTip=@"CD/DVD";item.image=[NSImage imageWithSystemSymbolName:@"opticaldisc" accessibilityDescription:nil];
@@ -443,26 +444,26 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     }
     if([identifier isEqual:@"GuestNetwork"]||[identifier isEqual:@"GuestAudio"]) {
         BOOL network=[identifier isEqual:@"GuestNetwork"];
-        NSMenuToolbarItem *item=[[NSMenuToolbarItem alloc] initWithItemIdentifier:identifier];item.label=network?@"Network":@"Sound";item.toolTip=item.label;
+        NSMenuToolbarItem *item=[[NSMenuToolbarItem alloc] initWithItemIdentifier:identifier];item.label=VIMLocalizedLabel(network?@"Network":@"Sound");item.toolTip=item.label;
         item.showsIndicator=NO;
         item.image=[NSImage imageWithSystemSymbolName:network?@"network":@"speaker.wave.2" accessibilityDescription:nil];item.menu=WithToolbarMenuTitle([self deviceMenuForKind:network?@"Network":@"Sound Output"],item.label);return item;
     }
     if([identifier isEqual:@"GuestUSB"]) {
-        NSMenuToolbarItem *item=[[NSMenuToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"USB";item.toolTip=@"Connect USB devices to this Mac";
+        NSMenuToolbarItem *item=[[NSMenuToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"USB";item.toolTip=VIMLocalized(@"session.connect-usb-devices-to-this-mac", @"Connect USB devices to this Mac");
         item.showsIndicator=NO;
         item.image=[NSImage imageWithSystemSymbolName:@"cable.connector" accessibilityDescription:nil];
         item.menu=WithToolbarMenuTitle([self deviceMenuForKind:@"USB"],@"USB");return item;
     }
     if([identifier isEqual:@"GuestControls"]) {
-        NSMenuToolbarItem *controls=[[NSMenuToolbarItem alloc] initWithItemIdentifier:identifier];controls.label=@"Controls";controls.toolTip=@"Control this Mac";
+        NSMenuToolbarItem *controls=[[NSMenuToolbarItem alloc] initWithItemIdentifier:identifier];controls.label=VIMLocalized(@"ui.controls", @"Controls");controls.toolTip=VIMLocalized(@"session.control-this-mac", @"Control this Mac");
         controls.showsIndicator=NO;
         controls.image=[NSImage imageWithSystemSymbolName:@"power" accessibilityDescription:nil];
-        NSMenu *menu=[[NSMenu alloc] initWithTitle:@"Controls"];
-        NSArray *titles=@[@"Shut Down",@"Reset…",@"Force Stop…"];
+        NSMenu *menu=[[NSMenu alloc] initWithTitle:VIMLocalized(@"ui.controls", @"Controls")];
+        NSArray *titles=@[VIMLocalized(@"menu.shut-down", @"Shut Down"),VIMLocalized(@"menu.reset", @"Reset…"),VIMLocalized(@"session.force-stop", @"Force Stop…")];
         NSArray *actions=@[NSStringFromSelector(@selector(shutdown:)),NSStringFromSelector(@selector(resetMachine:)),NSStringFromSelector(@selector(forceStop:))];
         for(NSUInteger i=0;i<titles.count;i++){NSMenuItem *item=[[NSMenuItem alloc] initWithTitle:titles[i] action:NSSelectorFromString(actions[i]) keyEquivalent:@""];item.target=self;[menu addItem:item];}
         [menu addItem:NSMenuItem.separatorItem];
-        NSMenuItem *relativeMouse=[[NSMenuItem alloc] initWithTitle:@"Relative Mouse (for Games)" action:@selector(toggleRelativeMouse:) keyEquivalent:@"m"];
+        NSMenuItem *relativeMouse=[[NSMenuItem alloc] initWithTitle:VIMLocalized(@"session.relative-mouse-for-games", @"Relative Mouse (for Games)") action:@selector(toggleRelativeMouse:) keyEquivalent:@"m"];
         relativeMouse.keyEquivalentModifierMask=NSEventModifierFlagCommand|NSEventModifierFlagShift;
         // The cursor is intentionally hidden while this is on (see
         // -effectiveCursor) since it can no longer show where a click will
@@ -471,7 +472,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         relativeMouse.target=self;relativeMouse.state=self.displayView.relativeMouseMode?NSControlStateValueOn:NSControlStateValueOff;[menu addItem:relativeMouse];
         menu.delegate=self;controls.menu=menu;return controls;
     }
-    NSToolbarItem *gear=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];gear.label=@"Configure";gear.toolTip=@"Configure this Mac";
+    NSToolbarItem *gear=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];gear.label=VIMLocalized(@"ui.configure.label", @"Configure");gear.toolTip=VIMLocalized(@"session.configure-this-mac", @"Configure this Mac");
     gear.image=[NSImage imageWithSystemSymbolName:@"gearshape" accessibilityDescription:nil];gear.target=self;gear.action=@selector(configureMachine:);return gear;
 }
 - (void)showStoppedScreen {
@@ -496,7 +497,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
 }
 + (BOOL)performBootOperation:(VIMBootOperation)operation machine:(VIMMachine *)machine error:(NSError **)error {
     if([VIMDiskMaintenance isMaintainingPackage:machine.URL]) {
-        if(error)*error=VIMSessionError(@"Wait for this Mac’s disk maintenance to finish before starting it.");return NO;
+        if(error)*error=VIMSessionError(VIMLocalized(@"diskmaintenance.wait-for-this-mac-s-disk-maintenance-to-finish-before-starting-it", @"Wait for this Mac’s disk maintenance to finish before starting it."));return NO;
     }
     switch(operation) {
         case VIMBootStart:return [self openMachineAfterHostCheck:machine error:error];
@@ -569,7 +570,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     if(![session launch:error]){if(existing)[session showStoppedScreen];return NO;}
     if(existing){existing.window=nil;session.window.windowController=session;session.window.delegate=session;}
     if(cleanupError) {
-        session.guestStatus.stringValue=[NSString stringWithFormat:@"Installer cleanup pending: %@",cleanupError.localizedDescription];
+        session.guestStatus.stringValue=[NSString stringWithFormat:VIMLocalized(@"session.installer-cleanup-pending", @"Installer cleanup pending: %@"),cleanupError.localizedDescription];
         [session.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] Cleanup retry: %@\n",cleanupError.localizedDescription] dataUsingEncoding:NSUTF8StringEncoding]];
     }
     sessions[key]=session;
@@ -586,7 +587,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
 + (void)enableGuestRemoteLogin:(VIMMachine *)machine completion:(void (^)(NSError *))completion {
     VIMSession *session=sessions[SessionKey(machine)];
     if(!session.task.running||session.preparing||session.guestPending||session.diagnosticPending||session.preparationRequested) {
-        completion(VIMSessionError(@"Start this Mac and wait for setup to finish, then try again. You can also enable Remote Login in the virtual Mac’s Sharing preferences."));return;
+        completion(VIMSessionError(VIMLocalized(@"session.start-this-mac-and-wait-for-setup-to-finish-then", @"Start this Mac and wait for setup to finish, then try again. You can also enable Remote Login in the virtual Mac’s Sharing preferences.")));return;
     }
     session.guestPending=YES;
     void (^finish)(NSError *)=^(NSError *error){
@@ -599,14 +600,14 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         if(error){finish(error);return;}
         [session.guestAgent runExecutable:@"/usr/sbin/systemsetup" arguments:@[@"-setremotelogin",@"on"] timeout:30 completion:^(NSDictionary *result,NSError *failure){
             if(failure||![result[@"exitcode"] isEqual:@0]) {
-                finish(failure?:VIMSessionError(@"macOS could not enable Remote Login automatically. In the virtual Mac, open System Preferences → Sharing and select Remote Login."));return;
+                finish(failure?:VIMSessionError(VIMLocalized(@"session.macos-could-not-enable-remote-login-automatically-in-the-virtual", @"macOS could not enable Remote Login automatically. In the virtual Mac, open System Preferences → Sharing and select Remote Login.")));return;
             }
             // systemsetup can print an authorization failure yet exit zero.
             // Confirm the actual setting rather than trusting its exit code.
             [session.guestAgent runExecutable:@"/usr/sbin/systemsetup" arguments:@[@"-getremotelogin"] timeout:15 completion:^(NSDictionary *check,NSError *checkError){
                 NSString *text=[[NSString alloc] initWithData:check[@"stdout"]?:NSData.data encoding:NSUTF8StringEncoding];
                 BOOL enabled=[check[@"exitcode"] isEqual:@0]&&text.length&&[text rangeOfString:@"Remote Login: On"].location!=NSNotFound;
-                finish(checkError?:(!enabled?VIMSessionError(@"Remote Login is still off. Enable it in the virtual Mac’s System Preferences → Sharing; macOS may require your approval there."):nil));
+                finish(checkError?:(!enabled?VIMSessionError(VIMLocalized(@"session.remote-login-is-still-off-enable-it-in-the-virtual", @"Remote Login is still off. Enable it in the virtual Mac’s System Preferences → Sharing; macOS may require your approval there.")):nil));
             }];
         }];
     }];
@@ -614,18 +615,18 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
 + (NSString *)statusForMachine:(VIMMachine *)machine {
     VIMSession *session=sessions[SessionKey(machine)];
     if(session.task.running) {
-        if([session.lastRunState isEqual:@"suspended"])return @"Sleeping";
-        if([session.lastRunState isEqual:@"paused"])return @"Paused";
+        if([session.lastRunState isEqual:@"suspended"])return VIMLocalized(@"session.sleeping", @"Sleeping");
+        if([session.lastRunState isEqual:@"paused"])return VIMLocalized(@"session.paused", @"Paused");
         BOOL installing=machine.preMetalGuest?![machine.configuration[@"InstallState"]?:@"installed" isEqual:@"installed"]:machine.requiresInstallerDisplay;
-        return installing?@"Installing macOS":@"Running";
+        return installing?VIMLocalized(@"session.installing-macos", @"Installing macOS"):VIMLocalized(@"session.running", @"Running");
     }
     BOOL installing=machine.preMetalGuest?![machine.configuration[@"InstallState"]?:@"installed" isEqual:@"installed"]:machine.requiresInstallerDisplay;
-    return installing?@"Installation in progress":@"Shut down";
+    return installing?VIMLocalized(@"session.installation-in-progress", @"Installation in progress"):VIMLocalized(@"session.shut-down", @"Shut down");
 }
 + (void)openGuestPreferences:(NSString *)pane machine:(VIMMachine *)machine completion:(void (^)(NSError *))completion {
     VIMSession *session=sessions[SessionKey(machine)];
     if(!session.task.running||session.preparing||session.guestPending||session.diagnosticPending||session.preparationRequested) {
-        completion(VIMSessionError(@"Start this Mac, sign in and wait for setup to finish, then try again. You can also open System Preferences inside the virtual Mac."));return;
+        completion(VIMSessionError(VIMLocalized(@"session.start-this-mac-sign-in-and-wait-for-setup-to", @"Start this Mac, sign in and wait for setup to finish, then try again. You can also open System Preferences inside the virtual Mac.")));return;
     }
     session.guestPending=YES;
     void (^finish)(NSError *)=^(NSError *error){session.guestPending=NO;[session refreshGuestStatus];completion(error);};
@@ -636,10 +637,10 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
 }
 + (void)openHostConnection:(NSURL *)URL inMachine:(VIMMachine *)machine completion:(void (^)(NSError *))completion {
     VIMSession *session=sessions[SessionKey(machine)];
-    if(!session.task.running){completion(VIMSessionError(@"Start the virtual Mac and sign in to its desktop, then try again."));return;}
+    if(!session.task.running){completion(VIMSessionError(VIMLocalized(@"session.start-the-virtual-mac-and-sign-in-to-its-desktop", @"Start the virtual Mac and sign in to its desktop, then try again.")));return;}
     NSString *host=[self networkDetailsForMachine:machine][@"HostAddress"];
-    if(!host.length||![URL.host isEqual:host]){completion(VIMSessionError(@"This Mac’s network address changed. Reopen File Sharing or Remote Login and try again."));return;}
-    if(session.pendingHostConnectionURL){completion(VIMSessionError(@"A connection is already waiting to open in this virtual Mac."));return;}
+    if(!host.length||![URL.host isEqual:host]){completion(VIMSessionError(VIMLocalized(@"session.this-mac-s-network-address-changed-reopen-file-sharing-or", @"This Mac’s network address changed. Reopen File Sharing or Remote Login and try again.")));return;}
+    if(session.pendingHostConnectionURL){completion(VIMSessionError(VIMLocalized(@"session.a-connection-is-already-waiting-to-open-in-this-virtual", @"A connection is already waiting to open in this virtual Mac.")));return;}
     session.pendingHostConnectionURL=URL;session.pendingHostConnectionCompletion=completion;
     [session servicePendingHostConnection];
 }
@@ -651,7 +652,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     self.pendingHostConnectionURL=nil;self.pendingHostConnectionCompletion=nil;
     NSString *host=[VIMSession networkDetailsForMachine:self.machine][@"HostAddress"];
     if(!host.length||![URL.host isEqual:host]){
-        completion(VIMSessionError(@"This Mac’s network address changed. Reopen File Sharing or Remote Login and try again."));return;
+        completion(VIMSessionError(VIMLocalized(@"session.this-mac-s-network-address-changed-reopen-file-sharing-or", @"This Mac’s network address changed. Reopen File Sharing or Remote Login and try again.")));return;
     }
     self.guestPending=YES;
     void (^finish)(NSError *)=^(NSError *error){self.guestPending=NO;[self refreshGuestStatus];completion(error);};
@@ -659,11 +660,11 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
 }
 + (BOOL)prepareMachineAfterHostCheck:(VIMMachine *)machine error:(NSError **)error {
     if(![@[@"mojave",@"catalina",@"bigsur"] containsObject:machine.guest]) {
-        if(error)*error=VIMSessionError(@"Guest preparation supports Mojave, Catalina and Big Sur.");return NO;
+        if(error)*error=VIMSessionError(VIMLocalized(@"session.guest-preparation-supports-mojave-catalina-and-big-sur", @"Guest preparation supports Mojave, Catalina and Big Sur."));return NO;
     }
     if(![self openMachineAfterHostCheck:machine error:error])return NO;
     VIMSession *session=sessions[SessionKey(machine)];
-    if(session.preparing||session.preparationRequested){if(error)*error=VIMSessionError(@"Guest preparation is already active.");return NO;}
+    if(session.preparing||session.preparationRequested){if(error)*error=VIMSessionError(VIMLocalized(@"session.guest-preparation-is-already-active", @"Guest preparation is already active."));return NO;}
     session.preparationRequested=YES;[session refreshGuestStatus];return YES;
 }
 + (void)stopAll { [pendingRosettaStarts removeAllObjects];for(VIMSession *session in sessions.allValues){if(session.networkStarting){[session cleanUp];[session showStoppedScreen];}if(session.task.running){session.forceResetRequested=NO;session.relaunchForGraphics=NO;session.relaunchForGuestReboot=NO;session.shutdownRequested=YES;[session.task terminate];}} }
@@ -680,13 +681,13 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         // The native installer/bootstrap coordinator is created by launch.
         // Do not send these guests through the newer PVG preparation agent.
         if([machine.configuration[@"InstallState"] isEqual:@"installed"]) {
-            if(error)*error=VIMSessionError(@"This Mac is already installed. Start it to check and repair its graphics support automatically.");return NO;
+            if(error)*error=VIMSessionError(VIMLocalized(@"session.this-mac-is-already-installed-start-it-to-check-and", @"This Mac is already installed. Start it to check and repair its graphics support automatically."));return NO;
         }
         return [self openMachineAfterHostCheck:machine error:error];
     }
     NSURL *journal=[machine.URL URLByAppendingPathComponent:@"State/GuestInstallation.plist"];
     if([NSFileManager.defaultManager fileExistsAtPath:journal.path]) {
-        if(error)*error=VIMSessionError(@"An installation record already exists. Check its saved outcome before starting another installation.");return NO;
+        if(error)*error=VIMSessionError(VIMLocalized(@"session.an-installation-record-already-exists-check-its-saved-outcome-before", @"An installation record already exists. Check its saved outcome before starting another installation."));return NO;
     }
     if(![self prepareMachineAfterHostCheck:machine error:error])return NO;
     sessions[SessionKey(machine)].installationRequested=YES;
@@ -694,12 +695,12 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
 }
 + (BOOL)repairMachineAfterHostCheck:(VIMMachine *)machine error:(NSError **)error {
     if(![@[@"mojave",@"catalina",@"bigsur"] containsObject:machine.guest]) {
-        if(error)*error=VIMSessionError(@"Repair supports Mojave, Catalina and Big Sur.");return NO;
+        if(error)*error=VIMSessionError(VIMLocalized(@"session.repair-supports-mojave-catalina-and-big-sur", @"Repair supports Mojave, Catalina and Big Sur."));return NO;
     }
     if(![self openMachineAfterHostCheck:machine error:error])return NO;
     VIMSession *session=sessions[SessionKey(machine)];
     if(session.preparing||session.preparationRequested||session.repairRequested) {
-        if(error)*error=VIMSessionError(@"Guest setup is already active.");return NO;
+        if(error)*error=VIMSessionError(VIMLocalized(@"session.guest-setup-is-already-active", @"Guest setup is already active."));return NO;
     }
     session.repairRequested=YES;session.explicitRepair=YES;[session refreshGuestStatus];return YES;
 }
@@ -719,7 +720,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     BOOL appleSilicon=NO;
     int translated=0;size_t translatedSize=sizeof(translated);
     if(sysctlbyname("sysctl.proc_translated",&translated,&translatedSize,NULL,0)==0&&translated) {
-        if(error)*error=VIMSessionError(@"Open the Apple silicon version of Virtual Intel Mac. The Intel app cannot use hardware virtualization through Rosetta.");
+        if(error)*error=VIMSessionError(VIMLocalized(@"session.open-the-apple-silicon-version-of-virtual-intel-mac-the", @"Open the Apple silicon version of Virtual Intel Mac. The Intel app cannot use hardware virtualization through Rosetta."));
         return NO;
     }
 #endif
@@ -759,10 +760,10 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     // is authoritative for that path, not fileExistsAtPath.
     NSArray *required=installerDisplay?@[qemu,bios]:(appleSilicon?(extractedDonor?@[qemu,helper,donor,bios]:@[qemu,helper,bios]):@[qemu,bios]);
     for(NSString *path in required)if(![NSFileManager.defaultManager fileExistsAtPath:path]) {
-        if(error)*error=VIMSessionError([@"Missing runtime resource: " stringByAppendingString:path]);return NO;
+        if(error)*error=VIMSessionError([VIMLocalized(@"session.missing-runtime-resource", @"Missing runtime resource: ") stringByAppendingString:path]);return NO;
     }
     if(appleSilicon && mojave && !installerDisplay && ![NSFileManager.defaultManager fileExistsAtPath:llvm]) {
-        if(error)*error=VIMSessionError(@"The Mojave shader compiler repair resource is missing.");return NO;
+        if(error)*error=VIMSessionError(VIMLocalized(@"session.the-mojave-shader-compiler-repair-resource-is-missing", @"The Mojave shader compiler repair resource is missing."));return NO;
     }
     // Keep the lock file in place: unlinking it would allow two processes to
     // lock different inodes for the same package. Do not follow a planted link.
@@ -772,13 +773,13 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     if(self.machineLock<0||fstat(self.machineLock,&lockInfo)||!S_ISREG(lockInfo.st_mode)||
        lockInfo.st_nlink!=1||flock(self.machineLock,LOCK_EX|LOCK_NB)) {
         if(self.machineLock>=0)close(self.machineLock);self.machineLock=-1;
-        if(error)*error=VIMSessionError(@"This Mac is already in use, or its session lock could not be opened. Close its other session before starting it here.");
+        if(error)*error=VIMSessionError(VIMLocalized(@"session.this-mac-is-already-in-use-or-its-session-lock", @"This Mac is already in use, or its session lock could not be opened. Close its other session before starting it here."));
         return NO;
     }
     char directory[]="/tmp/vim-session.XXXXXX";
     if(!mkdtemp(directory)) {
         close(self.machineLock);self.machineLock=-1;
-        if(error)*error=VIMSessionError(@"Could not create the VM session directory.");return NO;
+        if(error)*error=VIMSessionError(VIMLocalized(@"session.could-not-create-the-vm-session-directory", @"Could not create the VM session directory."));return NO;
     }
     self.runtimeDirectory=@(directory);
     [self ensureWindow];self.window.title=self.machine.name;self.window.contentView=[NSView new];
@@ -788,11 +789,11 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     // VGA draws its cursor into the frame and cannot receive PVG power messages.
     self.displayView.softwareCursor=installerDisplay&&!openGLDirectDisplay;
     self.displayView.nearestNeighborScaling=[self.displayScalingFilter isEqual:@"nearest"];
-    self.status=[NSTextField labelWithString:@"Starting…"];self.status.textColor=NSColor.secondaryLabelColor;
-    self.guestStatus=[NSTextField labelWithString:@"Waiting for macOS…"];
+    self.status=[NSTextField labelWithString:VIMLocalized(@"session.starting", @"Starting…")];self.status.textColor=NSColor.secondaryLabelColor;
+    self.guestStatus=[NSTextField labelWithString:VIMLocalized(@"session.waiting-for-macos", @"Waiting for macOS…")];
     self.guestStatus.textColor=NSColor.secondaryLabelColor;
     self.guestStatus.lineBreakMode=NSLineBreakByTruncatingTail;
-    self.shutdownButton=[NSButton buttonWithTitle:@"Shut Down" target:self action:@selector(shutdown:)];self.shutdownButton.enabled=NO;
+    self.shutdownButton=[NSButton buttonWithTitle:VIMLocalized(@"menu.shut-down", @"Shut Down") target:self action:@selector(shutdown:)];self.shutdownButton.enabled=NO;
     // Status labels remain diagnostic models, not permanent guest chrome.
     [content addSubview:self.displayView];
     [NSLayoutConstraint activateConstraints:@[
@@ -815,7 +816,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         [self.window center];
     }
     self.stateLabel=[NSTextField wrappingLabelWithString:@""];self.stateLabel.textColor=NSColor.whiteColor;self.stateLabel.alignment=NSTextAlignmentCenter;
-    self.stateAction=[NSButton buttonWithTitle:@"Start" target:self action:@selector(startAgain:)];
+    self.stateAction=[NSButton buttonWithTitle:VIMLocalized(@"library.start", @"Start") target:self action:@selector(startAgain:)];
     self.statePanel=[NSStackView stackViewWithViews:@[self.stateLabel,self.stateAction]];self.statePanel.orientation=NSUserInterfaceLayoutOrientationVertical;self.statePanel.spacing=16;self.statePanel.hidden=YES;
     self.statePanel.translatesAutoresizingMaskIntoConstraints=NO;[content addSubview:self.statePanel];
     [NSLayoutConstraint activateConstraints:@[[self.statePanel.centerXAnchor constraintEqualToAnchor:content.centerXAnchor],[self.statePanel.centerYAnchor constraintEqualToAnchor:content.centerYAnchor],[self.statePanel.widthAnchor constraintLessThanOrEqualToConstant:400]]];
@@ -836,7 +837,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     BOOL openGLInprocess=openGLDirectDisplay && inprocessLibrary!=nil;
     if(openGLInprocess && (!inprocessLibrary.isAbsolutePath ||
         ![NSFileManager.defaultManager isReadableFileAtPath:inprocessLibrary])) {
-        if(error)*error=VIMSessionError(@"The OpenGL graphics library is missing or unreadable.");
+        if(error)*error=VIMSessionError(VIMLocalized(@"session.the-opengl-graphics-library-is-missing-or-unreadable", @"The OpenGL graphics library is missing or unreadable."));
         [self cleanUp];return NO;
     }
     if(openGLDirectDisplay && !openGLInprocess && rendererPID.length) {
@@ -844,7 +845,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         NSError *surfaceError=nil;
         if(![scanner scanInt:&pid] || !scanner.isAtEnd || pid<=0 ||
            !VIMPrepareOpenGLSurfaceEndpoint(self.displayConnection,pid,self.runtimeDirectory,&surfaceError)) {
-            if(error)*error=surfaceError?:VIMSessionError(@"The OpenGL renderer could not be connected.");
+            if(error)*error=surfaceError?:VIMSessionError(VIMLocalized(@"session.the-opengl-renderer-could-not-be-connected", @"The OpenGL renderer could not be connected."));
             [self cleanUp];return NO;
         }
     }
@@ -874,10 +875,10 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             if([kind isEqual:@"SHUTDOWN"]&&[@[@"guest-reset",@"host-qmp-system-reset"] containsObject:event[@"data"][@"reason"]?:@""]&&
                !session.shutdownRequested&&!session.closeAfterShutdown)session.relaunchForGuestReboot=YES;
             session.displayView.displaySleeping=YES;session.statePanel.hidden=YES;
-            if([kind isEqual:@"SUSPEND"]){session.lastRunState=@"suspended";session.status.stringValue=@"Sleeping";}
+            if([kind isEqual:@"SUSPEND"]){session.lastRunState=@"suspended";session.status.stringValue=VIMLocalized(@"session.sleeping", @"Sleeping");}
         } else if([kind isEqual:@"WAKEUP"]) {
             session.lastRunState=@"running";session.displayView.displaySleeping=NO;
-            session.statePanel.hidden=YES;session.status.stringValue=@"Running";
+            session.statePanel.hidden=YES;session.status.stringValue=VIMLocalized(@"session.running", @"Running");
         } else if([kind isEqual:@"DEVICE_TRAY_MOVED"]&&[event[@"data"][@"tray-open"] isEqual:@YES]&&!session.mediaChangePending) {
             NSString *identifier=event[@"data"][@"id"]?:event[@"data"][@"device"];
             NSMutableDictionary *removed=[NSMutableDictionary new];
@@ -980,7 +981,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         if(!valid){if(error)*error=VIMSessionError(@"--guest-efi requires an absolute path to a regular GPT EFI disk image. The VM’s firmware was not changed.");[self cleanUp];return NO;}
     }
     for(NSString *file in @[firmwareCode,efiOverride?:firmwareEFI])if(![NSFileManager.defaultManager fileExistsAtPath:file]) {
-        if(error)*error=VIMSessionError(@"This app is missing its firmware. Rebuild or reinstall the complete app.");
+        if(error)*error=VIMSessionError(VIMLocalized(@"session.this-app-is-missing-its-firmware-rebuild-or-reinstall-the", @"This app is missing its firmware. Rebuild or reinstall the complete app."));
         [self cleanUp];return NO;
     }
     NSString *(^path)(NSString *)=^NSString *(NSString *key){
@@ -1394,7 +1395,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         for(NSDictionary *device in devices)if([device[@"UID"] isEqual:uid])choice=device;
         NSUInteger matches=0;for(NSDictionary *device in devices)if([device[@"Name"] isEqual:choice[@"Name"]])matches++;
         if(!choice||matches!=1) {
-            if(error)*error=VIMSessionError(@"The selected sound device is unavailable or has a duplicate name. Choose Default or another device in Sound settings.");
+            if(error)*error=VIMSessionError(VIMLocalized(@"session.the-selected-sound-device-is-unavailable-or-has-a-duplicate", @"The selected sound device is unavailable or has a duplicate name. Choose Default or another device in Sound settings."));
             [self cleanUp];return NO;
         }
         environment[input.boolValue?@"VIM_AUDIO_INPUT_DEVICE":@"VIM_AUDIO_OUTPUT_DEVICE"]=choice[@"Name"];
@@ -1449,7 +1450,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     NSString *logPath=[self.machine.URL.path stringByAppendingPathComponent:@"State/session.log"];
     if(![NSFileManager.defaultManager fileExistsAtPath:logPath]) [NSFileManager.defaultManager createFileAtPath:logPath contents:nil attributes:nil];
     self.log=[NSFileHandle fileHandleForWritingAtPath:logPath];
-    if(!self.log) { if(error)*error=VIMSessionError(@"Could not open the VM session log.");[self cleanUp];return NO; }
+    if(!self.log) { if(error)*error=VIMSessionError(VIMLocalized(@"session.could-not-open-the-vm-session-log", @"Could not open the VM session log."));[self cleanUp];return NO; }
     [self.log seekToEndOfFile];self.task.standardOutput=self.log;self.task.standardError=self.log;
     [self.log writeData:[@"\n[Virtual Intel Mac] Memory ordering: normal runtime barriers\n" dataUsingEncoding:NSUTF8StringEncoding]];
     [self.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] %@ runtime: %@\n",
@@ -1457,9 +1458,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     self.task.terminationHandler=^(NSTask *task){dispatch_async(dispatch_get_main_queue(), ^{
         VIMSession *session=weakSelf;if(!session||session.task!=task)return;
         [session.control drainLifecycleEventsAfterExitWithCompletion:^{
-        session.status.stringValue=[NSString stringWithFormat:@"Stopped (exit %d)",task.terminationStatus];
+        session.status.stringValue=[NSString stringWithFormat:VIMLocalized(@"ui.stopped-exit-d", @"Stopped (exit %d)"),task.terminationStatus];
         session.displayView.displaySleeping=YES;
-        session.stateLabel.stringValue=task.terminationStatus==0?@"This Mac is shut down.":@"This Mac stopped unexpectedly. You can start it again or inspect Session Details.";
+        session.stateLabel.stringValue=task.terminationStatus==0?VIMLocalized(@"session.this-mac-is-shut-down", @"This Mac is shut down."):VIMLocalized(@"session.this-mac-stopped-unexpectedly-you-can-start-it-again-or", @"This Mac stopped unexpectedly. You can start it again or inspect Session Details.");
         session.statePanel.hidden=NO;session.stateAction.hidden=NO;
         BOOL forcedReset=session.forceResetRequested;
         BOOL guestReboot=(session.relaunchForGuestReboot||forcedReset)&&!session.shutdownRequested&&!session.closeAfterShutdown;
@@ -1477,7 +1478,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         if(relaunch){session.pendingHostConnectionURL=nil;session.pendingHostConnectionCompletion=nil;}
         session.shutdownButton.enabled=NO;[session cleanUp];
         if(!relaunch&&task.terminationReason==NSTaskTerminationReasonExit&&task.terminationStatus==0)[session showStoppedScreen];
-        if(rebootLoop)VIMPresentError(VIMSessionError(@"This Mac restarted repeatedly and was stopped. Open Session Details to check its boot log, then try starting it again."),session.window);
+        if(rebootLoop)VIMPresentError(VIMSessionError(VIMLocalized(@"session.this-mac-restarted-repeatedly-and-was-stopped-open-session-details", @"This Mac restarted repeatedly and was stopped. Open Session Details to check its boot log, then try starting it again.")),session.window);
         if(session.closeAfterShutdown&&task.terminationReason==NSTaskTerminationReasonExit&&task.terminationStatus==0)[session.window close];
         // Successful openMachine publishes its own library notification once
         // the replacement owns the session lock. Do not invite background
@@ -1497,9 +1498,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
                 [replacement.window setFrame:previousFrame display:YES];
                 if(replacement.window!=previousWindow)[previousWindow close];
             } else {
-                session.guestStatus.stringValue=failure.localizedDescription?:@"Restart paused: graphics installation needs recovery.";
+                session.guestStatus.stringValue=failure.localizedDescription?:VIMLocalized(@"session.restart-paused-graphics-installation-needs-recovery", @"Restart paused: graphics installation needs recovery.");
                 [NSNotificationCenter.defaultCenter postNotificationName:@"VIMLibraryChanged" object:nil];
-                if(waitingCompletion)waitingCompletion(failure?:VIMSessionError(@"The virtual Mac couldn’t restart to open the connection."));
+                if(waitingCompletion)waitingCompletion(failure?:VIMSessionError(VIMLocalized(@"session.the-virtual-mac-couldn-t-restart-to-open-the-connection", @"The virtual Mac couldn’t restart to open the connection.")));
             }
         }
         }];
@@ -1524,7 +1525,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             if(!privateDirectory || ![description writeToFile:endpoint atomically:YES] ||
                ![NSFileManager.defaultManager setAttributes:@{NSFilePosixPermissions:@0600} ofItemAtPath:endpoint error:NULL]) {
                 if(openGLInprocess) {
-                    if(error)*error=VIMSessionError(@"The graphics memory connection could not be prepared.");
+                    if(error)*error=VIMSessionError(VIMLocalized(@"session.the-graphics-memory-connection-could-not-be-prepared", @"The graphics memory connection could not be prepared."));
                     [self.task terminate];[self cleanUp];return NO;
                 }
                 [self.log writeData:[@"\n[Virtual Intel Mac] Shared graphics memory endpoint unavailable; using copied graphics fallback.\n" dataUsingEncoding:NSUTF8StringEncoding]];
@@ -1544,12 +1545,12 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         BOOL forgotten=!settings.count||[self.machine saveSettings:settings error:&failure];
         if(settings.count)[NSNotificationCenter.defaultCenter postNotificationName:@"VIMLibraryChanged" object:nil];
         NSAlert *alert=[NSAlert new];
-        alert.messageText=forgotten?(unavailableImages.count==1?@"An unavailable image was disconnected":@"Unavailable images were disconnected"):@"An image couldn’t be found";
+        alert.messageText=forgotten?(unavailableImages.count==1?VIMLocalized(@"session.an-unavailable-image-was-disconnected", @"An unavailable image was disconnected"):VIMLocalized(@"session.unavailable-images-were-disconnected", @"Unavailable images were disconnected")):VIMLocalized(@"session.an-image-couldn-t-be-found", @"An image couldn’t be found");
         NSMutableArray *names=[NSMutableArray new];
         for(NSNumber *slot in [unavailableImages.allKeys sortedArrayUsingSelector:@selector(compare:)])[names addObject:[unavailableImages[slot] lastPathComponent]];
-        alert.informativeText=[NSString stringWithFormat:@"Your virtual Mac started without %@. %@",[names componentsJoinedByString:@", "],
-            forgotten?@"To reconnect an image, choose its current location when its file or drive is available.":@"Its saved selection couldn’t be cleared. You can still disconnect it from CD/DVD or choose it again when its drive is available."];
-        [alert addButtonWithTitle:@"OK"];[alert addButtonWithTitle:@"Connect Image…"];
+        alert.informativeText=[NSString stringWithFormat:VIMLocalized(@"session.your-virtual-mac-started-without", @"Your virtual Mac started without %@. %@"),[names componentsJoinedByString:@", "],
+            forgotten?VIMLocalized(@"session.to-reconnect-an-image-choose-its-current-location-when-its", @"To reconnect an image, choose its current location when its file or drive is available."):VIMLocalized(@"session.its-saved-selection-couldn-t-be-cleared-you-can-still", @"Its saved selection couldn’t be cleared. You can still disconnect it from CD/DVD or choose it again when its drive is available.")];
+        [alert addButtonWithTitle:VIMLocalized(@"common.ok", @"OK")];[alert addButtonWithTitle:VIMLocalized(@"settings.connect-image", @"Connect Image…")];
         VIMPresentAlert(alert,self.window,^(NSModalResponse response){
             if(response==NSAlertSecondButtonReturn)[VIMSession chooseOpticalMediaForMachine:self.machine window:self.window];
         });
@@ -1557,7 +1558,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     self.resizeArmed=!installerDisplay||(openGLDirectDisplay&&!classicInstaller);
     [self connectControlWithCompletion:^(NSError *failure){
         VIMSession *session=weakSelf;if(!session.task.running)return;
-        session.status.stringValue=failure?failure.localizedDescription:@"Running";
+        session.status.stringValue=failure?failure.localizedDescription:VIMLocalized(@"session.running", @"Running");
         session.shutdownButton.enabled=failure==nil;
         if(!failure){[session.window.contentView layoutSubtreeIfNeeded];[session scheduleResize];}
         // Seed the known installed/installer range before delivering input;
@@ -1779,8 +1780,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,8*NSEC_PER_SEC),dispatch_get_main_queue(),^{complete(NO);});return;
     }
     if([command[@"Action"] isEqual:@"display-state"]) {
-        NSMenu *view=[NSApp.mainMenu itemWithTitle:@"View"].submenu;[view update];
-        NSMenu *menu=[view itemWithTitle:self.supportsRetinaDisplay?@"Retina Resolution":@"Resolution"].submenu;[menu update];
+        NSMenu *view=VIMMenuItem(NSApp.mainMenu, @"vim.view").submenu;[view update];
+        NSMenu *menu=VIMMenuItem(view, @"vim.resolution").submenu;[menu update];
         NSMutableArray *items=[NSMutableArray new];
         for(NSMenuItem *item in menu.itemArray)if(item.target==self&&item.action==@selector(changeRetinaMode:))
             [items addObject:@{@"Title":item.title,@"Selected":@(item.state==NSControlStateValueOn),@"Enabled":@(item.enabled)}];
@@ -1822,7 +1823,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,300*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
             NSMutableDictionary *state=[NSMutableDictionary new];
             for(NSString *name in @[@"File",@"Actions",@"Devices"]) {
-                NSMenuItem *root=[NSApp.mainMenu itemWithTitle:name];[root.submenu update];
+                NSMenuItem *root=VIMMenuItem(NSApp.mainMenu, [@"vim." stringByAppendingString:name.lowercaseString]);[root.submenu update];
                 NSMutableArray *items=[NSMutableArray new];
                 for(NSMenuItem *item in root.submenu.itemArray)if(!item.separatorItem)[items addObject:@{@"Title":item.title,@"Enabled":@(item.enabled)}];
                 state[name]=@{@"Present":@(root!=nil),@"Hidden":@(root.hidden),@"Items":items};
@@ -1884,7 +1885,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             if(error){finish(@{@"Error":error.localizedDescription});return;}
             NSMutableArray *images=[NSMutableArray new];
             for(NSDictionary *image in [VIMSession connectedImagesForMachine:self.machine]) {
-                NSMenuItem *item=[[NSMenuItem alloc] initWithTitle:@"Disconnect" action:@selector(ejectOpticalMedia:) keyEquivalent:@""];item.representedObject=image[@"Slot"];
+                NSMenuItem *item=[[NSMenuItem alloc] initWithTitle:VIMLocalized(@"ui.disconnect", @"Disconnect") action:@selector(ejectOpticalMedia:) keyEquivalent:@""];item.representedObject=image[@"Slot"];
                 NSMutableDictionary *entry=[image mutableCopy];entry[@"CanDisconnect"]=@([self validateMenuItem:item]);[images addObject:entry];
             }
             finish(@{@"Inserted":@(path.length>0),@"Images":images,@"MediaChangePending":@(self.mediaChangePending)});
@@ -2234,17 +2235,17 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             // false missing-accelerator error during the native installer.
             // Enabling the actual GL profile later must use the normal strict
             // coordinator/verification gates; never mark setup complete here.
-            self.guestStatus.stringValue=@"Mac OS X Tiger — native installation";return;
+            self.guestStatus.stringValue=VIMLocalized(@"session.mac-os-x-tiger-native-installation", @"Mac OS X Tiger — native installation");return;
         }
         // Process-local development opt-in only: keep the real boot, drivers,
         // display and agent available while inspecting a cold native service.
         // Explicit --resume-setup enters the unchanged production coordinator.
-        if(self.developmentSetupDeferred){self.guestStatus.stringValue=@"Automatic setup paused for diagnostics";return;}
+        if(self.developmentSetupDeferred){self.guestStatus.stringValue=VIMLocalized(@"session.automatic-setup-paused-for-diagnostics", @"Automatic setup paused for diagnostics");return;}
         [self observeLegacyTabletDuringSetup];
         [self refreshOpenGLSetup];return;
     }
     if(!self.guestStatusTool.length) {
-        self.guestStatus.stringValue=@"Guest setup tool is missing";return;
+        self.guestStatus.stringValue=VIMLocalized(@"session.guest-setup-tool-is-missing", @"Guest setup tool is missing");return;
     }
     self.guestPending=YES;
     __weak VIMSession *weakSelf=self;
@@ -2277,24 +2278,24 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     [self.window makeFirstResponder:self.displayView];
 }
 - (void)showSetupNoticeAutomatic:(BOOL)automatic automaticLogin:(BOOL)automaticLogin restarting:(BOOL)restarting {
-    NSString *title=automatic?@"Automatic Setup in Progress…":@"Installing Graphics Drivers…";
+    NSString *title=automatic?VIMLocalized(@"session.automatic-setup-in-progress", @"Automatic Setup in Progress…"):VIMLocalized(@"session.installing-graphics-drivers", @"Installing Graphics Drivers…");
     NSString *detail;
     if(automatic){
-        NSString *waiting=self.machine.preMetalGuest?@"The language selection screen is expected to stay visible during Automatic Setup.":
-            @"The first setup screen may stay visible during Automatic Setup.";
-        NSString *restart=automaticLogin?@"Your virtual Mac will restart and sign in automatically when it’s ready.":
-            self.machine.preMetalGuest?@"Your virtual Mac will restart and sign in automatically this first time.":
-            @"Your virtual Mac will restart automatically when it’s ready. If you see the login screen, sign in with the account you chose.";
-        detail=[NSString stringWithFormat:@"Please do not interact with Setup Assistant. %@\n\n%@ Setup may take up to 30 minutes.",waiting,restart];
+        NSString *waiting=self.machine.preMetalGuest?VIMLocalized(@"session.the-language-selection-screen-is-expected-to-stay-visible-during", @"The language selection screen is expected to stay visible during Automatic Setup."):
+            VIMLocalized(@"session.the-first-setup-screen-may-stay-visible-during-automatic-setup", @"The first setup screen may stay visible during Automatic Setup.");
+        NSString *restart=automaticLogin?VIMLocalized(@"session.your-virtual-mac-will-restart-and-sign-in-automatically-when", @"Your virtual Mac will restart and sign in automatically when it’s ready."):
+            self.machine.preMetalGuest?VIMLocalized(@"session.your-virtual-mac-will-restart-and-sign-in-automatically-this", @"Your virtual Mac will restart and sign in automatically this first time."):
+            VIMLocalized(@"session.your-virtual-mac-will-restart-automatically-when-it-s-ready", @"Your virtual Mac will restart automatically when it’s ready. If you see the login screen, sign in with the account you chose.");
+        detail=[NSString stringWithFormat:VIMLocalized(@"session.please-do-not-interact-with-setup-assistant-setup-may-take", @"Please do not interact with Setup Assistant. %@\n\n%@ Setup may take up to 30 minutes."),waiting,restart];
     }else{
-        detail=restarting?@"Your virtual Mac will restart to finish installing the graphics drivers. Sign in when it starts again. This may take up to 30 minutes.":
-            @"Keep your virtual Mac running while the graphics drivers install. This may take up to 30 minutes. If a restart is needed, you’ll be asked first.";
+        detail=restarting?VIMLocalized(@"session.your-virtual-mac-will-restart-to-finish-installing-the-graphics", @"Your virtual Mac will restart to finish installing the graphics drivers. Sign in when it starts again. This may take up to 30 minutes."):
+            VIMLocalized(@"session.keep-your-virtual-mac-running-while-the-graphics-drivers-install", @"Keep your virtual Mac running while the graphics drivers install. This may take up to 30 minutes. If a restart is needed, you’ll be asked first.");
     }
     [self showSetupNoticeWithTitle:title detail:detail];
 }
 - (void)showRecoveryInstallNotice {
-    [self showSetupNoticeWithTitle:@"Installing macOS Automatically…"
-        detail:@"Please do not interact with macOS Utilities or the installer. The macOS installer is running in the background, and the macOS Utilities window may stay visible meanwhile.\n\nYour virtual Mac will restart several times on its own. Installation may take up to 2 hours."];
+    [self showSetupNoticeWithTitle:VIMLocalized(@"session.installing-macos-automatically", @"Installing macOS Automatically…")
+        detail:VIMLocalized(@"session.please-do-not-interact-with-macos-utilities-or-the-installer", @"Please do not interact with macOS Utilities or the installer. The macOS installer is running in the background, and the macOS Utilities window may stay visible meanwhile.\n\nYour virtual Mac will restart several times on its own. Installation may take up to 2 hours.")];
 }
 - (void)showSetupNoticeWithTitle:(NSString *)heading detail:(NSString *)message {
     if(self.previewSetupNotice&&(self.setupNotice||self.closedSetupNoticeHeading))return;
@@ -2326,15 +2327,15 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     detail.textColor=NSColor.secondaryLabelColor;
     NSProgressIndicator *progress=[NSProgressIndicator new];progress.style=NSProgressIndicatorStyleBar;
     progress.controlSize=NSControlSizeSmall;progress.indeterminate=YES;
-    progress.accessibilityLabel=@"Setup in progress";
+    progress.accessibilityLabel=VIMLocalized(@"session.setup-in-progress", @"Setup in progress");
     NSStackView *labels=[NSStackView stackViewWithViews:@[header,progress,detail]];
     labels.orientation=NSUserInterfaceLayoutOrientationVertical;
     labels.alignment=NSLayoutAttributeLeading;labels.spacing=6;
     labels.translatesAutoresizingMaskIntoConstraints=NO;
     NSButton *close=[NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"xmark.circle.fill"
-        accessibilityDescription:@"Close Setup Notice"] target:self action:@selector(closeSetupNotice:)];
-    close.bordered=NO;close.toolTip=@"Close Setup Notice";
-    [close setAccessibilityLabel:@"Close Setup Notice"];
+        accessibilityDescription:VIMLocalized(@"session.close-setup-notice", @"Close Setup Notice")] target:self action:@selector(closeSetupNotice:)];
+    close.bordered=NO;close.toolTip=VIMLocalized(@"session.close-setup-notice", @"Close Setup Notice");
+    [close setAccessibilityLabel:VIMLocalized(@"session.close-setup-notice", @"Close Setup Notice")];
     close.translatesAutoresizingMaskIntoConstraints=NO;
     [material addSubview:labels];[material addSubview:close];notice.closeButton=close;
     [content addSubview:notice positioned:NSWindowAbove relativeTo:self.displayView];
@@ -2377,13 +2378,13 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         if([phase isEqual:@"credential-required"]){
             [session dismissSetupNotice];
             NSAlert *alert=[NSAlert new];VIMSetInstallerAlertIcon(alert,session.machine.guest);
-            alert.messageText=@"Enter the virtual Mac’s password";
-            alert.informativeText=[NSString stringWithFormat:@"Enter the password you chose for “%@” in this virtual Mac to resume its saved setup. Your existing account won’t be replaced. This password won’t be saved on this Mac.",outcome[@"Username"]?:@""];
+            alert.messageText=VIMLocalized(@"session.enter-the-virtual-mac-s-password", @"Enter the virtual Mac’s password");
+            alert.informativeText=[NSString stringWithFormat:VIMLocalized(@"session.enter-the-password-you-chose-for-in-this-virtual-mac", @"Enter the password you chose for “%@” in this virtual Mac to resume its saved setup. Your existing account won’t be replaced. This password won’t be saved on this Mac."),outcome[@"Username"]?:@""];
             NSSecureTextField *password=[[NSSecureTextField alloc] initWithFrame:NSMakeRect(0,0,280,24)];
-            password.placeholderString=@"Virtual Mac password";alert.accessoryView=password;
-            [alert addButtonWithTitle:@"Continue"];[alert addButtonWithTitle:@"Not Now"];
+            password.placeholderString=VIMLocalized(@"session.virtual-mac-password", @"Virtual Mac password");alert.accessoryView=password;
+            [alert addButtonWithTitle:VIMLocalized(@"ui.continue", @"Continue")];[alert addButtonWithTitle:VIMLocalized(@"app.not-now", @"Not Now")];
             alert.window.initialFirstResponder=password;
-            session.guestStatus.stringValue=@"A password is needed to resume setup";
+            session.guestStatus.stringValue=VIMLocalized(@"session.a-password-is-needed-to-resume-setup", @"A password is needed to resume setup");
             VIMPresentAlert(alert,session.window,^(NSModalResponse response){
                 NSString *value=response==NSAlertFirstButtonReturn?password.stringValue:nil;
                 password.stringValue=@"";
@@ -2401,7 +2402,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         }
         if([phase isEqual:@"recovery"]){
             [session dismissSetupNotice];
-            session.guestStatus.stringValue=[NSString stringWithFormat:@"Installing %@…",VIMOperatingSystemName(session.machine.guest)];
+            session.guestStatus.stringValue=[NSString stringWithFormat:VIMLocalized(@"ui.installing", @"Installing %@…"),VIMOperatingSystemName(session.machine.guest)];
             // Apple's installer owns the real progress/UI. The next boot
             // creates a new coordinator; no UART polling while copying an OS.
             return;
@@ -2417,7 +2418,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
                 }
                 session.openGLRestartAttempted=YES;session.relaunchForGuestReboot=YES;
                 [session updateInstallationActivity];
-                session.guestStatus.stringValue=@"Finishing setup — restarting this Mac…";
+                session.guestStatus.stringValue=VIMLocalized(@"session.finishing-setup-restarting-this-mac", @"Finishing setup — restarting this Mac…");
                 if(![outcome[@"ExistingGuestUpdate"] boolValue]){
                     NSDictionary *profile=[NSDictionary dictionaryWithContentsOfURL:
                         [session.machine.URL URLByAppendingPathComponent:@"State/AutomaticSetup.plist"]];
@@ -2429,7 +2430,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
                         if(saveError)VIMPresentError(saveError,session.window);
                     }else if(session.task.running){
                         [session dismissSetupNotice];
-                        session.guestStatus.stringValue=@"Restart was not confirmed. Restart from the Apple menu to continue setup. Your setup records were retained.";
+                        session.guestStatus.stringValue=VIMLocalized(@"session.restart-was-not-confirmed-restart-from-the-apple-menu-to", @"Restart was not confirmed. Restart from the Apple menu to continue setup. Your setup records were retained.");
                     }
                 }];
             };
@@ -2438,9 +2439,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
                 [session dismissSetupNotice];
                 NSAlert *alert=[NSAlert new];VIMSetAppAlertIcon(alert);
                 BOOL updated=[outcome[@"ExistingGuestUpdate"] boolValue];
-                alert.messageText=updated?@"Restart to use updated graphics support?":@"Restart to finish graphics setup?";
-                alert.informativeText=updated?@"Graphics support has been updated. Save any open work, then restart this Mac to use it.":@"Graphics support is installed. Restart this Mac to load it. Save any open work first.";
-                [alert addButtonWithTitle:@"Restart"];[alert addButtonWithTitle:@"Later"];
+                alert.messageText=updated?VIMLocalized(@"session.restart-to-use-updated-graphics-support", @"Restart to use updated graphics support?"):VIMLocalized(@"session.restart-to-finish-graphics-setup", @"Restart to finish graphics setup?");
+                alert.informativeText=updated?VIMLocalized(@"session.graphics-support-has-been-updated-save-any-open-work-then", @"Graphics support has been updated. Save any open work, then restart this Mac to use it."):VIMLocalized(@"session.graphics-support-is-installed-restart-this-mac-to-load-it", @"Graphics support is installed. Restart this Mac to load it. Save any open work first.");
+                [alert addButtonWithTitle:VIMLocalized(@"ui.restart", @"Restart")];[alert addButtonWithTitle:VIMLocalized(@"ui.later", @"Later")];
                 [alert beginSheetModalForWindow:session.window completionHandler:^(NSModalResponse result){
                     if(result==NSAlertFirstButtonReturn)restart();
                     else if([outcome[@"ExistingGuestUpdate"] boolValue]) {
@@ -2455,26 +2456,26 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             [session dismissSetupNotice];
             NSError *failure=nil;
             if(![session.machine finishOpenGLSetupWithReport:outcome[@"Report"] error:&failure]){
-                VIMPresentError(failure?:VIMSessionError(@"Setup could not yet be verified. Its installer and recovery records were retained."),session.window);return;
+                VIMPresentError(failure?:VIMSessionError(VIMLocalized(@"session.setup-could-not-yet-be-verified-its-installer-and-recovery", @"Setup could not yet be verified. Its installer and recovery records were retained.")),session.window);return;
             }
             session.completionGuestReport=outcome[@"Report"];
             session.openGLLargeResizeReady=YES;
             session.lastRequestedSize=NSZeroSize;
             [session scheduleResize];
-            session.guestStatus.stringValue=@"Graphics support is ready";
+            session.guestStatus.stringValue=VIMLocalized(@"session.graphics-support-is-ready", @"Graphics support is ready");
             [session retireOpenGLSetupDiscWithReport:outcome[@"Report"]];
             [NSNotificationCenter.defaultCenter postNotificationName:@"VIMLibraryChanged" object:nil];
             // The persistent receipt ends setup work for this boot. On a later
             // boot the guest bootstrap checks native files for update repair.
             session.openGLDesktopMonitoring=YES;[session refreshGuestStatus];return;
         }
-        session.guestStatus.stringValue=[phase isEqual:@"payload-media-wait"]?@"Waiting for the graphics update disc…":
-            [phase isEqual:@"root-volume-wait"]?@"Waiting for this Mac’s startup disk…":
-            [phase isEqual:@"desktop-wait"]?@"Waiting for this Mac’s desktop…":
-            [@[@"desktop-services-wait",@"file-sharing-busy"] containsObject:phase]?@"Finishing File Sharing setup…":
-            [phase isEqual:@"update-restart-wait"]?@"Restart this Mac when its system update finishes…":
-            [phase isEqual:@"account-busy"]?@"Creating your Mac account…":
-            [phase isEqual:@"restarting"]?@"Restarting to finish setup…":[NSString stringWithFormat:@"Starting %@…",VIMOperatingSystemName(session.machine.guest)];
+        session.guestStatus.stringValue=[phase isEqual:@"payload-media-wait"]?VIMLocalized(@"session.waiting-for-the-graphics-update-disc", @"Waiting for the graphics update disc…"):
+            [phase isEqual:@"root-volume-wait"]?VIMLocalized(@"session.waiting-for-this-mac-s-startup-disk", @"Waiting for this Mac’s startup disk…"):
+            [phase isEqual:@"desktop-wait"]?VIMLocalized(@"session.waiting-for-this-mac-s-desktop", @"Waiting for this Mac’s desktop…"):
+            [@[@"desktop-services-wait",@"file-sharing-busy"] containsObject:phase]?VIMLocalized(@"session.finishing-file-sharing-setup", @"Finishing File Sharing setup…"):
+            [phase isEqual:@"update-restart-wait"]?VIMLocalized(@"session.restart-this-mac-when-its-system-update-finishes", @"Restart this Mac when its system update finishes…"):
+            [phase isEqual:@"account-busy"]?VIMLocalized(@"session.creating-your-mac-account", @"Creating your Mac account…"):
+            [phase isEqual:@"restarting"]?VIMLocalized(@"session.restarting-to-finish-setup", @"Restarting to finish setup…"):[NSString stringWithFormat:VIMLocalized(@"ui.starting", @"Starting %@…"),VIMOperatingSystemName(session.machine.guest)];
         [session.guestTimer invalidate];
         session.guestTimer=[NSTimer scheduledTimerWithTimeInterval:15 repeats:NO block:^(NSTimer *timer){[weakSelf refreshGuestStatus];}];
     }];
@@ -2569,7 +2570,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     if(self.machine.preMetalGuest){
         NSString *boot=[report[@"BootSessionUUID"] isKindOfClass:NSString.class]?report[@"BootSessionUUID"]:nil;
         BOOL desktop=!error&&[report[@"Guest"] isEqual:self.machine.guest]&&[report[@"DesktopRunning"] isEqual:@YES]&&self.clipboardUID;
-        self.guestStatus.stringValue=desktop?[NSString stringWithFormat:@"%@ %@",VIMOperatingSystemName(self.machine.guest),report[@"ProductVersion"]?:@""]:@"Waiting for guest desktop services…";
+        self.guestStatus.stringValue=desktop?[NSString stringWithFormat:@"%@ %@",VIMOperatingSystemName(self.machine.guest),report[@"ProductVersion"]?:@""]:VIMLocalized(@"session.waiting-for-guest-desktop-services", @"Waiting for guest desktop services…");
         if(desktop&&boot.length){
             if([self prepareMavericksSMBForBoot:boot])return;
             NSString *username=report[@"ConsoleUsername"];
@@ -2599,15 +2600,15 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         // A stock guest has no agent until its VirtIO driver/launchd are ready.
         // Keep the framebuffer/input live and retry without rebooting the VM.
         message=error.localizedDescription;
-        self.guestStatus.stringValue=@"Waiting for macOS guest services…";
+        self.guestStatus.stringValue=VIMLocalized(@"session.waiting-for-macos-guest-services", @"Waiting for macOS guest services…");
     } else if(![report[@"Guest"] isEqual:self.machine.guest]) {
-        message=@"The guest version does not match this Mac’s configuration.";
+        message=VIMLocalized(@"session.the-guest-version-does-not-match-this-mac-s-configuration", @"The guest version does not match this Mac’s configuration.");
         self.guestStatus.stringValue=message;
     } else {
         NSString *version=[report[@"ProductVersion"] isKindOfClass:NSString.class]?report[@"ProductVersion"]:@"";
         BOOL installed=[report[@"InstalledSystemCandidate"] isEqual:@YES] &&
             [report[@"LiveRoot"] isEqual:@YES] && [report[@"KernelMatchesSystem"] isEqual:@YES];
-        self.guestStatus.stringValue=[NSString stringWithFormat:@"%@ %@%@",VIMOperatingSystemName(self.machine.guest),version,installed?@"":@" — setup in progress"];
+        self.guestStatus.stringValue=[NSString stringWithFormat:@"%@ %@%@",VIMOperatingSystemName(self.machine.guest),version,installed?@"":VIMLocalized(@"session.setup-in-progress-2", @" — setup in progress")];
         // Evidence only. Never modify InstallerMedia/boot routing here: a live
         // desktop is not proof that the required patch transaction succeeded.
         NSDictionary *record=@{@"ObservedAt":NSDate.date,@"Session":self.runtimeDirectory.lastPathComponent,
@@ -2628,7 +2629,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         if([self.machine prepareNativeBigSurDisplayWithGuestReport:report error:&nativeError]) {
             [self.log writeData:[@"\n[Virtual Intel Mac] Installed Big Sur has native PVG; switching Setup Assistant to accelerated graphics. Guest patches and installer cleanup remain pending.\n" dataUsingEncoding:NSUTF8StringEncoding]];
             [self handoffToGraphics];
-            self.guestStatus.stringValue=@"Starting native Big Sur graphics for Setup Assistant…";
+            self.guestStatus.stringValue=VIMLocalized(@"session.starting-native-big-sur-graphics-for-setup-assistant", @"Starting native Big Sur graphics for Setup Assistant…");
             return;
         }
         if(nativeError){self.guestStatus.stringValue=nativeError.localizedDescription;return;}
@@ -2641,7 +2642,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             session.guestPending=NO;
             if(failure){[session dismissSetupNotice];session.guestStatus.stringValue=failure.localizedDescription;VIMPresentError(failure,session.window);return;}
             if([outcome[@"Handled"] isEqual:@YES]){
-                session.guestStatus.stringValue=outcome[@"Message"]?:@"Installing macOS…";
+                session.guestStatus.stringValue=outcome[@"Message"]?:VIMLocalized(@"session.installing-macos-2", @"Installing macOS…");
                 // Recovery's macOS Utilities stays on screen while startosinstall
                 // stages the install behind it. Say so, as Automatic Setup does.
                 if([outcome[@"RecoveryInstall"] isEqual:@YES])[session showRecoveryInstallNotice];
@@ -2651,7 +2652,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
                     // work. Keep the one acknowledged handoff pending until
                     // actual exit; do not expire it and dispatch another one.
                     [session.handoffTimer invalidate];session.handoffTimer=nil;
-                    session.guestStatus.stringValue=outcome[@"Message"]?:@"Restarting to sign in…";
+                    session.guestStatus.stringValue=outcome[@"Message"]?:VIMLocalized(@"session.restarting-to-sign-in", @"Restarting to sign in…");
                     return;
                 }
                 session.guestTimer=[NSTimer scheduledTimerWithTimeInterval:15 repeats:NO block:^(NSTimer *timer){[weakSelf refreshGuestStatus];}];
@@ -2675,7 +2676,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         // desktop: the missing preference can itself prevent WindowServer.
         // Existing guests are not restarted behind the user's back.
         self.bootPolicyCheckedBoot=boot;self.bootPolicyPending=YES;
-        self.guestStatus.stringValue=@"Preparing guest privacy compatibility…";
+        self.guestStatus.stringValue=VIMLocalized(@"session.preparing-guest-privacy-compatibility", @"Preparing guest privacy compatibility…");
         NSString *runtime=self.runtimeDirectory;__weak VIMSession *weakSelf=self;
         [VIMGuestBootPolicy prepareWithAgent:self.guestAgent report:report identifier:self.machine.configuration[@"Identifier"]
             journal:[self.machine.URL URLByAppendingPathComponent:@"State/BootPolicy.plist"]
@@ -2683,7 +2684,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             completion:^(BOOL ready,NSError *failure){
                 VIMSession *session=weakSelf;if(!session.task.running||![session.runtimeDirectory isEqual:runtime])return;
                 session.bootPolicyPending=NO;
-                NSString *message=ready?@"Guest privacy compatibility verified.":failure.localizedDescription;
+                NSString *message=ready?VIMLocalized(@"session.guest-privacy-compatibility-verified", @"Guest privacy compatibility verified."):failure.localizedDescription;
                 [session.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] Boot policy: %@\n",message?:@"Verification did not finish; legacy boot retained."] dataUsingEncoding:NSUTF8StringEncoding]];
                 NSDictionary *policy=[NSDictionary dictionaryWithContentsOfURL:[session.machine.URL URLByAppendingPathComponent:@"State/BootPolicy.plist"]];
                 if(ready&&![report[@"DesktopRunning"] isEqual:@YES]&&
@@ -2693,7 +2694,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
                     // policy. Restart only a known repaired, pre-desktop boot;
                     // use the normal shutdown handoff, never a hard reset.
                     [session handoffToGraphics];
-                    session.guestStatus.stringValue=@"Guest compatibility restored — restarting this Mac…";
+                    session.guestStatus.stringValue=VIMLocalized(@"session.guest-compatibility-restored-restarting-this-mac", @"Guest compatibility restored — restarting this Mac…");
                     return;
                 }
                 // Collect a fresh boot/build identity after the operation,
@@ -2804,9 +2805,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
                     [session ejectInstallerVolumes:@[@"/Volumes/macOS Base System",@"/Volumes/Install macOS Mojave",@"/Volumes/Install macOS Catalina",@"/Volumes/Install macOS Big Sur"]];
                 }
                 NSString *message=failure.localizedDescription?:(verified?
-                    @"Graphics verified — installer cleanup will finish when this Mac shuts down":
-                    ([result[@"Phase"] isEqual:@"awaiting-reboot"]?@"Installation status recovered — restart required for graphics verification":
-                     [NSString stringWithFormat:@"Installation status: %@",result[@"Phase"]?:@"unknown"]));
+                    VIMLocalized(@"session.graphics-verified-installer-cleanup-will-finish-when-this-mac-shuts", @"Graphics verified — installer cleanup will finish when this Mac shuts down"):
+                    ([result[@"Phase"] isEqual:@"awaiting-reboot"]?VIMLocalized(@"session.installation-status-recovered-restart-required-for-graphics-verification", @"Installation status recovered — restart required for graphics verification"):
+                     [NSString stringWithFormat:VIMLocalized(@"session.installation-status", @"Installation status: %@"),result[@"Phase"]?:@"unknown"]));
                 session.guestStatus.stringValue=message;
                 [session.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] Reconciliation: %@\n",message] dataUsingEncoding:NSUTF8StringEncoding]];
                 // Console discovery may have completed while this read-only
@@ -2824,7 +2825,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     if(self.preparationRequested&&!error&&([report[@"DesktopRunning"] isEqual:@YES]||self.verifiedUpdateRepair)&&[report[@"InstalledSystemCandidate"] isEqual:@YES]&&
        [report[@"Guest"] isEqual:self.machine.guest]) {
         self.preparationRequested=NO;self.preparing=YES;
-        self.window.subtitle=@"Finishing setup…";
+        self.window.subtitle=VIMLocalized(@"session.finishing-setup", @"Finishing setup…");
         NSURL *runtime=[NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"Runtime"];
         __weak VIMSession *weakSession=self;
         [VIMGuestPreparation prepareWithAgent:self.guestAgent report:report runtime:runtime
@@ -2834,7 +2835,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
                 VIMSession *current=weakSession;current.guestStatus.stringValue=progress;
                 if(current.verifiedUpdateRepair&&![report[@"DesktopRunning"] isEqual:@YES]) {
                     current.displayView.displaySleeping=YES;current.statePanel.hidden=NO;current.stateAction.hidden=YES;
-                    current.stateLabel.stringValue=[progress stringByAppendingString:@"\nKeep this Mac running while graphics support is restored."];
+                    current.stateLabel.stringValue=[progress stringByAppendingString:VIMLocalized(@"session.keep-this-mac-running-while-graphics-support-is-restored", @"\nKeep this Mac running while graphics support is restored.")];
                 }
             }
             completion:^(NSDictionary *receipt,NSError *failure) {
@@ -2843,15 +2844,15 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
                 session.guestProgress=[VIMGuestProgress progressWithAgent:session.guestAgent receipt:receipt[@"GuestProgress"]];
                 BOOL install=session.installationRequested;session.installationRequested=NO;
                 if(install&&!failure) {
-                    session.preparing=YES;session.guestStatus.stringValue=@"Installing graphics support — do not shut down this Mac…";
-                    session.window.subtitle=@"Installing Graphics Drivers…";
+                    session.preparing=YES;session.guestStatus.stringValue=VIMLocalized(@"session.installing-graphics-support-do-not-shut-down-this-mac", @"Installing graphics support — do not shut down this Mac…");
+                    session.window.subtitle=VIMLocalized(@"session.installing-graphics-drivers", @"Installing Graphics Drivers…");
                     if(!session.verifiedUpdateRepair)
                         [session showSetupNoticeAutomatic:NO automaticLogin:NO restarting:NO];
                     void (^applyPrepared)(NSError *)=^(NSError *archiveError){
                     if(archiveError) {
                         [session dismissSetupNotice];
                         session.preparing=NO;session.window.subtitle=@"";session.guestStatus.stringValue=archiveError.localizedDescription;
-                        [session.guestProgress updateMode:@"failed" fraction:0 message:@"The previous installation record could not be preserved. Nothing was installed." completion:nil];
+                        [session.guestProgress updateMode:@"failed" fraction:0 message:VIMLocalized(@"session.the-previous-installation-record-could-not-be-preserved-nothing-was", @"The previous installation record could not be preserved. Nothing was installed.") completion:nil];
                         VIMPresentError(archiveError,session.window);return;
                     }
                     [VIMGuestInstallation applyWithAgent:session.guestAgent preparation:receipt
@@ -2859,12 +2860,12 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
                         completion:^(NSDictionary *outcome,NSError *installError) {
                             VIMSession *current=weakSession;if(!current)return;current.preparing=NO;current.window.subtitle=@"";
                             [current dismissSetupNotice];
-                            NSString *result=installError.localizedDescription?:@"Graphics files installed — restart required for verification";
+                            NSString *result=installError.localizedDescription?:VIMLocalized(@"session.graphics-files-installed-restart-required-for-verification", @"Graphics files installed — restart required for verification");
                             current.guestStatus.stringValue=result;
                             if(installError) {
                                 BOOL restored=[outcome[@"Phase"] isEqual:@"rolled-back"];
                                 [current.guestProgress updateMode:restored?@"failed":@"working" fraction:restored?0:-1
-                                    message:restored?@"Setup couldn’t finish. The original system files were restored.":@"Setup status couldn’t be confirmed. Keep this Mac running and check Session Details in the Virtual Intel Mac app."
+                                    message:restored?VIMLocalized(@"session.setup-couldn-t-finish-the-original-system-files-were-restored", @"Setup couldn’t finish. The original system files were restored."):VIMLocalized(@"session.setup-status-couldn-t-be-confirmed-keep-this-mac-running", @"Setup status couldn’t be confirmed. Keep this Mac running and check Session Details in the Virtual Intel Mac app.")
                                     completion:nil];
                             }
                             [current.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] Installation: %@\n",result] dataUsingEncoding:NSUTF8StringEncoding]];
@@ -2891,9 +2892,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
                     } else applyPrepared(nil);
                     return;
                 }
-                NSString *message=failure.localizedDescription?:@"Guest files prepared — installation pending";
+                NSString *message=failure.localizedDescription?:VIMLocalized(@"session.guest-files-prepared-installation-pending", @"Guest files prepared — installation pending");
                 session.guestStatus.stringValue=message;
-                if(!failure)[session.guestProgress updateMode:@"complete" fraction:1 message:@"Support files are prepared. No system files were installed." completion:nil];
+                if(!failure)[session.guestProgress updateMode:@"complete" fraction:1 message:VIMLocalized(@"session.support-files-are-prepared-no-system-files-were-installed", @"Support files are prepared. No system files were installed.") completion:nil];
                 [session.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] Preparation: %@\n",message] dataUsingEncoding:NSUTF8StringEncoding]];
                 // Explicit request runs once. No automatic retry of uncertain writes.
                 session.guestTimer=[NSTimer scheduledTimerWithTimeInterval:60 repeats:NO block:^(NSTimer *timer){[weakSession refreshGuestStatus];}];
@@ -2952,13 +2953,13 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         session.displayView.displaySleeping=[@[@"suspended",@"shutdown"] containsObject:state];
         session.statePanel.hidden=YES;
         session.stateAction.hidden=YES;
-        NSDictionary *labels=@{@"running":@"Running",@"paused":@"Paused",@"io-error":@"Paused: a disk operation failed",
-            @"guest-panicked":@"The guest reported a kernel panic",@"internal-error":@"Stopped: an internal emulator error",
-            @"shutdown":@"Guest shut down",@"suspended":@"Sleeping",@"prelaunch":@"Starting…",@"watchdog":@"Paused: guest watchdog expired"};
-        session.status.stringValue=labels[state]?:[NSString stringWithFormat:@"Guest state: %@",state];
+        NSDictionary *labels=@{@"running":VIMLocalized(@"session.running", @"Running"),@"paused":VIMLocalized(@"session.paused", @"Paused"),@"io-error":VIMLocalized(@"session.paused-a-disk-operation-failed", @"Paused: a disk operation failed"),
+            @"guest-panicked":VIMLocalized(@"session.the-guest-reported-a-kernel-panic", @"The guest reported a kernel panic"),@"internal-error":VIMLocalized(@"session.stopped-an-internal-emulator-error", @"Stopped: an internal emulator error"),
+            @"shutdown":VIMLocalized(@"session.guest-shut-down", @"Guest shut down"),@"suspended":VIMLocalized(@"session.sleeping", @"Sleeping"),@"prelaunch":VIMLocalized(@"session.starting", @"Starting…"),@"watchdog":VIMLocalized(@"session.paused-guest-watchdog-expired", @"Paused: guest watchdog expired")};
+        session.status.stringValue=labels[state]?:[NSString stringWithFormat:VIMLocalized(@"session.guest-state", @"Guest state: %@"),state];
         if([@[@"io-error",@"guest-panicked",@"internal-error",@"watchdog"] containsObject:state]) {
             session.displayView.displaySleeping=YES;session.statePanel.hidden=NO;
-            session.stateLabel.stringValue=[session.status.stringValue stringByAppendingString:@". Open Controls → Session Details for more information."];
+            session.stateLabel.stringValue=[session.status.stringValue stringByAppendingString:VIMLocalized(@"session.open-controls-session-details-for-more-information", @". Open Controls → Session Details for more information.")];
         }
         NSData *line=[[NSString stringWithFormat:@"\n[Virtual Intel Mac] QEMU state: %@\n",state] dataUsingEncoding:NSUTF8StringEncoding];
         [session.log writeData:line];
@@ -2968,7 +2969,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     if(self.guestProgress) {
         self.preparing=YES;
         __weak VIMSession *weakSelf=self;
-        [self.guestProgress updateMode:@"restart" fraction:1 message:@"Graphics support is installed. Restart your virtual Mac to activate it." completion:^(NSError *error){
+        [self.guestProgress updateMode:@"restart" fraction:1 message:VIMLocalized(@"session.graphics-support-is-installed-restart-your-virtual-mac-to-activate", @"Graphics support is installed. Restart your virtual Mac to activate it.") completion:^(NSError *error){
             VIMSession *session=weakSelf;if(!session.task.running)return;
             if(error){session.preparing=NO;[session offerHostGraphicsRestart];return;}
             [session.guestProgress waitForRestartChoice:^(NSString *choice,NSError *failure){
@@ -2977,7 +2978,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
                 [current.guestProgress updateMode:@"close" fraction:1 message:@"" completion:^(NSError *closeError){
                     if([choice isEqual:@"restart"])[current handoffToGraphics];
                     else {
-                        current.guestStatus.stringValue=@"Graphics support installed. Restart when you’re ready to finish setup.";
+                        current.guestStatus.stringValue=VIMLocalized(@"session.graphics-support-installed-restart-when-you-re-ready-to-finish", @"Graphics support installed. Restart when you’re ready to finish setup.");
                         current.guestTimer=[NSTimer scheduledTimerWithTimeInterval:60 repeats:NO block:^(NSTimer *timer){[weakSelf refreshGuestStatus];}];
                     }
                 }];
@@ -2987,13 +2988,13 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     [self offerHostGraphicsRestart];
 }
 - (void)offerHostGraphicsRestart {
-    NSAlert *alert=[NSAlert new];alert.messageText=@"Restart to finish graphics setup?";
-    alert.informativeText=@"Graphics support has been installed. Save your work before restarting this virtual Mac. You can also shut down and open it again later.";
-    [alert addButtonWithTitle:@"Restart Now"];[alert addButtonWithTitle:@"Later"];
+    NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"session.restart-to-finish-graphics-setup", @"Restart to finish graphics setup?");
+    alert.informativeText=VIMLocalized(@"session.graphics-support-has-been-installed-save-your-work-before-restarting", @"Graphics support has been installed. Save your work before restarting this virtual Mac. You can also shut down and open it again later.");
+    [alert addButtonWithTitle:VIMLocalized(@"session.restart-now", @"Restart Now")];[alert addButtonWithTitle:VIMLocalized(@"ui.later", @"Later")];
     VIMSetInstallerAlertIcon(alert,self.machine.guest);
     [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response){
         if(response==NSAlertFirstButtonReturn&&self.task.running)[self handoffToGraphics];
-        else self.guestStatus.stringValue=@"Graphics support installed. Restart when you’re ready to finish setup.";
+        else self.guestStatus.stringValue=VIMLocalized(@"session.graphics-support-installed-restart-when-you-re-ready-to-finish", @"Graphics support installed. Restart when you’re ready to finish setup.");
     }];
 }
 - (void)handoffToGraphics {
@@ -3001,7 +3002,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     // shutdown/close or revive an emulator that has already stopped.
     if(self.shutdownRequested||self.closeAfterShutdown||self.relaunchForGraphics||!self.task.running)return;
     self.automaticInstallation=NO;self.relaunchForGraphics=YES;
-    self.guestStatus.stringValue=@"Graphics support installed — restarting this Mac…";
+    self.guestStatus.stringValue=VIMLocalized(@"session.graphics-support-installed-restarting-this-mac", @"Graphics support installed — restarting this Mac…");
     __weak VIMSession *weakSelf=self;
     // Changing emulated display hardware needs a new QEMU process, not an
     // in-guest reboot. Never force termination if macOS cannot shut down.
@@ -3010,7 +3011,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         // A TCG guest can still be finalizing its startup files. Elapsed
         // time is not a failed shutdown: keep waiting for the normal exit.
         if(session.task.running&&session.relaunchForGraphics)
-            session.guestStatus.stringValue=@"macOS is still shutting down. This Mac will restart when it’s ready.";
+            session.guestStatus.stringValue=VIMLocalized(@"session.macos-is-still-shutting-down-this-mac-will-restart-when", @"macOS is still shutting down. This Mac will restart when it’s ready.");
     }];
     [self.guestAgent runExecutable:@"/sbin/shutdown" arguments:@[@"-h",@"now"] timeout:20
         completion:^(NSDictionary *result,NSError *error){
@@ -3019,7 +3020,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             VIMSession *session=weakSelf;
             if(session.task.running&&!error&&result&&![result[@"exitcode"] isEqual:@0]) {
                 session.relaunchForGraphics=NO;[session.handoffTimer invalidate];
-                session.guestStatus.stringValue=@"Automatic shutdown failed. Shut down this Mac, then open it again to finish setup.";
+                session.guestStatus.stringValue=VIMLocalized(@"session.automatic-shutdown-failed-shut-down-this-mac-then-open-it", @"Automatic shutdown failed. Shut down this Mac, then open it again to finish setup.");
                 [session refreshGuestStatus];
             }
         }];
@@ -3076,7 +3077,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     }];
 }
 - (NSMenu *)deviceMenuForKind:(NSString *)kind {
-    VIMLiveDeviceMenu *menu=[[VIMLiveDeviceMenu alloc] initWithTitle:[kind isEqual:@"USB"]?VIMUSBMenuTitle:kind];menu.deviceKind=menu.title;menu.delegate=self;
+    VIMLiveDeviceMenu *menu=[[VIMLiveDeviceMenu alloc] initWithTitle:VIMLocalizedLabel([kind isEqual:@"USB"]?VIMUSBMenuTitle:kind)];menu.deviceKind=kind;menu.delegate=self;
     if([kind isEqual:@"USB"])[self populateUSBMenu:menu];else [self populateDeviceMenu:menu];return menu;
 }
 - (NSMenuItem *)addDeviceItem:(NSString *)title action:(SEL)action toMenu:(NSMenu *)menu {
@@ -3091,60 +3092,60 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     });
 }
 - (void)populateDeviceMenu:(NSMenu *)menu {
-    if([menu isKindOfClass:VIMLiveDeviceMenu.class])menu.title=((VIMLiveDeviceMenu *)menu).deviceKind;
+    NSString *kind=[menu isKindOfClass:VIMLiveDeviceMenu.class]?((VIMLiveDeviceMenu *)menu).deviceKind:menu.identifier;
     NSString *toolbarTitle=ToolbarMenuTitle(menu);
     [menu removeAllItems];WithToolbarMenuTitle(menu,toolbarTitle);NSDictionary *config=self.machine.editableConfiguration;
-    if([menu.title isEqual:@"CD/DVD"]) {
+    if([kind isEqual:@"CD/DVD"]) {
         NSArray *images=[VIMSession connectedImagesForMachine:self.machine];
-        if(!images.count)[self addDeviceItem:@"No Images Connected" action:nil toMenu:menu].enabled=NO;
+        if(!images.count)[self addDeviceItem:VIMLocalized(@"session.no-images-connected", @"No Images Connected") action:nil toMenu:menu].enabled=NO;
         for(NSDictionary *image in images) {
             NSString *path=image[@"Path"];NSNumber *slot=image[@"Slot"];
             if(images.count==1) {
                 [self addDeviceItem:path.lastPathComponent action:nil toMenu:menu].enabled=NO;
-                [self addDeviceItem:@"Disconnect" action:@selector(ejectOpticalMedia:) toMenu:menu].representedObject=slot;
+                [self addDeviceItem:VIMLocalized(@"ui.disconnect", @"Disconnect") action:@selector(ejectOpticalMedia:) toMenu:menu].representedObject=slot;
             } else {
-                NSMenuItem *item=[self addDeviceItem:[NSString stringWithFormat:@"Disconnect “%@”",path.lastPathComponent] action:@selector(ejectOpticalMedia:) toMenu:menu];
+                NSMenuItem *item=[self addDeviceItem:[NSString stringWithFormat:VIMLocalized(@"ui.disconnect.named", @"Disconnect “%@”"),path.lastPathComponent] action:@selector(ejectOpticalMedia:) toMenu:menu];
                 item.representedObject=slot;item.image=[NSImage imageWithSystemSymbolName:@"opticaldisc" accessibilityDescription:nil];
             }
         }
-        if(images.count<VIMImageSlotCount){[menu addItem:NSMenuItem.separatorItem];[self addDeviceItem:@"Connect Image…" action:@selector(chooseOpticalMedia:) toMenu:menu];}
-        [menu addItem:NSMenuItem.separatorItem];[self addDeviceItem:@"Configure…" action:@selector(showOpticalSettings:) toMenu:menu];return;
+        if(images.count<VIMImageSlotCount){[menu addItem:NSMenuItem.separatorItem];[self addDeviceItem:VIMLocalized(@"settings.connect-image", @"Connect Image…") action:@selector(chooseOpticalMedia:) toMenu:menu];}
+        [menu addItem:NSMenuItem.separatorItem];[self addDeviceItem:VIMLocalized(@"library.configure", @"Configure…") action:@selector(showOpticalSettings:) toMenu:menu];return;
     }
-    if([menu.title isEqual:@"Network"]) {
+    if([kind isEqual:@"Network"]) {
         BOOL connected=self.task.running?self.networkLinkConnected:(!config[@"NetworkConnected"]||[config[@"NetworkConnected"] boolValue]);
         NSString *mode=VIMNetworkMode(self.task.running?self.machine.configuration:config);
-        NSMenuItem *off=[self addDeviceItem:@"Disconnect" action:@selector(changeNetworkConnection:) toMenu:menu];off.tag=0;off.state=connected?NSControlStateValueOff:NSControlStateValueOn;
+        NSMenuItem *off=[self addDeviceItem:VIMLocalized(@"ui.disconnect", @"Disconnect") action:@selector(changeNetworkConnection:) toMenu:menu];off.tag=0;off.state=connected?NSControlStateValueOff:NSControlStateValueOn;
         [menu addItem:NSMenuItem.separatorItem];
-        NSArray *modes=@[@"shared",@"host",@"bridged"],*titles=@[@"Shared Network (Recommended)",@"Host-Only Network",@"Bridged Network"];
+        NSArray *modes=@[@"shared",@"host",@"bridged"],*titles=@[VIMLocalized(@"settings.shared-network-recommended", @"Shared Network (Recommended)"),VIMLocalized(@"settings.host-only-network", @"Host-Only Network"),VIMLocalized(@"settings.bridged-network", @"Bridged Network")];
         for(NSUInteger i=0;i<modes.count;i++) {
             NSMenuItem *item=[self addDeviceItem:titles[i] action:@selector(changeNetworkConnection:) toMenu:menu];item.tag=i+1;
             item.state=connected&&[mode isEqual:modes[i]]?NSControlStateValueOn:NSControlStateValueOff;
         }
         if(self.task.running&&connected&&self.guestIPAddresses.count) {
-            [menu addItem:NSMenuItem.separatorItem];[self addDeviceItem:@"IP Addresses:" action:nil toMenu:menu].enabled=NO;
+            [menu addItem:NSMenuItem.separatorItem];[self addDeviceItem:VIMLocalized(@"session.ip-addresses", @"IP Addresses:") action:nil toMenu:menu].enabled=NO;
             for(NSString *address in self.guestIPAddresses)
                 [self addDeviceItem:address action:@selector(copyGuestIPAddress:) toMenu:menu].representedObject=address;
         }
-        [menu addItem:NSMenuItem.separatorItem];[self addDeviceItem:@"Configure…" action:@selector(showNetworkSettings:) toMenu:menu];return;
+        [menu addItem:NSMenuItem.separatorItem];[self addDeviceItem:VIMLocalized(@"library.configure", @"Configure…") action:@selector(showNetworkSettings:) toMenu:menu];return;
     }
-    if([menu.title isEqual:@"Sound Output"]||[menu.title isEqual:@"Microphone"]) {
-        BOOL input=[menu.title isEqual:@"Microphone"];NSString *selected=VIMAudioSelection(config,input);
-        NSMutableArray *choices=[NSMutableArray arrayWithArray:@[@{@"Name":@"Default",@"UID":@"default"}]];
+    if([kind isEqual:@"Sound Output"]||[kind isEqual:@"Microphone"]) {
+        BOOL input=[kind isEqual:@"Microphone"];NSString *selected=VIMAudioSelection(config,input);
+        NSMutableArray *choices=[NSMutableArray arrayWithArray:@[@{@"Name":VIMLocalized(@"app.default", @"Default"),@"UID":@"default"}]];
         [choices addObjectsFromArray:(input?self.audioInputChoices:self.audioOutputChoices)?:@[]];
         for(NSDictionary *choice in choices) {
             NSMenuItem *item=[self addDeviceItem:choice[@"Name"] action:@selector(changeAudioChoice:) toMenu:menu];item.representedObject=@{@"Input":@(input),@"UID":choice[@"UID"]};item.state=[selected isEqual:choice[@"UID"]]?NSControlStateValueOn:NSControlStateValueOff;
         }
         [menu addItem:NSMenuItem.separatorItem];
-        NSMenuItem *off=[self addDeviceItem:@"Disconnected" action:@selector(changeAudioChoice:) toMenu:menu];
+        NSMenuItem *off=[self addDeviceItem:VIMLocalized(@"settings.disconnected", @"Disconnected") action:@selector(changeAudioChoice:) toMenu:menu];
         off.representedObject=@{@"Input":@(input),@"UID":@"disabled"};off.state=[selected isEqual:@"disabled"]?NSControlStateValueOn:NSControlStateValueOff;
         [self refreshAudioChoices];return;
     }
-    if([menu.title isEqual:@"Keyboard"]) {
+    if([kind isEqual:@"Keyboard"]) {
         NSArray *shortcuts=@[@[@"Command–Option–Escape",@[@"meta_l",@"alt",@"esc"]],
             @[@"Command–Tab",@[@"meta_l",@"tab"]],@[@"Command–Space",@[@"meta_l",@"spc"]],
-            @[@"Control–Command–Q",@[@"ctrl",@"meta_l",@"q"]],@[@"Control–Up Arrow",@[@"ctrl",@"up"]],
-            @[@"Control–Down Arrow",@[@"ctrl",@"down"]],@[@"Control–Left Arrow",@[@"ctrl",@"left"]],
-            @[@"Control–Right Arrow",@[@"ctrl",@"right"]],@[@"Shift–Command–3",@[@"shift",@"meta_l",@"3"]],
+            @[@"Control–Command–Q",@[@"ctrl",@"meta_l",@"q"]],@[VIMLocalized(@"session.control-up-arrow", @"Control–Up Arrow"),@[@"ctrl",@"up"]],
+            @[VIMLocalized(@"session.control-down-arrow", @"Control–Down Arrow"),@[@"ctrl",@"down"]],@[VIMLocalized(@"session.control-left-arrow", @"Control–Left Arrow"),@[@"ctrl",@"left"]],
+            @[VIMLocalized(@"session.control-right-arrow", @"Control–Right Arrow"),@[@"ctrl",@"right"]],@[@"Shift–Command–3",@[@"shift",@"meta_l",@"3"]],
             @[@"Shift–Command–4",@[@"shift",@"meta_l",@"4"]],@[@"Shift–Command–5",@[@"shift",@"meta_l",@"5"]]];
         for(NSArray *shortcut in shortcuts)[self addDeviceItem:shortcut[0] action:@selector(sendMenuShortcut:) toMenu:menu].representedObject=shortcut[1];
     }
@@ -3167,16 +3168,16 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     if([VIMAudioSelection(self.machine.editableConfiguration,input) isEqual:choice[@"UID"]])return;
     if(![self.machine saveSettings:@{@"AudioEnabled":@YES,(input?@"AudioInputDevice":@"AudioOutputDevice"):choice[@"UID"]} error:&error]){VIMPresentError(error,self.window);return;}
     if(self.task.running) {
-        NSAlert *alert=[NSAlert new];alert.messageText=input?@"Restart to change the microphone":@"Restart to change sound output";
-        alert.informativeText=@"Your selection is saved. It will take effect the next time this virtual Mac starts.";
-        [alert addButtonWithTitle:@"OK"];VIMPresentAlert(alert,self.window,nil);
+        NSAlert *alert=[NSAlert new];alert.messageText=input?VIMLocalized(@"session.restart-to-change-the-microphone", @"Restart to change the microphone"):VIMLocalized(@"session.restart-to-change-sound-output", @"Restart to change sound output");
+        alert.informativeText=VIMLocalized(@"session.your-selection-is-saved-it-will-take-effect-the-next", @"Your selection is saved. It will take effect the next time this virtual Mac starts.");
+        [alert addButtonWithTitle:VIMLocalized(@"common.ok", @"OK")];VIMPresentAlert(alert,self.window,nil);
     }
     else [NSNotificationCenter.defaultCenter postNotificationName:@"VIMLibraryChanged" object:nil];
 }
 - (void)menuNeedsUpdate:(NSMenu *)menu {
-    if([menu isKindOfClass:VIMLiveDeviceMenu.class])menu.title=((VIMLiveDeviceMenu *)menu).deviceKind;
-    if([menu.title isEqual:VIMUSBMenuTitle]||[menu.title isEqual:@"USB"])[self populateUSBMenu:menu];
-    else if([@[@"CD/DVD",@"Network",@"Sound Output",@"Microphone",@"Keyboard"] containsObject:menu.title])[self populateDeviceMenu:menu];
+    NSString *kind=[menu isKindOfClass:VIMLiveDeviceMenu.class]?((VIMLiveDeviceMenu *)menu).deviceKind:menu.identifier;
+    if([kind isEqual:VIMUSBMenuTitle]||[kind isEqual:@"USB"])[self populateUSBMenu:menu];
+    else if([@[@"CD/DVD",@"Network",@"Sound Output",@"Microphone",@"Keyboard"] containsObject:kind])[self populateDeviceMenu:menu];
 }
 - (void)refreshUSBToolbar:(NSNotification *)notification {
     for(NSToolbarItem *top in self.window.toolbar.items) {
@@ -3206,7 +3207,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         item.target=self;item.representedObject=@{@"Identifier":identifier,@"Name":self.usbAttached[identifier]};item.state=NSControlStateValueOn;
     }
     if(!devices.count&&!self.usbAttached.count) {
-        NSMenuItem *empty=[menu addItemWithTitle:@"No USB Devices Connected to This Mac" action:nil keyEquivalent:@""];
+        NSMenuItem *empty=[menu addItemWithTitle:VIMLocalized(@"session.no-usb-devices-connected-to-this-mac", @"No USB Devices Connected to This Mac") action:nil keyEquivalent:@""];
         empty.enabled=NO;
     }
 }
@@ -3232,7 +3233,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     NSMutableArray *protected=[NSMutableArray arrayWithObjects:NSBundle.mainBundle.bundleURL,VIMLibraryLocation.rootURL,nil];
     for(VIMSession *session in sessions.allValues)if(session.machine.URL)[protected addObject:session.machine.URL];
     NSError *failure=nil;NSDictionary *storage=VIMHostUSBStorageInfo(device,protected,&failure);
-    if(!storage||[storage[@"Protected"] boolValue]){VIMPresentError(failure?:VIMSessionError(@"This device contains Virtual Intel Mac, a virtual Mac, or its library and cannot be unmounted. Move those files to another drive first."),self.window);return;}
+    if(!storage||[storage[@"Protected"] boolValue]){VIMPresentError(failure?:VIMSessionError(VIMLocalized(@"session.this-device-contains-virtual-intel-mac-a-virtual-mac-or", @"This device contains Virtual Intel Mac, a virtual Mac, or its library and cannot be unmounted. Move those files to another drive first.")),self.window);return;}
     void (^connect)(void)=^{
         VIMSession *session=weakSelf;if(!session.task.running)return;
         session.usbOperationPending=YES;
@@ -3254,9 +3255,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         });
     };
     if(![storage[@"MountedVolumes"] count]){requestAccess(connect);return;}
-    NSAlert *alert=[NSAlert new];alert.messageText=[NSString stringWithFormat:@"Connect “%@” to this virtual Mac?",device[@"Name"]];
-    alert.informativeText=@"Its disks must first be unmounted from this Mac. Save your work on this device before continuing. They’ll be available to the virtual Mac instead.";
-    [alert addButtonWithTitle:@"Unmount and Connect"];[alert addButtonWithTitle:@"Cancel"];[alert addButtonWithTitle:@"Force Unmount…"];
+    NSAlert *alert=[NSAlert new];alert.messageText=[NSString stringWithFormat:VIMLocalized(@"session.connect-to-this-virtual-mac", @"Connect “%@” to this virtual Mac?"),device[@"Name"]];
+    alert.informativeText=VIMLocalized(@"session.its-disks-must-first-be-unmounted-from-this-mac-save", @"Its disks must first be unmounted from this Mac. Save your work on this device before continuing. They’ll be available to the virtual Mac instead.");
+    [alert addButtonWithTitle:VIMLocalized(@"session.unmount-and-connect", @"Unmount and Connect")];[alert addButtonWithTitle:VIMLocalized(@"common.cancel", @"Cancel")];[alert addButtonWithTitle:VIMLocalized(@"session.force-unmount", @"Force Unmount…")];
     VIMPresentAlert(alert,self.window,^(NSModalResponse response){
         if(response==NSAlertSecondButtonReturn)return;
         void (^unmount)(BOOL)=^(BOOL force){
@@ -3266,9 +3267,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             });
         };
         if(response==NSAlertFirstButtonReturn){unmount(NO);return;}
-        NSAlert *confirm=[NSAlert new];confirm.messageText=[NSString stringWithFormat:@"Force unmount “%@”?",device[@"Name"]];
-        confirm.informativeText=@"Unsaved changes on this device may be lost. Close apps using it first if possible.";
-        [confirm addButtonWithTitle:@"Force Unmount and Connect"];[confirm addButtonWithTitle:@"Cancel"];
+        NSAlert *confirm=[NSAlert new];confirm.messageText=[NSString stringWithFormat:VIMLocalized(@"session.force-unmount-2", @"Force unmount “%@”?"),device[@"Name"]];
+        confirm.informativeText=VIMLocalized(@"session.unsaved-changes-on-this-device-may-be-lost-close-apps", @"Unsaved changes on this device may be lost. Close apps using it first if possible.");
+        [confirm addButtonWithTitle:VIMLocalized(@"session.force-unmount-and-connect", @"Force Unmount and Connect")];[confirm addButtonWithTitle:VIMLocalized(@"common.cancel", @"Cancel")];
         VIMPresentAlert(confirm,weakSelf.window,^(NSModalResponse answer){if(answer==NSAlertFirstButtonReturn)unmount(YES);});
     });
 }
@@ -3278,9 +3279,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         VIMSession *session=weakSelf;session.usbOperationPending=NO;
         if(!error){completion();return;}
         if(force){VIMPresentError(error,session.window);return;}
-        NSAlert *alert=[NSAlert new];alert.messageText=[NSString stringWithFormat:@"“%@” couldn’t be unmounted",device[@"Name"]];
-        alert.informativeText=@"Close apps using this device and try again, or force unmount it to connect it to the virtual Mac. Forcing an unmount can lose unsaved changes on the device.";
-        [alert addButtonWithTitle:@"Cancel"];[alert addButtonWithTitle:@"Force Unmount and Connect"];
+        NSAlert *alert=[NSAlert new];alert.messageText=[NSString stringWithFormat:VIMLocalized(@"session.couldn-t-be-unmounted", @"“%@” couldn’t be unmounted"),device[@"Name"]];
+        alert.informativeText=VIMLocalized(@"session.close-apps-using-this-device-and-try-again-or-force", @"Close apps using this device and try again, or force unmount it to connect it to the virtual Mac. Forcing an unmount can lose unsaved changes on the device.");
+        [alert addButtonWithTitle:VIMLocalized(@"common.cancel", @"Cancel")];[alert addButtonWithTitle:VIMLocalized(@"session.force-unmount-and-connect", @"Force Unmount and Connect")];
         VIMPresentAlert(alert,session.window,^(NSModalResponse answer){
             if(answer==NSAlertSecondButtonReturn&&weakSelf.task.running) {
                 weakSelf.usbOperationPending=YES;
@@ -3317,15 +3318,15 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         });
     };
     if(VIMSkipsDevelopmentPowerConfirmation()){reset();return;}
-    NSAlert *alert=[NSAlert new];alert.messageText=@"Reset this Mac?";alert.informativeText=@"This forcibly restarts the virtual Mac. Unsaved work will be lost, and an installation in progress may be interrupted.";
-    [alert addButtonWithTitle:@"Cancel"];[alert addButtonWithTitle:@"Reset"];
+    NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"session.reset-this-mac", @"Reset this Mac?");alert.informativeText=VIMLocalized(@"session.this-forcibly-restarts-the-virtual-mac-unsaved-work-will-be", @"This forcibly restarts the virtual Mac. Unsaved work will be lost, and an installation in progress may be interrupted.");
+    [alert addButtonWithTitle:VIMLocalized(@"common.cancel", @"Cancel")];[alert addButtonWithTitle:VIMLocalized(@"ui.reset", @"Reset")];
     VIMPresentAlert(alert,self.window,^(NSModalResponse response){
         if(response==NSAlertSecondButtonReturn)reset();
     });
 }
 - (void)changeRetinaMode:(NSMenuItem *)sender {
     if(sender.tag<0||sender.tag>2||self.displayModePending)return;
-    if(self.diagnosticPending){VIMPresentError(VIMSessionError(@"Wait for the current guest operation to finish, then change the resolution again."),self.window);return;}
+    if(self.diagnosticPending){VIMPresentError(VIMSessionError(VIMLocalized(@"session.wait-for-the-current-guest-operation-to-finish-then-change", @"Wait for the current guest operation to finish, then change the resolution again.")),self.window);return;}
     [self applyDisplayMode:@[@"space",@"retina",@"scaled"][sender.tag] completion:^(NSDictionary *observed,NSError *error){
         if(error)VIMPresentError(error,self.window);
     }];
@@ -3345,8 +3346,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     [VIMSession displayScalingPreferencesChangedForMachine:self.machine];
 }
 - (void)applyDisplayMode:(NSString *)mode completion:(void (^)(NSDictionary *,NSError *))completion {
-    if(![@[@"space",@"retina",@"scaled"] containsObject:mode]){completion(nil,VIMSessionError(@"Choose More Space, Retina or Scaled."));return;}
-    if([mode isEqual:@"retina"]&&!self.supportsRetinaDisplay){completion(nil,VIMSessionError(@"This version of Mac OS X supports More Space and Scaled, but not Retina resolution."));return;}
+    if(![@[@"space",@"retina",@"scaled"] containsObject:mode]){completion(nil,VIMSessionError(VIMLocalized(@"session.choose-more-space-retina-or-scaled", @"Choose More Space, Retina or Scaled.")));return;}
+    if([mode isEqual:@"retina"]&&!self.supportsRetinaDisplay){completion(nil,VIMSessionError(VIMLocalized(@"session.this-version-of-mac-os-x-supports-more-space-and", @"This version of Mac OS X supports More Space and Scaled, but not Retina resolution.")));return;}
     NSError *error=nil;
     NSDictionary *settings=@{@"DisplayMode":mode,@"RetinaEnabled":@(![mode isEqual:@"scaled"])};
     if(!self.task.running) {
@@ -3355,7 +3356,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         [NSNotificationCenter.defaultCenter postNotificationName:@"VIMLibraryChanged" object:nil];completion(nil,nil);return;
     }
     if(!self.resizeArmed||self.preparing||self.guestPending||self.preparationRequested||self.clipboardPending||self.bootPolicyPending||self.displayModePending) {
-        completion(nil,VIMSessionError(@"Wait until macOS has reached the desktop and setup has finished, then change the resolution again."));return;
+        completion(nil,VIMSessionError(VIMLocalized(@"session.wait-until-macos-has-reached-the-desktop-and-setup-has", @"Wait until macOS has reached the desktop and setup has finished, then change the resolution again.")));return;
     }
     CGFloat factor=[mode isEqual:@"scaled"]?1:([mode isEqual:@"retina"]?2:self.window.backingScaleFactor);
     NSSize requested=VIMRequestedGuestPixelSize(self.displayView.bounds.size,factor,self.machine.preMetalGuest,
@@ -3385,7 +3386,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             NSString *uid=[[NSString alloc] initWithData:result[@"stdout"]?:NSData.data encoding:NSUTF8StringEncoding];
             uid=[uid stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
             if(failure||![result[@"exitcode"] isEqual:@0]||uid.integerValue<501||[uid rangeOfCharacterFromSet:NSCharacterSet.decimalDigitCharacterSet.invertedSet].location!=NSNotFound) {
-                finished(nil,failure?:VIMSessionError(@"Sign in to this Mac before changing its display resolution."));return;
+                finished(nil,failure?:VIMSessionError(VIMLocalized(@"session.sign-in-to-this-mac-before-changing-its-display-resolution", @"Sign in to this Mac before changing its display resolution.")));return;
             }
             NSString *tool=self.machine.preMetalGuest?@"/Library/Application Support/Virtual Intel Mac/GuestTools/guest-display":[self.displayToolDirectory stringByAppendingPathComponent:@"guest-display"];
             NSArray *arguments=@[@(width).stringValue,@(height).stringValue,[mode isEqual:@"retina"]?@"2":@"1"];
@@ -3395,8 +3396,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
                 BOOL verified=[observed isKindOfClass:NSDictionary.class]&&[observed[@"PixelWidth"] isEqual:@(width)]&&
                     [observed[@"PixelHeight"] isEqual:@(height)]&&[observed[@"Scale"] isEqual:([mode isEqual:@"retina"]?@2:@1)];
                 NSString *explanation=self.displayPolicyRestartRequired&&[mode isEqual:@"retina"]?
-                    @"Restart this virtual Mac once to finish enabling Retina display modes.":
-                    [@"macOS couldn’t apply and verify that display resolution. " stringByAppendingString:detail.length?detail:@"Try again after the desktop appears."];
+                    VIMLocalized(@"session.restart-this-virtual-mac-once-to-finish-enabling-retina-display", @"Restart this virtual Mac once to finish enabling Retina display modes."):
+                    [VIMLocalized(@"session.macos-couldn-t-apply-and-verify-that-display-resolution", @"macOS couldn’t apply and verify that display resolution. ") stringByAppendingString:detail.length?detail:VIMLocalized(@"session.try-again-after-the-desktop-appears", @"Try again after the desktop appears.")];
                 NSError *error=issue?:([reply[@"exitcode"] isEqual:@0]&&verified?nil:VIMSessionError(explanation));
                 finished(verified?observed:nil,error);
             }];
@@ -3409,18 +3410,18 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         if(failure){finished(nil,failure);return;}
         NSString *directory=receipt[@"Directory"];
         [self.guestAgent runExecutable:@"/bin/chmod" arguments:@[@"0755",[directory stringByAppendingPathComponent:@"guest-display"]] timeout:10 completion:^(NSDictionary *result,NSError *issue){
-            if(issue||![result[@"exitcode"] isEqual:@0]){finished(nil,issue?:VIMSessionError(@"The display helper couldn’t be prepared."));return;}
+            if(issue||![result[@"exitcode"] isEqual:@0]){finished(nil,issue?:VIMSessionError(VIMLocalized(@"session.the-display-helper-couldn-t-be-prepared", @"The display helper couldn’t be prepared.")));return;}
             // The verified helper executes as the console user. Permit exact
             // path traversal, not directory listing or modification. This
             // staging directory contains only the two non-secret binaries.
             [self.guestAgent runExecutable:@"/bin/chmod" arguments:@[@"0711",directory] timeout:10 completion:^(NSDictionary *secured,NSError *problem){
-                if(problem||![secured[@"exitcode"] isEqual:@0]){finished(nil,problem?:VIMSessionError(@"The display helper couldn’t be made available to the desktop."));return;}
+                if(problem||![secured[@"exitcode"] isEqual:@0]){finished(nil,problem?:VIMSessionError(VIMLocalized(@"session.the-display-helper-couldn-t-be-made-available-to-the", @"The display helper couldn’t be made available to the desktop.")));return;}
                 self.displayToolDirectory=directory;
                 [self.guestAgent runExecutable:[directory stringByAppendingPathComponent:@"guest-display"]
                     arguments:@[@"--prepare-policy"] timeout:0 completion:^(NSDictionary *policy,NSError *policyError){
                     id observed=[NSJSONSerialization JSONObjectWithData:policy[@"stdout"]?:NSData.data options:0 error:nil];
                     if(policyError||![policy[@"exitcode"] isEqual:@0]||![observed isKindOfClass:NSDictionary.class]) {
-                        finished(nil,policyError?:VIMSessionError(@"The native Retina display policy couldn’t be prepared. Try again after restarting this Mac."));return;
+                        finished(nil,policyError?:VIMSessionError(VIMLocalized(@"session.the-native-retina-display-policy-couldn-t-be-prepared-try", @"The native Retina display policy couldn’t be prepared. Try again after restarting this Mac.")));return;
                     }
                     self.displayPolicyRestartRequired=[observed[@"RestartRequired"] isEqual:@YES];
                     selectMode();
@@ -3558,8 +3559,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     NSError *error=nil;
     if(![machine saveSettings:@{@"NetworkMode":mode,@"NetworkConnected":@(connected)} error:&error]){completion(error);return;}
     if(different&&connected) {
-        NSAlert *alert=[NSAlert new];alert.messageText=@"Restart to change networks";alert.informativeText=@"Your network selection is saved and will take effect the next time this virtual Mac starts. Its current connection stays active until then.";
-        [alert addButtonWithTitle:@"OK"];VIMPresentAlert(alert,window,nil);completion(nil);
+        NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"session.restart-to-change-networks", @"Restart to change networks");alert.informativeText=VIMLocalized(@"session.your-network-selection-is-saved-and-will-take-effect-the", @"Your network selection is saved and will take effect the next time this virtual Mac starts. Its current connection stays active until then.");
+        [alert addButtonWithTitle:VIMLocalized(@"common.ok", @"OK")];VIMPresentAlert(alert,window,nil);completion(nil);
     } else [self setNetworkConnected:connected machine:machine completion:completion];
     [NSNotificationCenter.defaultCenter postNotificationName:@"VIMLibraryChanged" object:nil];
 }
@@ -3582,11 +3583,11 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
 }
 + (void)chooseImageForMachine:(VIMMachine *)machine slot:(NSUInteger)slot window:(NSWindow *)window {
     NSArray *connected=[self connectedImagesForMachine:machine];
-    if(connected.count>=VIMImageSlotCount){VIMPresentError(VIMSessionError(@"Four images are already connected. Disconnect an image before adding another."),window);return;}
+    if(connected.count>=VIMImageSlotCount){VIMPresentError(VIMSessionError(VIMLocalized(@"session.four-images-are-already-connected-disconnect-an-image-before-adding", @"Four images are already connected. Disconnect an image before adding another.")),window);return;}
     if(slot!=NSNotFound&&[self imageRecordForMachine:machine slot:slot]) {
-        NSAlert *alert=[NSAlert new];alert.messageText=@"Disconnect the current image first";
-        alert.informativeText=@"Eject the image in the virtual Mac, then choose Disconnect before connecting a different image.";
-        [alert addButtonWithTitle:@"OK"];VIMPresentAlert(alert,window,nil);return;
+        NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"session.disconnect-the-current-image-first", @"Disconnect the current image first");
+        alert.informativeText=VIMLocalized(@"session.eject-the-image-in-the-virtual-mac-then-choose-disconnect", @"Eject the image in the virtual Mac, then choose Disconnect before connecting a different image.");
+        [alert addButtonWithTitle:VIMLocalized(@"common.ok", @"OK")];VIMPresentAlert(alert,window,nil);return;
     }
     NSOpenPanel *panel=[NSOpenPanel openPanel];// QEMU reads these as raw 2048-byte CD/DVD sectors (ISO, CDR, Toast) or
     // through its read-only UDIF driver (DMG). The container is still
@@ -3594,12 +3595,12 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     panel.allowedContentTypes=@[[UTType typeWithFilenameExtension:@"iso"],[UTType typeWithFilenameExtension:@"cdr"],
         [UTType typeWithFilenameExtension:@"toast"],[UTType typeWithFilenameExtension:@"dmg"]];
     panel.allowsMultipleSelection=slot==NSNotFound;panel.prompt=@"Connect";
-    panel.message=@"Choose ISO, CDR, Toast or unencrypted DMG images. Each image connects to its own read-only drive, without copying or conversion.";
+    panel.message=VIMLocalized(@"session.choose-iso-cdr-toast-or-unencrypted-dmg-images-each-image", @"Choose ISO, CDR, Toast or unencrypted DMG images. Each image connects to its own read-only drive, without copying or conversion.");
     [panel beginSheetModalForWindow:window completionHandler:^(NSModalResponse response){
         if(response!=NSModalResponseOK)return;
         NSArray<NSURL *> *URLs=panel.URLs;
         if(URLs.count>VIMImageSlotCount-[self connectedImagesForMachine:machine].count) {
-            VIMPresentError(VIMSessionError(@"There aren’t enough empty image drives for this selection. Choose fewer images or disconnect an existing image first."),window);return;
+            VIMPresentError(VIMSessionError(VIMLocalized(@"session.there-aren-t-enough-empty-image-drives-for-this-selection", @"There aren’t enough empty image drives for this selection. Choose fewer images or disconnect an existing image first.")),window);return;
         }
         __block void (^next)(NSUInteger);
         next=^(NSUInteger index){
@@ -3646,9 +3647,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         if(!error)return;
         VIMSession *session=sessions[SessionKey(machine)];
         if(!session.task.running||session.mediaChangePending){VIMPresentError(error,window);return;}
-        NSAlert *alert=[NSAlert new];alert.messageText=@"The image couldn’t be disconnected";
-        alert.informativeText=@"Close apps using the image and eject it in the virtual Mac’s Finder, then try again. If it still can’t be ejected, shut down the virtual Mac before disconnecting it. Forcing a mounted image to disconnect can leave macOS waiting for a disk that is no longer available.";
-        [alert addButtonWithTitle:@"OK"];
+        NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"session.the-image-couldn-t-be-disconnected", @"The image couldn’t be disconnected");
+        alert.informativeText=VIMLocalized(@"session.close-apps-using-the-image-and-eject-it-in-the", @"Close apps using the image and eject it in the virtual Mac’s Finder, then try again. If it still can’t be ejected, shut down the virtual Mac before disconnecting it. Forcing a mounted image to disconnect can leave macOS waiting for a disk that is no longer available.");
+        [alert addButtonWithTitle:VIMLocalized(@"common.ok", @"OK")];
         VIMPresentAlert(alert,window,nil);
     }];
 }
@@ -3659,7 +3660,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     [self insertImage:path slot:0 machine:machine completion:completion];
 }
 + (void)insertImage:(NSString *)path slot:(NSUInteger)slot machine:(VIMMachine *)machine completion:(void (^)(NSError *))completion {
-    if(slot>=VIMImageSlotCount){completion(VIMSessionError(@"Choose an available image drive."));return;}
+    if(slot>=VIMImageSlotCount){completion(VIMSessionError(VIMLocalized(@"session.choose-an-available-image-drive", @"Choose an available image drive.")));return;}
     NSError *validation=nil;
     NSString *format=path.length?VIMOpticalImageFormat(path,&validation):nil;
     if(path.length&&!format){completion(validation);return;}
@@ -3669,7 +3670,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         if(error){completion(error);return;}
         NSString *current=[self imageRecordForMachine:machine slot:slot][@"Path"];
         if(path.length&&current.length) {
-            completion([current isEqual:path]?nil:VIMSessionError(@"Disconnect the current image before choosing another."));return;
+            completion([current isEqual:path]?nil:VIMSessionError(VIMLocalized(@"session.disconnect-the-current-image-before-choosing-another", @"Disconnect the current image before choosing another.")));return;
         }
         if(!session.task.running){save(nil);return;}
         [session changeRemovableMedia:path format:format slot:slot completion:save];
@@ -3678,7 +3679,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     NSString *root=VIMDevelopmentSourceRoot();
     NSString *tool=root.length?[NSDictionary dictionaryWithContentsOfFile:[root stringByAppendingPathComponent:@"Build/RuntimeLocation.plist"]][@"Directory"]:
         [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"Runtime/bin"];
-    if(!tool.length){completion(VIMSessionError(@"Open the complete Virtual Intel Mac app to connect disk images."));return;}
+    if(!tool.length){completion(VIMSessionError(VIMLocalized(@"session.open-the-complete-virtual-intel-mac-app-to-connect-disk", @"Open the complete Virtual Intel Mac app to connect disk images.")));return;}
     VIMCheckOpticalImage(path,format,[tool stringByAppendingPathComponent:@"qemu-img"],apply);
 }
 - (void)ensureImageDevice:(NSUInteger)slot completion:(void (^)(NSError *))completion {
@@ -3691,7 +3692,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     NSString *add=[NSString stringWithFormat:@"drive_add 0 id=%@,if=none,media=disk,readonly=on",backend];
     [self.control execute:@"human-monitor-command" arguments:@{@"command-line":add} completion:^(id result,NSError *error){
         if(!error&&(![result isKindOfClass:NSString.class]||![[result stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] isEqual:@"OK"]))
-            error=VIMSessionError(@"The virtual image drive could not be created.");
+            error=VIMSessionError(VIMLocalized(@"session.the-virtual-image-drive-could-not-be-created", @"The virtual image drive could not be created."));
         if(error){completion(error);return;}
         __block BOOL transportCreated=NO;
         void (^finish)(NSError *)=^(NSError *failure){
@@ -3724,7 +3725,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     }];
 }
 - (void)changeRemovableMedia:(NSString *)path format:(NSString *)format slot:(NSUInteger)slot completion:(void (^)(NSError *))completion {
-    if(self.mediaChangePending){completion(VIMSessionError(@"Wait for the current disc change to finish, then try again."));return;}
+    if(self.mediaChangePending){completion(VIMSessionError(VIMLocalized(@"session.wait-for-the-current-disc-change-to-finish-then-try", @"Wait for the current disc change to finish, then try again.")));return;}
     self.mediaChangePending=YES;
     // The public/UI record may describe an unavailable saved choice. Only
     // actual live media can require a QMP eject or own a device to unplug.
@@ -3739,8 +3740,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     void (^finish)(NSError *)=^(NSError *error){
         self.mediaChangePending=NO;
         if(error&&[error.localizedDescription.localizedLowercaseString containsString:@"locked"])
-            error=[NSError errorWithDomain:@"VirtualIntelMac.Media" code:1 userInfo:@{NSLocalizedDescriptionKey:@"This disc is in use",
-                NSLocalizedRecoverySuggestionErrorKey:@"In the virtual Mac, eject the disc in Finder, then try again. Close any apps using it first. Your image hasn’t been changed.",NSUnderlyingErrorKey:error}];
+            error=[NSError errorWithDomain:@"VirtualIntelMac.Media" code:1 userInfo:@{NSLocalizedDescriptionKey:VIMLocalized(@"session.this-disc-is-in-use", @"This disc is in use"),
+                NSLocalizedRecoverySuggestionErrorKey:VIMLocalized(@"session.in-the-virtual-mac-eject-the-disc-in-finder-then", @"In the virtual Mac, eject the disc in Finder, then try again. Close any apps using it first. Your image hasn’t been changed."),NSUnderlyingErrorKey:error}];
         if(error&&path.length)error=VIMFriendlyDiscImageError(path,error);
         completion(error);
     };
@@ -3759,7 +3760,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             if(error){finish(error);return;}disconnect();
         }];return;
     }
-    if(oldPath.length){finish([oldPath isEqual:path]?nil:VIMSessionError(@"Disconnect this drive’s current image before choosing another."));return;}
+    if(oldPath.length){finish([oldPath isEqual:path]?nil:VIMSessionError(VIMLocalized(@"session.disconnect-this-drive-s-current-image-before-choosing-another", @"Disconnect this drive’s current image before choosing another.")));return;}
     [self ensureImageDevice:slot completion:^(NSError *failure){
         if(failure){finish(failure);return;}
         insert(path,format,^(NSError *error){if(!error)record(path,format);finish(error);});
@@ -3776,7 +3777,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     NSSavePanel *panel=[NSSavePanel savePanel];panel.allowedContentTypes=@[UTTypePNG];panel.nameFieldStringValue=[self.machine.name stringByAppendingString:@".png"];
     [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response){
         if(response!=NSModalResponseOK)return;
-        [self.displayView capturePNG:^(NSData *png){NSError *error=nil;if(!png)error=VIMSessionError(@"There isn’t a guest picture to save yet. Wake this Mac or wait for its desktop, then try again.");else [png writeToURL:panel.URL options:NSDataWritingAtomic error:&error];if(error)VIMPresentError(error,self.window);}];
+        [self.displayView capturePNG:^(NSData *png){NSError *error=nil;if(!png)error=VIMSessionError(VIMLocalized(@"session.there-isn-t-a-guest-picture-to-save-yet-wake", @"There isn’t a guest picture to save yet. Wake this Mac or wait for its desktop, then try again."));else [png writeToURL:panel.URL options:NSDataWritingAtomic error:&error];if(error)VIMPresentError(error,self.window);}];
     }];
 }
 - (IBAction)configureMachine:(id)sender {[VIMMachineSettings showForMachine:self.machine window:self.window completion:nil];}
@@ -3784,20 +3785,20 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     NSAlert *alert=[NSAlert new];
     VIMSetInstallerAlertIcon(alert,self.machine.guest);
     NSString *os=VIMOperatingSystemName(self.machine.guest);
-    alert.messageText=[@"Installing " stringByAppendingString:os];
+    alert.messageText=[NSString stringWithFormat:VIMLocalized(@"ui.installing.named", @"Installing %@"),os];
     NSDictionary *setup=[NSDictionary dictionaryWithContentsOfURL:[self.machine.URL URLByAppendingPathComponent:@"State/AutomaticSetup.plist"]];
     BOOL automatic=[setup[@"Enabled"] boolValue];
-    NSString *instructions=automatic?@"Your virtual Mac will install the operating system and create your account automatically. You don’t need to erase the disk or choose Reinstall.":
-        [@[@"tiger",@"leopard",@"snowleopard"] containsObject:self.machine.guest]?@"Follow the installer’s onscreen instructions and select Macintosh HD as the destination.":
-        [NSString stringWithFormat:@"In %@ Utilities, choose Reinstall %@, then select Macintosh HD as the destination. Don’t select the Base System; it contains the installer.",os,os];
-    alert.informativeText=[instructions stringByAppendingString:@"\n\nYour Mac may restart several times. Graphics support is installed automatically after setup. Keep this Mac running while setup finishes. Installation may take up to 2 hours."];
+    NSString *instructions=automatic?VIMLocalized(@"session.your-virtual-mac-will-install-the-operating-system-and-create", @"Your virtual Mac will install the operating system and create your account automatically. You don’t need to erase the disk or choose Reinstall."):
+        [@[@"tiger",@"leopard",@"snowleopard"] containsObject:self.machine.guest]?VIMLocalized(@"session.follow-the-installer-s-onscreen-instructions-and-select-macintosh-hd", @"Follow the installer’s onscreen instructions and select Macintosh HD as the destination."):
+        [NSString stringWithFormat:VIMLocalized(@"session.in-utilities-choose-reinstall-then-select-macintosh-hd-as-the", @"In %@ Utilities, choose Reinstall %@, then select Macintosh HD as the destination. Don’t select the Base System; it contains the installer."),os,os];
+    alert.informativeText=[instructions stringByAppendingString:VIMLocalized(@"session.your-mac-may-restart-several-times-graphics-support-is-installed", @"\n\nYour Mac may restart several times. Graphics support is installed automatically after setup. Keep this Mac running while setup finishes. Installation may take up to 2 hours.")];
     [alert beginSheetModalForWindow:self.window completionHandler:nil];
 }
 - (IBAction)showSessionDetails:(id)sender {
-    NSAlert *alert=[NSAlert new];alert.messageText=@"Session Details";
+    NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"session.session-details", @"Session Details");
     VIMSetAppAlertIcon(alert);
     alert.informativeText=[NSString stringWithFormat:@"%@\n\n%@",self.status.stringValue,self.guestStatus.stringValue];
-    [alert addButtonWithTitle:@"Done"];[alert addButtonWithTitle:@"Show Diagnostic Files"];
+    [alert addButtonWithTitle:VIMLocalized(@"ui.done", @"Done")];[alert addButtonWithTitle:VIMLocalized(@"session.show-diagnostic-files", @"Show Diagnostic Files")];
     [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result){if(result==NSAlertSecondButtonReturn)[self showGuestDiagnostics:self];}];
 }
 - (IBAction)startAgain:(id)sender {
@@ -3807,10 +3808,10 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     if(self.networkStarting){[self cleanUp];return YES;}
     if(!self.task.running)return YES;
     [self.displayView releasePressedKeys];
-    NSAlert *alert=[NSAlert new];alert.messageText=@"Close this Mac’s window?";
+    NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"session.close-this-mac-s-window", @"Close this Mac’s window?");
     VIMSetAppAlertIcon(alert);
-    alert.informativeText=@"Keep it running in the background, or shut down macOS. Save your work inside this Mac before shutting down. You can return to it from the library.";
-    [alert addButtonWithTitle:@"Keep Running"];[alert addButtonWithTitle:@"Shut Down"];[alert addButtonWithTitle:@"Cancel"];
+    alert.informativeText=VIMLocalized(@"session.keep-it-running-in-the-background-or-shut-down-macos", @"Keep it running in the background, or shut down macOS. Save your work inside this Mac before shutting down. You can return to it from the library.");
+    [alert addButtonWithTitle:VIMLocalized(@"session.keep-running", @"Keep Running")];[alert addButtonWithTitle:VIMLocalized(@"menu.shut-down", @"Shut Down")];[alert addButtonWithTitle:VIMLocalized(@"common.cancel", @"Cancel")];
     [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result){
         if(result==NSAlertFirstButtonReturn)[self.window orderOut:nil];
         else if(result==NSAlertSecondButtonReturn){self.closeAfterShutdown=YES;[self shutdown:self];}
@@ -3827,10 +3828,10 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     if(!self.task.running||self.preparing||self.preparationRequested||self.relaunchForGraphics)return;
     NSURL *journal=[self.machine.URL URLByAppendingPathComponent:@"State/GuestInstallation.plist"];
     BOOL repair=[NSFileManager.defaultManager fileExistsAtPath:journal.path];
-    NSAlert *alert=[NSAlert new];alert.messageText=repair?@"Repair graphics support?":@"Finish graphics setup?";
+    NSAlert *alert=[NSAlert new];alert.messageText=repair?VIMLocalized(@"session.repair-graphics-support", @"Repair graphics support?"):VIMLocalized(@"session.finish-graphics-setup", @"Finish graphics setup?");
     VIMSetInstallerAlertIcon(alert,self.machine.guest);
-    alert.informativeText=repair?@"Save your work first. We’ll check the previous installation, retain its recovery records, and prepare fresh graphics support for this macOS build. Keep this Mac running until repair finishes, then restart it. An unfinished or uncertain installation will not be replaced.":@"Save your work in this Mac first. Virtual Intel Mac will prepare and install its graphics support. This can take several minutes. Keep this Mac running until setup finishes, then shut it down and open it again.";
-    [alert addButtonWithTitle:repair?@"Repair":@"Finish Setup"];[alert addButtonWithTitle:@"Cancel"];
+    alert.informativeText=repair?VIMLocalized(@"session.save-your-work-first-we-ll-check-the-previous-installation", @"Save your work first. We’ll check the previous installation, retain its recovery records, and prepare fresh graphics support for this macOS build. Keep this Mac running until repair finishes, then restart it. An unfinished or uncertain installation will not be replaced."):VIMLocalized(@"session.save-your-work-in-this-mac-first-virtual-intel-mac", @"Save your work in this Mac first. Virtual Intel Mac will prepare and install its graphics support. This can take several minutes. Keep this Mac running until setup finishes, then shut it down and open it again.");
+    [alert addButtonWithTitle:repair?VIMLocalized(@"ui.repair", @"Repair"):VIMLocalized(@"session.finish-setup", @"Finish Setup")];[alert addButtonWithTitle:VIMLocalized(@"common.cancel", @"Cancel")];
     [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response){
         if(response!=NSAlertFirstButtonReturn||!self.task.running)return;
         if(repair) {
@@ -3849,7 +3850,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     if(!self.task.running||self.shutdownRequested||self.preparing)return;
     self.relaunchForGraphics=NO;
     self.forceResetRequested=NO;self.shutdownRequested=YES;self.shutdownButton.enabled=NO;[self.displayView releasePressedKeys];
-    self.guestStatus.stringValue=@"Asking macOS to shut down…";
+    self.guestStatus.stringValue=VIMLocalized(@"session.asking-macos-to-shut-down", @"Asking macOS to shut down…");
     void (^request)(void)=^{[self.guestAgent connectWithCompletion:^(NSError *connectionError){
         if(!self.task.running)return;
         if(connectionError) {
@@ -3857,7 +3858,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             // The agent can disappear before QMP reports guest shutdown. A
             // transport error is not proof that tools are missing, and a
             // modal alert here can outlive an otherwise successful shutdown.
-            self.guestStatus.stringValue=@"The shutdown request couldn’t be confirmed. This Mac may already be shutting down. If it stays on, choose Shut Down inside the virtual Mac, or use Force Stop.";
+            self.guestStatus.stringValue=VIMLocalized(@"session.the-shutdown-request-couldn-t-be-confirmed-this-mac-may", @"The shutdown request couldn’t be confirmed. This Mac may already be shutting down. If it stays on, choose Shut Down inside the virtual Mac, or use Force Stop.");
             self.guestStatus.toolTip=connectionError.localizedDescription;
             [self.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] Shutdown connection: %@\n",connectionError.localizedDescription] dataUsingEncoding:NSUTF8StringEncoding]];
             return;
@@ -3866,7 +3867,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             if(!self.task.running)return;
             // Do not send a second shutdown or an ACPI sleep request after an
             // ambiguous agent disconnect. The task's exit is the completion.
-            self.guestStatus.stringValue=error?@"Shutdown has not been confirmed. Wait for your virtual Mac to finish, or use Force Stop if it is unresponsive.":[NSString stringWithFormat:@"%@ is shutting down…",VIMOperatingSystemName(self.machine.guest)];
+            self.guestStatus.stringValue=error?VIMLocalized(@"session.shutdown-has-not-been-confirmed-wait-for-your-virtual-mac", @"Shutdown has not been confirmed. Wait for your virtual Mac to finish, or use Force Stop if it is unresponsive."):[NSString stringWithFormat:VIMLocalized(@"session.is-shutting-down", @"%@ is shutting down…"),VIMOperatingSystemName(self.machine.guest)];
         }];
     }];};
     if([self.lastRunState isEqual:@"paused"]||[self.lastRunState isEqual:@"suspended"]) {
@@ -3883,10 +3884,10 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         self.forceResetRequested=NO;self.relaunchForGraphics=NO;self.relaunchForGuestReboot=NO;self.shutdownRequested=YES;[self.task terminate];
     };
     if(VIMSkipsDevelopmentPowerConfirmation()){stop();return;}
-    NSAlert *alert=[NSAlert new];alert.messageText=@"Force stop this Mac?";
+    NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"session.force-stop-this-mac", @"Force stop this Mac?");
     VIMSetAppAlertIcon(alert);
-    alert.informativeText=@"Unsaved work will be lost. Try Shut Down first.";
-    [alert addButtonWithTitle:@"Cancel"];[alert addButtonWithTitle:@"Force Stop"];
+    alert.informativeText=VIMLocalized(@"session.unsaved-work-will-be-lost-try-shut-down-first", @"Unsaved work will be lost. Try Shut Down first.");
+    [alert addButtonWithTitle:VIMLocalized(@"common.cancel", @"Cancel")];[alert addButtonWithTitle:VIMLocalized(@"session.force-stop-2", @"Force Stop")];
     [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result){
         if(result==NSAlertSecondButtonReturn)stop();
     }];
@@ -3899,7 +3900,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     [self dismissSetupNotice];
     void (^waitingCompletion)(NSError *)=self.pendingHostConnectionCompletion;
     self.pendingHostConnectionURL=nil;self.pendingHostConnectionCompletion=nil;
-    if(waitingCompletion)waitingCompletion(VIMSessionError(@"The virtual Mac stopped before the connection could open. Start it and try again."));
+    if(waitingCompletion)waitingCompletion(VIMSessionError(VIMLocalized(@"session.the-virtual-mac-stopped-before-the-connection-could-open-start", @"The virtual Mac stopped before the connection could open. Start it and try again.")));
     [self.controlRetryTimer invalidate];self.controlRetryTimer=nil;
     self.bootPolicyPending=NO;self.bootPolicyCheckedBoot=nil;
     self.networkStarting=NO;[self.networkClient stop];self.networkClient=nil;self.guestIPAddresses=nil;
@@ -3928,8 +3929,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         NSError *error=nil;
         BOOL finished=self.machine.preMetalGuest?[self.machine retryInstallerCleanup:&error]:
             [self.machine finishInstallationWithGuestReport:self.completionGuestReport error:&error];
-        self.guestStatus.stringValue=finished?@"Installation complete — installer media removed":
-            [NSString stringWithFormat:@"Installer cleanup pending: %@",error.localizedDescription];
+        self.guestStatus.stringValue=finished?VIMLocalized(@"session.installation-complete-installer-media-removed", @"Installation complete — installer media removed"):
+            [NSString stringWithFormat:VIMLocalized(@"session.installer-cleanup-pending", @"Installer cleanup pending: %@"),error.localizedDescription];
         self.completionGuestReport=nil;
     }
     if(self.machine&&!self.task.running) {

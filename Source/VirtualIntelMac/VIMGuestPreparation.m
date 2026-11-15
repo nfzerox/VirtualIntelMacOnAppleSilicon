@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMGuestPreparation.h"
 #import "VIMGuestAgent.h"
 #import "VIMQMPConnection.h"
@@ -41,7 +42,7 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
     NSError *writeError=nil;
     if(error)self.state[@"Failure"]=error.localizedDescription;
     if(receipt)self.state[@"Receipt"]=receipt;
-    if(error)[self.progressUI updateMode:@"failed" fraction:0 message:@"Setup couldn’t finish. Check Session Details in the Virtual Intel Mac app before trying again." completion:nil];
+    if(error)[self.progressUI updateMode:@"failed" fraction:0 message:VIMLocalized(@"guestpreparation.setup-couldn-t-finish-check-session-details-in-the-virtual", @"Setup couldn’t finish. Check Session Details in the Virtual Intel Mac app before trying again.") completion:nil];
     if(self.state)[self savePhase:error?@"failed":@"prepared" error:&writeError];
     [self releaseSupportMedia:^(NSError *ejectError){self.completion(receipt,error?:writeError?:ejectError);}];
 }
@@ -67,9 +68,9 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
 - (void)mountHeadlessSupport:(void (^)(NSError *))completion deadline:(NSTimeInterval)deadline {
     [self.agent runExecutable:@"/usr/sbin/diskutil" arguments:@[@"list",@"-plist"] timeout:20 completion:^(NSDictionary *result,NSError *failure){
         NSDictionary *list=CommandOK(result)?[NSPropertyListSerialization propertyListWithData:result[@"stdout"] options:0 format:NULL error:nil]:nil;
-        if(failure||![list isKindOfClass:NSDictionary.class]){completion(failure?:PreparationError(@"The support disc couldn’t be located before login. Nothing was installed."));return;}
+        if(failure||![list isKindOfClass:NSDictionary.class]){completion(failure?:PreparationError(VIMLocalized(@"guestpreparation.the-support-disc-couldn-t-be-located-before-login-nothing", @"The support disc couldn’t be located before login. Nothing was installed.")));return;}
         NSMutableArray *queue=[list[@"AllDisksAndPartitions"] mutableCopy],*matches=[NSMutableArray new];
-        if(![queue isKindOfClass:NSMutableArray.class]||queue.count>128){completion(PreparationError(@"The guest disk list was not recognized."));return;}
+        if(![queue isKindOfClass:NSMutableArray.class]||queue.count>128){completion(PreparationError(VIMLocalized(@"guestpreparation.the-guest-disk-list-was-not-recognized", @"The guest disk list was not recognized.")));return;}
         for(NSUInteger i=0;i<queue.count&&i<128;i++) {
             NSDictionary *entry=queue[i];if(![entry isKindOfClass:NSDictionary.class])continue;
             if([entry[@"VolumeName"] isEqual:@"Virtual Intel Mac Support"]&&[entry[@"DeviceIdentifier"] isKindOfClass:NSString.class])[matches addObject:entry[@"DeviceIdentifier"]];
@@ -83,12 +84,12 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(),^{[self mountHeadlessSupport:completion deadline:deadline];});return;
         }
         NSRegularExpression *pattern=[NSRegularExpression regularExpressionWithPattern:@"^disk[0-9]+(s[0-9]+)*$" options:0 error:nil];
-        if(!identifier||[pattern numberOfMatchesInString:identifier options:0 range:NSMakeRange(0,identifier.length)]!=1){completion(PreparationError(@"The guest support disc is missing or ambiguous. Nothing was installed."));return;}
+        if(!identifier||[pattern numberOfMatchesInString:identifier options:0 range:NSMakeRange(0,identifier.length)]!=1){completion(PreparationError(VIMLocalized(@"guestpreparation.the-guest-support-disc-is-missing-or-ambiguous-nothing-was", @"The guest support disc is missing or ambiguous. Nothing was installed.")));return;}
         [self.agent runExecutable:@"/usr/sbin/diskutil" arguments:@[@"info",@"-plist",identifier] timeout:15 completion:^(NSDictionary *reply,NSError *issue){
             NSDictionary *info=CommandOK(reply)?[NSPropertyListSerialization propertyListWithData:reply[@"stdout"] options:0 format:NULL error:nil]:nil;
-            if(issue||![info[@"VolumeName"] isEqual:@"Virtual Intel Mac Support"]||![info[@"WritableMedia"] isEqual:@NO]){completion(issue?:PreparationError(@"The support disc isn’t verified as read-only. Nothing was installed."));return;}
+            if(issue||![info[@"VolumeName"] isEqual:@"Virtual Intel Mac Support"]||![info[@"WritableMedia"] isEqual:@NO]){completion(issue?:PreparationError(VIMLocalized(@"guestpreparation.the-support-disc-isn-t-verified-as-read-only-nothing", @"The support disc isn’t verified as read-only. Nothing was installed.")));return;}
             [self.agent runExecutable:@"/usr/sbin/diskutil" arguments:@[@"mount",@"readOnly",identifier] timeout:30 completion:^(NSDictionary *mounted,NSError *error){
-                completion(error?:(!CommandOK(mounted)?PreparationError(@"The read-only support disc couldn’t be mounted before login. Nothing was installed."):nil));
+                completion(error?:(!CommandOK(mounted)?PreparationError(VIMLocalized(@"guestpreparation.the-read-only-support-disc-couldn-t-be-mounted-before", @"The read-only support disc couldn’t be mounted before login. Nothing was installed.")):nil));
             }];
         }];
     }];
@@ -100,7 +101,7 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
        ![report[@"KernelMatchesSystem"] isEqual:@YES]||![report[@"InstalledSystemCandidate"] isEqual:@YES]||
        (!self.headlessRepair&&![report[@"DesktopRunning"] isEqual:@YES])||
        ![report[@"VolumeUUID"] isKindOfClass:NSString.class]||![report[@"VolumeUUID"] length]) {
-        self.completion(nil,PreparationError(@"Preparation requires a matching installed Mojave, Catalina or Big Sur system with verified volume identity. Initial setup also requires a usable desktop."));return;
+        self.completion(nil,PreparationError(VIMLocalized(@"guestpreparation.preparation-requires-a-matching-installed-mojave-catalina-or-big-sur", @"Preparation requires a matching installed Mojave, Catalina or Big Sur system with verified volume identity. Initial setup also requires a usable desktop.")));return;
     }
     NSURL *payloads=[self.runtime URLByAppendingPathComponent:@"GuestPayloads"];
     NSFileManager *fm=NSFileManager.defaultManager;NSError *error=nil;
@@ -114,12 +115,12 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
     }
     self.state=[@{@"FormatVersion":@1,@"Attempt":NSUUID.UUID.UUIDString,@"HeadlessUpdateRepair":@(self.headlessRepair),@"InitialGuestReport":report,
                    @"Installed":@NO} mutableCopy];
-    if(![self phase:@"transferring" message:@"Making guest setup files available…"])return;
+    if(![self phase:@"transferring" message:VIMLocalized(@"guestpreparation.making-guest-setup-files-available", @"Making guest setup files available…")])return;
     self.transferStarted=NSProcessInfo.processInfo.systemUptime;
     NSURL *tools=[self.runtime URLByAppendingPathComponent:@"GuestTools"];
     NSURL *media=[payloads URLByAppendingPathComponent:[guest stringByAppendingString:@".iso"]];
     if(![fm fileExistsAtPath:media.path]) {
-        [self finish:nil error:PreparationError(@"This app’s guest support disc is incomplete. Reinstall the app and try again.")];return;
+        [self finish:nil error:PreparationError(VIMLocalized(@"guestpreparation.this-app-s-guest-support-disc-is-incomplete-reinstall-the", @"This app’s guest support disc is incomplete. Reinstall the app and try again."))];return;
     }
     [self.control execute:@"blockdev-change-medium" arguments:@{@"id":@"setup-support-device",@"filename":media.path,@"format":@"raw",@"read-only-mode":@"read-only"}
         completion:^(id inserted,NSError *insertError) {
@@ -134,8 +135,8 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
         void (^continueSetup)(VIMGuestProgress *,NSError *)=^(VIMGuestProgress *progressUI,NSError *uiError){
         if(uiError){[self finish:nil error:uiError];return;}
         self.progressUI=progressUI;self.state[@"GuestProgress"]=progressUI.receipt;
-        self.progress(@"Copying and verifying guest setup files…");
-        [progressUI updateMode:@"working" fraction:.05 message:@"Copying and verifying guest support files…" completion:nil];
+        self.progress(VIMLocalized(@"guestpreparation.copying-and-verifying-guest-setup-files", @"Copying and verifying guest setup files…"));
+        [progressUI updateMode:@"working" fraction:.05 message:VIMLocalized(@"guestpreparation.copying-and-verifying-guest-support-files", @"Copying and verifying guest support files…") completion:nil];
         [self.agent runExecutable:[directory stringByAppendingPathComponent:@"guest-macho"]
             arguments:@[@"stage-media",guest,directory] timeout:0
             completion:^(NSDictionary *copied,NSError *failure) {
@@ -143,18 +144,18 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
         if(failure){if(failure.userInfo[@"GuestStagingDirectory"])self.state[@"GuestStagingDirectory"]=failure.userInfo[@"GuestStagingDirectory"];[self finish:nil error:failure];return;}
         if(![transfer[@"Directory"] isEqual:directory]) {
             NSString *detail=[[NSString alloc] initWithData:copied[@"stderr"]?:NSData.data encoding:NSUTF8StringEncoding];
-            [self finish:nil error:PreparationError(detail.length?detail:@"Could not verify the private guest support copy. Nothing was installed.")];return;
+            [self finish:nil error:PreparationError(detail.length?detail:VIMLocalized(@"guestpreparation.could-not-verify-the-private-guest-support-copy-nothing-was", @"Could not verify the private guest support copy. Nothing was installed."))];return;
         }
         self.state[@"Transfer"]=transfer;self.state[@"GuestStagingDirectory"]=transfer[@"Directory"];
         self.state[@"TransferSeconds"]=@(NSProcessInfo.processInfo.systemUptime-self.transferStarted);
         self.archiveFilename=transfer[@"Archive"];
         BOOL archive=[@[@"payload.tar.xz",@"payload.tar.gz"] containsObject:self.archiveFilename?:@""];
         BOOL match=NO;for(NSDictionary *file in transfer[@"Files"])if(archive&&[file[@"Name"] isEqual:self.archiveFilename]&&[file[@"Size"] longLongValue]>0)match=YES;
-        if(!match||![transfer[@"FilesStaged"] isEqual:@YES]){[self finish:nil error:PreparationError(@"The guest support copy is incomplete. Nothing was installed.")];return;}
+        if(!match||![transfer[@"FilesStaged"] isEqual:@YES]){[self finish:nil error:PreparationError(VIMLocalized(@"guestpreparation.the-guest-support-copy-is-incomplete-nothing-was-installed", @"The guest support copy is incomplete. Nothing was installed."))];return;}
         NSString *device=transfer[@"MediaDevice"];
         NSRegularExpression *disk=[NSRegularExpression regularExpressionWithPattern:@"^/dev/disk[0-9]+(s[0-9]+)*$" options:0 error:NULL];
         if(![device isKindOfClass:NSString.class]||[disk numberOfMatchesInString:device options:0 range:NSMakeRange(0,device.length)]!=1) {
-            [self finish:nil error:PreparationError(@"Could not identify the verified support disc for removal. Nothing was installed.")];return;
+            [self finish:nil error:PreparationError(VIMLocalized(@"guestpreparation.could-not-identify-the-verified-support-disc-for-removal-nothing", @"Could not identify the verified support disc for removal. Nothing was installed."))];return;
         }
         // Tell guest Disk Arbitration first. A forced host-only tray removal
         // can leave the now-invalid mounted volume visible in Finder.
@@ -170,8 +171,8 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
         self.state[@"SupportUnmountResult"]=unmountEvidence;
         if(unmountError||!CommandOK(unmounted)) {
             NSString *message=[unmountEvidence[@"stderr"] containsString:@"loginwindow"]?
-                @"macOS kept the support disc in use. Unlock your virtual Mac, then try setup again. No system files were installed.":
-                @"macOS couldn’t release the setup disc. Close any windows using it, then try setup again. No system files were installed.";
+                VIMLocalized(@"guestpreparation.macos-kept-the-support-disc-in-use-unlock-your-virtual", @"macOS kept the support disc in use. Unlock your virtual Mac, then try setup again. No system files were installed."):
+                VIMLocalized(@"guestpreparation.macos-couldn-t-release-the-setup-disc-close-any-windows", @"macOS couldn’t release the setup disc. Close any windows using it, then try setup again. No system files were installed.");
             [self finish:nil error:unmountError?:PreparationError(message)];return;
         }
         self.supportUnmounted=YES;
@@ -191,11 +192,11 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
     }];
 }
 - (void)extractInDirectory:(NSString *)directory {
-    if(![self phase:@"preparing-utilities" message:@"Preparing guest setup utilities…"])return;
+    if(![self phase:@"preparing-utilities" message:VIMLocalized(@"guestpreparation.preparing-guest-setup-utilities", @"Preparing guest setup utilities…")])return;
     NSString *prepare=[directory stringByAppendingPathComponent:@"guest-prepare"],*patch=[directory stringByAppendingPathComponent:@"guest-image-patch"];
     [self.agent runExecutable:@"/bin/chmod" arguments:@[@"0700",prepare,patch,[directory stringByAppendingPathComponent:@"guest-install"],[directory stringByAppendingPathComponent:@"codesign_allocate"]] timeout:15 completion:^(NSDictionary *mode,NSError *error) {
-        if(error||!CommandOK(mode)){[self finish:nil error:error?:PreparationError(@"Could not prepare guest utilities.")];return;}
-        if(![self phase:@"checking-environment" message:@"Checking guest setup requirements…"])return;
+        if(error||!CommandOK(mode)){[self finish:nil error:error?:PreparationError(VIMLocalized(@"guestpreparation.could-not-prepare-guest-utilities", @"Could not prepare guest utilities."))];return;}
+        if(![self phase:@"checking-environment" message:VIMLocalized(@"guestpreparation.checking-guest-setup-requirements", @"Checking guest setup requirements…")])return;
         [self.agent runExecutable:[directory stringByAppendingPathComponent:@"guest-install"] arguments:@[@"--check-environment"] timeout:30 completion:^(NSDictionary *checked,NSError *checkError) {
         NSDictionary *admission=CommandJSON(checked);
         NSString *diagnostic=[[NSString alloc] initWithData:checked[@"stderr"]?:NSData.data encoding:NSUTF8StringEncoding];
@@ -203,10 +204,10 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
         if(checkError||![admission[@"Eligible"] isEqual:@YES]||
            ![admission[@"VolumeUUID"] isEqual:self.initialReport[@"VolumeUUID"]]||
            ![admission[@"ProductBuildVersion"] isEqual:self.initialReport[@"ProductBuildVersion"]]) {
-            [self finish:nil error:checkError?:PreparationError(diagnostic.length?diagnostic:@"The guest does not meet setup requirements or changed since it was checked. Nothing was installed.")];return;
+            [self finish:nil error:checkError?:PreparationError(diagnostic.length?diagnostic:VIMLocalized(@"guestpreparation.the-guest-does-not-meet-setup-requirements-or-changed-since", @"The guest does not meet setup requirements or changed since it was checked. Nothing was installed."))];return;
         }
         self.state[@"Admission"]=admission;
-        if(![self phase:@"extracting" message:@"Unpacking guest setup files…"])return;
+        if(![self phase:@"extracting" message:VIMLocalized(@"guestpreparation.unpacking-guest-setup-files", @"Unpacking guest setup files…")])return;
         NSString *extracted=[directory stringByAppendingPathComponent:@"Extracted"];
         [self.agent runExecutable:prepare arguments:@[@"--extract",[directory stringByAppendingPathComponent:self.archiveFilename],extracted] timeout:0 completion:^(NSDictionary *result,NSError *extractError) {
             if([result[@"stderr"] length])self.state[@"ExtractionLog"]=[[NSString alloc] initWithData:result[@"stderr"] encoding:NSUTF8StringEncoding]?:@"Non-text extraction output";
@@ -218,35 +219,35 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
             if([payload hasPrefix:@"/private/var/tmp/VirtualIntelMac."]||[payload hasPrefix:@"/private/var/db/VirtualIntelMac."])
                 samePath|=[receipt[@"PayloadDirectory"] isEqual:[payload substringFromIndex:8]];
             if(extractError||![receipt[@"Extracted"] isEqual:@YES]||![receipt[@"Installed"] isEqual:@NO]||!samePath) {
-                [self finish:nil error:extractError?:PreparationError(@"Guest payload extraction failed. Diagnostic staging was retained.")];return;
+                [self finish:nil error:extractError?:PreparationError(VIMLocalized(@"guestpreparation.guest-payload-extraction-failed-diagnostic-staging-was-retained", @"Guest payload extraction failed. Diagnostic staging was retained."))];return;
             }
-            if(![self phase:@"preparing" message:@"Preparing this macOS build’s graphics files…"])return;
+            if(![self phase:@"preparing" message:VIMLocalized(@"guestpreparation.preparing-this-macos-build-s-graphics-files", @"Preparing this macOS build’s graphics files…")])return;
             [self.agent runExecutable:prepare arguments:@[@"/",payload,directory] timeout:0 completion:^(NSDictionary *prepared,NSError *prepareError) {
                 if([prepared[@"stderr"] length])self.state[@"PreparationLog"]=[[NSString alloc] initWithData:prepared[@"stderr"] encoding:NSUTF8StringEncoding]?:@"Non-text preparation output";
                 NSDictionary *result=CommandJSON(prepared);
                 if(prepareError||![result[@"Prepared"] isEqual:@YES]||![result[@"Installed"] isEqual:@NO]||
                    ![result[@"Guest"] isEqual:self.initialReport[@"Guest"]]||![result[@"ProductBuildVersion"] isEqual:self.initialReport[@"ProductBuildVersion"]]) {
-                    [self finish:nil error:prepareError?:PreparationError(@"Guest file preparation failed. Nothing was installed; diagnostic staging was retained.")];return;
+                    [self finish:nil error:prepareError?:PreparationError(VIMLocalized(@"guestpreparation.guest-file-preparation-failed-nothing-was-installed-diagnostic-staging-was", @"Guest file preparation failed. Nothing was installed; diagnostic staging was retained."))];return;
                 }
                 self.state[@"Preparation"]=result;
-                if(![self phase:@"verifying-guest" message:@"Verifying the prepared guest…"])return;
+                if(![self phase:@"verifying-guest" message:VIMLocalized(@"guestpreparation.verifying-the-prepared-guest", @"Verifying the prepared guest…")])return;
                 NSData *status=[NSData dataWithContentsOfURL:[self.runtime URLByAppendingPathComponent:@"GuestTools/guest-status"]];
                 [self.agent collectStatusWithTool:status completion:^(NSDictionary *report,NSError *statusError) {
                     if(statusError||![report[@"LiveRoot"] isEqual:@YES]||![report[@"KernelMatchesSystem"] isEqual:@YES]||
                        ![report[@"VolumeUUID"] isEqual:self.initialReport[@"VolumeUUID"]]||![report[@"ProductBuildVersion"] isEqual:self.initialReport[@"ProductBuildVersion"]]) {
-                        [self finish:nil error:statusError?:PreparationError(@"The guest changed while setup files were being prepared.")];return;
+                        [self finish:nil error:statusError?:PreparationError(VIMLocalized(@"guestpreparation.the-guest-changed-while-setup-files-were-being-prepared", @"The guest changed while setup files were being prepared."))];return;
                     }
-                    if(![self phase:@"planning-installation" message:@"Checking installation targets and recording recovery information…"])return;
+                    if(![self phase:@"planning-installation" message:VIMLocalized(@"guestpreparation.checking-installation-targets-and-recording-recovery-information", @"Checking installation targets and recording recovery information…")])return;
                     NSString *journal=[directory stringByAppendingPathComponent:@"InstallTransaction.plist"];
                     [self.agent runExecutable:[directory stringByAppendingPathComponent:@"guest-install"] arguments:@[@"--plan",@"/",payload,journal] timeout:0 completion:^(NSDictionary *planned,NSError *planError) {
                         if([planned[@"stderr"] length])self.state[@"PlanningLog"]=[[NSString alloc] initWithData:planned[@"stderr"] encoding:NSUTF8StringEncoding]?:@"Non-text planning output";
                         NSDictionary *plan=CommandJSON(planned);
                         if(planError||![plan[@"Planned"] isEqual:@YES]||![plan[@"Installed"] isEqual:@NO]||![plan[@"Ready"] isEqual:@NO]||![plan[@"Guest"] isEqual:self.initialReport[@"Guest"]]) {
-                            [self finish:nil error:planError?:PreparationError(@"Installation planning failed. Nothing was installed; diagnostics were retained.")];return;
+                            [self finish:nil error:planError?:PreparationError(VIMLocalized(@"guestpreparation.installation-planning-failed-nothing-was-installed-diagnostics-were-retained", @"Installation planning failed. Nothing was installed; diagnostics were retained."))];return;
                         }
                         self.state[@"InstallationPlan"]=plan;
                         if(![plan[@"TransactionID"] isKindOfClass:NSString.class]||![[NSUUID alloc] initWithUUIDString:plan[@"TransactionID"]]) {
-                            [self finish:nil error:PreparationError(@"Installation plan has no valid transaction identity.")];return;
+                            [self finish:nil error:PreparationError(VIMLocalized(@"guestpreparation.installation-plan-has-no-valid-transaction-identity", @"Installation plan has no valid transaction identity."))];return;
                         }
                         [self finish:@{@"Prepared":@YES,@"Planned":@YES,@"Installed":@NO,@"GuestReport":report,@"PayloadDirectory":payload,@"TransactionJournal":journal,@"TransactionID":plan[@"TransactionID"],@"GuestProgress":self.progressUI.receipt?:@{}} error:nil];
                     }];

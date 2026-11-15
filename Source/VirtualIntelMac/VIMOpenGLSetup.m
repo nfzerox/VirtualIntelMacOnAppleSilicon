@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMOpenGLSetup.h"
 #import "VIMMachine.h"
 #import "VIMGuestAgent.h"
@@ -15,7 +16,7 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
     NSDictionary *names=@{@"EngineSHA256":@"GLEngine",@"BackendSHA256":@"libVIMPassthroughOpenGL.dylib"};
     for(NSString *key in names) {
         NSData *data=[NSData dataWithContentsOfURL:[support URLByAppendingPathComponent:names[key]] options:NSDataReadingMappedIfSafe error:error];
-        if(!data.length||data.length>64*1024*1024){if(error&&!*error)*error=SetupError(@"This app’s graphics support is incomplete. Reinstall the app and try again.");return nil;}
+        if(!data.length||data.length>64*1024*1024){if(error&&!*error)*error=SetupError(VIMLocalized(@"openglsetup.this-app-s-graphics-support-is-incomplete-reinstall-the-app", @"This app’s graphics support is incomplete. Reinstall the app and try again."));return nil;}
         unsigned char digest[CC_SHA256_DIGEST_LENGTH];CC_SHA256(data.bytes,(CC_LONG)data.length,digest);
         NSMutableString *text=[NSMutableString new];for(NSUInteger i=0;i<sizeof(digest);i++)[text appendFormat:@"%02x",digest[i]];
         digests[key]=text;
@@ -66,18 +67,18 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
     if(![self.machine.configuration[@"InstallState"] isEqual:@"installing"]||![self.profile[@"Enabled"] boolValue]||
        ![journal[@"Phase"] isEqual:@"awaiting-os-install"]||![journal[@"Identifier"] isEqual:machine]||
        ![[NSUUID alloc] initWithUUIDString:machine]||![[NSUUID alloc] initWithUUIDString:volume]){
-        completion(nil,SetupError(@"This Mac does not have an interrupted automatic installation to resume. Its existing system was not changed."));return;
+        completion(nil,SetupError(VIMLocalized(@"openglsetup.this-mac-does-not-have-an-interrupted-automatic-installation-to", @"This Mac does not have an interrupted automatic installation to resume. Its existing system was not changed.")));return;
     }
     NSURL *support=[NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"Runtime/OpenGLGuests/snowleopard/opengl-install-bootstrap"];
     [self.agent stageFiles:@{@"opengl-install-bootstrap":support} progress:nil completion:^(NSDictionary *receipt,NSError *failure){
         if(failure){completion(nil,failure);return;}
         NSString *tool=[receipt[@"Directory"] stringByAppendingPathComponent:@"opengl-install-bootstrap"];
         [self.agent runExecutable:@"/bin/chmod" arguments:@[@"0700",tool] timeout:0 completion:^(NSDictionary *mode,NSError *issue){
-            if(issue||![mode[@"exitcode"] isEqual:@0]){completion(nil,issue?:SetupError(@"The saved installation could not be prepared to resume."));return;}
+            if(issue||![mode[@"exitcode"] isEqual:@0]){completion(nil,issue?:SetupError(VIMLocalized(@"openglsetup.the-saved-installation-could-not-be-prepared-to-resume", @"The saved installation could not be prepared to resume.")));return;}
             [self.agent runExecutable:tool arguments:@[@"--resume-recovery",machine,volume] timeout:0 completion:^(NSDictionary *result,NSError *error){
                 if(error||![result[@"exitcode"] isEqual:@0]){
                     NSString *detail=[[NSString alloc] initWithData:result[@"stderr"]?:NSData.data encoding:NSUTF8StringEncoding];
-                    completion(nil,error?:SetupError(detail.length?detail:@"The saved installation could not safely resume. Its existing files were retained."));return;
+                    completion(nil,error?:SetupError(detail.length?detail:VIMLocalized(@"openglsetup.the-saved-installation-could-not-safely-resume-its-existing-files", @"The saved installation could not safely resume. Its existing files were retained.")));return;
                 }
                 completion(@{@"Phase":@"recovery"},nil);
             }];
@@ -146,7 +147,7 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
                 ok=[task launchAndReturnError:&error];if(ok){[task waitUntilExit];ok=task.terminationStatus==0;}[handle closeFile];
             }else ok=NO;
             dispatch_async(dispatch_get_main_queue(),^{
-                if(!ok){completion(nil,error?:SetupError(@"The graphics update disc couldn’t be prepared. Its diagnostic files were retained."));return;}
+                if(!ok){completion(nil,error?:SetupError(VIMLocalized(@"openglsetup.the-graphics-update-disc-couldn-t-be-prepared-its-diagnostic", @"The graphics update disc couldn’t be prepared. Its diagnostic files were retained.")));return;}
                 self.payloadMedia=media;[self refreshBundledSupport:completion];
             });
         });return;
@@ -170,22 +171,22 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
         // installed copy for the real graphics transaction below.
         NSString *mediaBootstrap=[mount stringByAppendingPathComponent:@"opengl-install-bootstrap"];
         [self.agent runExecutable:mediaBootstrap arguments:@[@"--refresh-support",mount] timeout:0 completion:^(NSDictionary *copied,NSError *copyError){
-            if(copyError||![copied[@"exitcode"] isEqual:@0]){completion(nil,copyError?:SetupError(@"The graphics update couldn’t be copied."));return;}
+            if(copyError||![copied[@"exitcode"] isEqual:@0]){completion(nil,copyError?:SetupError(VIMLocalized(@"openglsetup.the-graphics-update-couldn-t-be-copied", @"The graphics update couldn’t be copied.")));return;}
             // --refresh-support publishes files atomically but deliberately
             // does not install graphics or launch a second control agent.
             [self.agent runExecutable:bootstrap arguments:@[@"--install-support"] timeout:0 completion:^(NSDictionary *installed,NSError *installError){
-                if(installError||![installed[@"exitcode"] isEqual:@0]){completion(nil,installError?:SetupError(@"The graphics update couldn’t finish."));return;}
+                if(installError||![installed[@"exitcode"] isEqual:@0]){completion(nil,installError?:SetupError(VIMLocalized(@"openglsetup.the-graphics-update-couldn-t-finish", @"The graphics update couldn’t finish.")));return;}
                 [self readStatus:^(NSDictionary *report,NSError *failure){
                     NSDictionary *graphics=report[@"Graphics"];
                     if(failure||![graphics[@"Phase"] isEqual:@"installed"]||![report[@"GraphicsRestartEvidenceVersion"] isEqual:@1]||
                        (self.refreshingFirstLoginSupport&&![report[@"LoginHandoffRecoveryVersion"] isEqual:@2])||
                        ![graphics[@"EngineSHA256"] isEqual:self.bundledGraphics[@"EngineSHA256"]]||
                        ![graphics[@"BackendSHA256"] isEqual:self.bundledGraphics[@"BackendSHA256"]]){
-                        completion(nil,failure?:SetupError(@"The updated graphics files couldn’t be confirmed."));return;
+                        completion(nil,failure?:SetupError(VIMLocalized(@"openglsetup.the-updated-graphics-files-couldn-t-be-confirmed", @"The updated graphics files couldn’t be confirmed.")));return;
                     }
                     self.bundledGraphicsChecked=YES;self.payloadRestartRequired=!self.refreshingFirstLoginSupport;self.testedGraphics=NO;
                     [self.agent runExecutable:@"/usr/sbin/diskutil" arguments:@[@"eject",mount] timeout:0 completion:^(NSDictionary *ejected,NSError *ejectError){
-                        if(ejectError||![ejected[@"exitcode"] isEqual:@0]){completion(nil,ejectError?:SetupError(@"Graphics support was updated, but its disc is still in use. Eject it normally before restarting."));return;}
+                        if(ejectError||![ejected[@"exitcode"] isEqual:@0]){completion(nil,ejectError?:SetupError(VIMLocalized(@"openglsetup.graphics-support-was-updated-but-its-disc-is-still-in", @"Graphics support was updated, but its disc is still in use. Eject it normally before restarting.")));return;}
                         [self.control execute:@"eject" arguments:@{@"id":@"setup-support-device"} completion:^(id ignored,NSError *removeError){
                             if(removeError){completion(nil,removeError);return;}
                             self.payloadMediaInserted=NO;
@@ -202,9 +203,9 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
     if(self.payloadMountRequested){completion(@{@"Phase":@"payload-media-wait"},nil);return;}
     [self.agent runExecutable:@"/usr/sbin/diskutil" arguments:@[@"list",@"-plist"] timeout:0 completion:^(NSDictionary *reply,NSError *error){
         NSDictionary *list=[reply[@"exitcode"] isEqual:@0]?[NSPropertyListSerialization propertyListWithData:reply[@"stdout"]?:NSData.data options:NSPropertyListImmutable format:NULL error:NULL]:nil;
-        if(error||![list isKindOfClass:NSDictionary.class]){completion(nil,error?:SetupError(@"The graphics update disc couldn’t be located. Nothing was installed."));return;}
+        if(error||![list isKindOfClass:NSDictionary.class]){completion(nil,error?:SetupError(VIMLocalized(@"openglsetup.the-graphics-update-disc-couldn-t-be-located-nothing-was", @"The graphics update disc couldn’t be located. Nothing was installed.")));return;}
         BOOL needsInfo=NO;NSArray *devices=VIMOpenGLSupportDiskCandidates(list,self.payloadVolumeName,&needsInfo);
-        if(!devices){completion(nil,SetupError(@"The guest disk list was not recognized. Nothing was installed."));return;}
+        if(!devices){completion(nil,SetupError(VIMLocalized(@"openglsetup.the-guest-disk-list-was-not-recognized-nothing-was-installed", @"The guest disk list was not recognized. Nothing was installed.")));return;}
         if(needsInfo)[self inspectPayloadDevices:devices index:0 matches:[NSMutableArray new] completion:completion];
         else [self mountPayloadDevices:devices completion:completion];
     }];
@@ -222,7 +223,7 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
             if(error){completion(nil,error);return;}
             NSString *tool=[receipt[@"Directory"] stringByAppendingPathComponent:@"opengl-install-bootstrap"];
             [self.agent runExecutable:@"/bin/chmod" arguments:@[@"0700",tool] timeout:0 completion:^(NSDictionary *mode,NSError *failure){
-                if(failure||![mode[@"exitcode"] isEqual:@0]){completion(nil,failure?:SetupError(@"The graphics disc lookup couldn’t be prepared. Nothing was installed."));return;}
+                if(failure||![mode[@"exitcode"] isEqual:@0]){completion(nil,failure?:SetupError(VIMLocalized(@"openglsetup.the-graphics-disc-lookup-couldn-t-be-prepared-nothing-was", @"The graphics disc lookup couldn’t be prepared. Nothing was installed.")));return;}
                 self.payloadDiskInfoTool=tool;
                 [self inspectPayloadDevices:devices index:index matches:matches completion:completion];
             }];
@@ -231,7 +232,7 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
     NSString *device=devices[index];
     [self.agent runExecutable:self.payloadDiskInfoTool arguments:@[@"--disk-info",device] timeout:0 completion:^(NSDictionary *reply,NSError *error){
         NSDictionary *info=[reply[@"exitcode"] isEqual:@0]?[NSPropertyListSerialization propertyListWithData:reply[@"stdout"]?:NSData.data options:NSPropertyListImmutable format:NULL error:NULL]:nil;
-        if(error||![info isKindOfClass:NSDictionary.class]){completion(nil,error?:SetupError(@"The guest disk information couldn’t be read. Nothing was installed."));return;}
+        if(error||![info isKindOfClass:NSDictionary.class]){completion(nil,error?:SetupError(VIMLocalized(@"openglsetup.the-guest-disk-information-couldn-t-be-read-nothing-was", @"The guest disk information couldn’t be read. Nothing was installed.")));return;}
         if(VIMOpenGLSupportDiskInfoMatches(info,device,self.payloadVolumeName))[matches addObject:device];
         [self inspectPayloadDevices:devices index:index+1 matches:matches completion:completion];
     }];
@@ -239,10 +240,10 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
 - (void)mountPayloadDevices:(NSArray<NSString *> *)matches completion:(void (^)(NSDictionary *,NSError *))completion {
     if(!matches.count){completion(@{@"Phase":@"payload-media-wait"},nil);return;}
     NSString *disk=matches.firstObject;
-    if(matches.count!=1||!VIMOpenGLSupportDiskIdentifier(disk)){completion(nil,SetupError(@"The graphics update disc could not be identified uniquely. Nothing was installed."));return;}
+    if(matches.count!=1||!VIMOpenGLSupportDiskIdentifier(disk)){completion(nil,SetupError(VIMLocalized(@"openglsetup.the-graphics-update-disc-could-not-be-identified-uniquely-nothing", @"The graphics update disc could not be identified uniquely. Nothing was installed.")));return;}
     self.payloadMountRequested=YES;
     [self.agent runExecutable:@"/usr/sbin/diskutil" arguments:@[@"mount",disk] timeout:0 completion:^(NSDictionary *mounted,NSError *failure){
-        if(failure||![mounted[@"exitcode"] isEqual:@0]){completion(nil,failure?:SetupError(@"The read-only graphics update disc couldn’t be mounted. Nothing was installed."));return;}
+        if(failure||![mounted[@"exitcode"] isEqual:@0]){completion(nil,failure?:SetupError(VIMLocalized(@"openglsetup.the-read-only-graphics-update-disc-couldn-t-be-mounted", @"The read-only graphics update disc couldn’t be mounted. Nothing was installed.")));return;}
         [self refreshBundledSupport:completion];
     }];
 }
@@ -271,11 +272,11 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
         if(failure){completion(nil,failure);return;}
         NSString *directory=receipt[@"Directory"],*tool=[directory stringByAppendingPathComponent:@"opengl-tiger-graphics"];
         [self.agent runExecutable:@"/bin/chmod" arguments:@[@"0700",tool] timeout:0 completion:^(NSDictionary *mode,NSError *issue){
-            if(issue||![mode[@"exitcode"] isEqual:@0]){completion(nil,issue?:SetupError(@"Tiger’s native graphics setup couldn’t be prepared."));return;}
+            if(issue||![mode[@"exitcode"] isEqual:@0]){completion(nil,issue?:SetupError(VIMLocalized(@"openglsetup.tiger-s-native-graphics-setup-couldn-t-be-prepared", @"Tiger’s native graphics setup couldn’t be prepared.")));return;}
             [self.agent runExecutable:tool arguments:@[@"--install",directory] timeout:0 completion:^(NSDictionary *result,NSError *error){
                 if(error||![result[@"exitcode"] isEqual:@0]){
                     NSString *detail=[[NSString alloc] initWithData:result[@"stderr"]?:NSData.data encoding:NSUTF8StringEncoding];
-                    completion(nil,error?:SetupError(detail.length?detail:@"Tiger’s native graphics files couldn’t be verified. Its original files and setup records were retained."));return;
+                    completion(nil,error?:SetupError(detail.length?detail:VIMLocalized(@"openglsetup.tiger-s-native-graphics-files-couldn-t-be-verified-its", @"Tiger’s native graphics files couldn’t be verified. Its original files and setup records were retained.")));return;
                 }
                 self.tigerGraphicsPrepared=YES;self.bundledGraphicsChecked=YES;
                 self.payloadRestartRequired=YES;[self advance:completion];
@@ -297,7 +298,7 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
         if(!error&&[result[@"exitcode"] isEqual:@76]){completion(@{@"Phase":@"needs-restart"},nil);return;}
         if(error||![result[@"exitcode"] isEqual:@0]){
             NSString *detail=[[NSString alloc] initWithData:result[@"stderr"]?:NSData.data encoding:NSUTF8StringEncoding];
-            completion(nil,error?:SetupError(detail.length?detail:@"Tiger’s native sound driver couldn’t start. Its files and recovery records were retained."));return;
+            completion(nil,error?:SetupError(detail.length?detail:VIMLocalized(@"openglsetup.tiger-s-native-sound-driver-couldn-t-start-its-files", @"Tiger’s native sound driver couldn’t start. Its files and recovery records were retained.")));return;
         }
         self.tigerAudioPrepared=YES;completion(@{@"Phase":@"audio-ready"},nil);
     }];
@@ -314,11 +315,11 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
             if(failure){completion(nil,failure);return;}
             NSString *directory=receipt[@"Directory"],*program=[directory stringByAppendingPathComponent:@"opengl-tiger-audio"];
             [self.agent runExecutable:@"/bin/chmod" arguments:@[@"0700",program] timeout:0 completion:^(NSDictionary *mode,NSError *issue){
-                if(issue||![mode[@"exitcode"] isEqual:@0]){completion(nil,issue?:SetupError(@"The native Tiger sound update couldn’t be prepared."));return;}
+                if(issue||![mode[@"exitcode"] isEqual:@0]){completion(nil,issue?:SetupError(VIMLocalized(@"openglsetup.the-native-tiger-sound-update-couldn-t-be-prepared", @"The native Tiger sound update couldn’t be prepared.")));return;}
                 [self.agent runExecutable:program arguments:@[@"--install",directory] timeout:0 completion:^(NSDictionary *result,NSError *error){
                     if(error||![result[@"exitcode"] isEqual:@0]){
                         NSString *detail=[[NSString alloc] initWithData:result[@"stderr"]?:NSData.data encoding:NSUTF8StringEncoding];
-                        completion(nil,error?:SetupError(detail.length?detail:@"Tiger’s sound update couldn’t finish. Its recovery records were retained."));return;
+                        completion(nil,error?:SetupError(detail.length?detail:VIMLocalized(@"openglsetup.tiger-s-sound-update-couldn-t-finish-its-recovery-records", @"Tiger’s sound update couldn’t finish. Its recovery records were retained.")));return;
                     }
                     [self loadTigerAudioAfterStaging:YES completion:completion];
                 }];
@@ -354,7 +355,7 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
         NSString *program=[receipt[@"Directory"] stringByAppendingPathComponent:@"opengl-create-account"];
         [self.agent runExecutable:@"/bin/chmod" arguments:@[@"0700",program] timeout:0 completion:^(NSDictionary *mode,NSError *issue){
             if(issue||![mode[@"exitcode"] isEqual:@0]){
-                completion(nil,issue?:SetupError(@"The file-sharing update couldn’t be prepared. The existing account was not replaced."));return;
+                completion(nil,issue?:SetupError(VIMLocalized(@"openglsetup.the-file-sharing-update-couldn-t-be-prepared-the-existing", @"The file-sharing update couldn’t be prepared. The existing account was not replaced.")));return;
             }
             [self.agent runExecutable:program arguments:@[@"--prepare-file-sharing"] standardInput:input timeout:0 completion:completion];
         }];
@@ -362,7 +363,7 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
 }
 - (void)resumeInitialGraphics:(void (^)(NSDictionary *,NSError *))completion {
     if(self.initialGraphicsInstallAttempted){
-        completion(nil,SetupError(@"Graphics setup did not finish. Restart this Mac to try again."));return;
+        completion(nil,SetupError(VIMLocalized(@"openglsetup.graphics-setup-did-not-finish-restart-this-mac-to-try", @"Graphics setup did not finish. Restart this Mac to try again.")));return;
     }
     self.initialGraphicsInstallAttempted=YES;
     // Recovery already installed our helper on the authorized target. It
@@ -371,7 +372,7 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
         completion:^(NSDictionary *result,NSError *error){
         if(error||![result[@"exitcode"] isEqual:@0]){
             NSString *detail=[[NSString alloc] initWithData:result[@"stderr"]?:NSData.data encoding:NSUTF8StringEncoding];
-            completion(nil,error?:SetupError(detail.length?detail:@"Graphics setup couldn’t finish. Restart this Mac to try again."));return;
+            completion(nil,error?:SetupError(detail.length?detail:VIMLocalized(@"openglsetup.graphics-setup-couldn-t-finish-restart-this-mac-to-try", @"Graphics setup couldn’t finish. Restart this Mac to try again.")));return;
         }
         [self advance:completion];
     }];
@@ -439,19 +440,19 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
                 }
                 NSDictionary *graphics=report[@"Graphics"];
                 if(![report[@"OwnershipVerified"] isEqual:@YES]||![graphics[@"Phase"] isEqual:@"installed"]||![graphics[@"ProductBuildVersion"] isEqual:report[@"ProductBuildVersion"]]){
-                    completion(nil,SetupError(@"OS X graphics setup could not be verified. Its original graphics files and diagnostic log were retained."));return;
+                    completion(nil,SetupError(VIMLocalized(@"openglsetup.os-x-graphics-setup-could-not-be-verified-its-original", @"OS X graphics setup could not be verified. Its original graphics files and diagnostic log were retained.")));return;
                 }
                 if(self.bootUUID){[self advanceReport:report completion:completion];return;}
                 if(report[@"BootSessionUUID"]){
                     if(![report[@"BootSessionUUID"] isKindOfClass:NSString.class]||![[NSUUID alloc] initWithUUIDString:report[@"BootSessionUUID"]]){
-                        completion(nil,SetupError(@"This Mac’s control session could not be identified safely."));return;
+                        completion(nil,SetupError(VIMLocalized(@"openglsetup.this-mac-s-control-session-could-not-be-identified-safely", @"This Mac’s control session could not be identified safely.")));return;
                     }
                     self.bootUUID=report[@"BootSessionUUID"];[self advanceReport:report completion:completion];return;
                 }
                 [self.agent runExecutable:@"/usr/sbin/sysctl" arguments:@[@"-n",@"kern.bootsessionuuid"] timeout:0 completion:^(NSDictionary *boot,NSError *issue){
                     NSString *value=[[NSString alloc] initWithData:boot[@"stdout"]?:NSData.data encoding:NSUTF8StringEncoding];
                     value=[value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-                    if(issue||![[NSUUID alloc] initWithUUIDString:value]){completion(nil,SetupError(@"This Mac’s boot session could not be identified safely."));return;}
+                    if(issue||![[NSUUID alloc] initWithUUIDString:value]){completion(nil,SetupError(VIMLocalized(@"openglsetup.this-mac-s-boot-session-could-not-be-identified-safely", @"This Mac’s boot session could not be identified safely.")));return;}
                     self.bootUUID=value;[self advanceReport:report completion:completion];
                 }];
             }];
@@ -462,7 +463,7 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
     [self tool:@"opengl-setup-status" arguments:@[] input:nil completion:^(NSDictionary *reply,NSError *error){
         id report=reply[@"stdout"]?[NSJSONSerialization JSONObjectWithData:reply[@"stdout"] options:0 error:NULL]:nil;
         if(error||![reply[@"exitcode"] isEqual:@0]||![report isKindOfClass:NSDictionary.class]){
-            completion(nil,error?:SetupError(@"The virtual Mac’s setup status is unavailable. The guest support log was retained for diagnosis."));return;
+            completion(nil,error?:SetupError(VIMLocalized(@"openglsetup.the-virtual-mac-s-setup-status-is-unavailable-the-guest", @"The virtual Mac’s setup status is unavailable. The guest support log was retained for diagnosis.")));return;
         }completion(report,nil);
     }];
 }
@@ -482,13 +483,13 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
         if(error||![reply[@"exitcode"] isEqual:@0]||![proof isKindOfClass:NSDictionary.class]||
            ![proof[@"Phase"] isEqual:@"installed"]||![proof[@"MachineIdentifier"] isEqual:self.machine.configuration[@"Identifier"]]||
            ![proof[@"VolumeUUID"] isEqual:target[@"VolumeUUID"]]){
-            completion(nil,error?:SetupError(@"File Sharing’s compatibility update couldn’t finish. Your original system files and recovery records were retained."));return;
+            completion(nil,error?:SetupError(VIMLocalized(@"openglsetup.file-sharing-s-compatibility-update-couldn-t-finish-your-original", @"File Sharing’s compatibility update couldn’t finish. Your original system files and recovery records were retained.")));return;
         }
         if(![proof[@"PolicyVersion"] isEqual:[self fileSharingPolicy]]){
-            completion(nil,SetupError(@"File Sharing’s update has an unsupported version."));return;
+            completion(nil,SetupError(VIMLocalized(@"openglsetup.file-sharing-s-update-has-an-unsupported-version", @"File Sharing’s update has an unsupported version.")));return;
         }
         if(![self.machine.guest isEqual:@"snowleopard"]&&![proof[@"ClientPolicyVersion"] isEqual:@2]){
-            completion(nil,SetupError(@"The native File Sharing client update is missing."));return;
+            completion(nil,SetupError(VIMLocalized(@"openglsetup.the-native-file-sharing-client-update-is-missing", @"The native File Sharing client update is missing.")));return;
         }
         if([proof[@"RestartRequired"] boolValue]){completion(@{@"Phase":@"needs-restart"},nil);return;}
         self.fileSharingChecked=YES;completion(proof,nil);
@@ -497,7 +498,7 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
     [self stageFileSharingReusingServer:NO completion:completion];
 }
 - (void)stageFileSharingReusingServer:(BOOL)reuseServer completion:(void (^)(NSDictionary *,NSError *))completion {
-        if(![self fileSharingPolicy]){completion(nil,SetupError(@"File Sharing’s bundled update is missing."));return;}
+        if(![self fileSharingPolicy]){completion(nil,SetupError(VIMLocalized(@"openglsetup.file-sharing-s-bundled-update-is-missing", @"File Sharing’s bundled update is missing.")));return;}
         BOOL tiger=[self.machine.guest isEqual:@"tiger"];
         BOOL snow=[self.machine.guest isEqual:@"snowleopard"];
         NSURL *tools=[NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:
@@ -516,7 +517,7 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
             if(failure){completion(nil,failure);return;}
             NSString *directory=receipt[@"Directory"],*staged=[directory stringByAppendingPathComponent:@"opengl-file-sharing"];
             [self.agent runExecutable:@"/bin/chmod" arguments:@[@"0700",staged] timeout:0 completion:^(NSDictionary *mode,NSError *issue){
-                if(issue||![mode[@"exitcode"] isEqual:@0]){completion(nil,issue?:SetupError(@"File Sharing’s update couldn’t be prepared."));return;}
+                if(issue||![mode[@"exitcode"] isEqual:@0]){completion(nil,issue?:SetupError(VIMLocalized(@"openglsetup.file-sharing-s-update-couldn-t-be-prepared", @"File Sharing’s update couldn’t be prepared.")));return;}
                 [self.agent runExecutable:staged arguments:@[reuseServer?@"--install-client":@"--install",directory] timeout:0 completion:^(NSDictionary *reply,NSError *error){
                     [self finishFileSharing:reply error:error completion:completion];
                 }];
@@ -573,7 +574,7 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
                     // never replace its account or retry an empty password.
                     completion(@{@"Phase":@"credential-required",@"Username":self.profile[@"Username"]?:@""},nil);return;
                 }
-                if(!input){completion(nil,error?:SetupError(@"The setup password could not be prepared."));return;}
+                if(!input){completion(nil,error?:SetupError(VIMLocalized(@"openglsetup.the-setup-password-could-not-be-prepared", @"The setup password could not be prepared.")));return;}
                 void (^prepared)(NSDictionary *,NSError *)=^(NSDictionary *reply,NSError *failure){
                     // Apple's SMB preference initializer may run after the
                     // account provisioner on the very first installed boot.
@@ -582,7 +583,7 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
                     if(!failure&&[reply[@"exitcode"] isEqual:@75]){completion(@{@"Phase":@"desktop-services-wait"},nil);return;}
                     if(failure||![reply[@"exitcode"] isEqual:@0]){
                         NSString *detail=[[NSString alloc] initWithData:reply[@"stderr"]?:NSData.data encoding:NSUTF8StringEncoding];
-                        completion(nil,failure?:SetupError(detail.length?detail:@"The account setup could not finish. Its guarded transaction can be resumed without replacing an existing account."));return;
+                        completion(nil,failure?:SetupError(detail.length?detail:VIMLocalized(@"openglsetup.the-account-setup-could-not-finish-its-guarded-transaction-can", @"The account setup could not finish. Its guarded transaction can be resumed without replacing an existing account.")));return;
                     }
                     [self readStatus:^(NSDictionary *next,NSError *issue){if(issue)completion(nil,issue);else [self advanceReport:next completion:completion];}];
                 };
@@ -614,8 +615,8 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
     if(!self.testedGraphics) {
         [self tool:@"opengl-graphics-check" arguments:@[@"--desktop"] input:nil completion:^(NSDictionary *reply,NSError *failure){
             if(failure||![reply[@"exitcode"] isEqual:@0]){
-                [self logFailedVerification:@"Graphics verification" reply:reply error:failure];
-                completion(nil,failure?:SetupError(@"The real accelerated graphics check did not pass. The installer and original graphics backup were retained."));return;
+                [self logFailedVerification:VIMLocalized(@"openglsetup.graphics-verification", @"Graphics verification") reply:reply error:failure];
+                completion(nil,failure?:SetupError(VIMLocalized(@"openglsetup.the-real-accelerated-graphics-check-did-not-pass-the-installer", @"The real accelerated graphics check did not pass. The installer and original graphics backup were retained.")));return;
             }
             self.testedGraphics=YES;[self advanceReport:report completion:completion];
         }];return;
@@ -623,7 +624,7 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
     if(automatic&&(![phase isEqual:@"complete"]||[account[@"DesktopServicesVersion"] integerValue]<2)) {
         [self tool:@"opengl-setup-status" arguments:@[@"--finish-first-login"] input:nil completion:^(NSDictionary *reply,NSError *failure){
             if(!failure&&[reply[@"exitcode"] isEqual:@75]){completion(@{@"Phase":@"desktop-services-wait"},nil);return;}
-            if(failure||![reply[@"exitcode"] isEqual:@0]){completion(nil,failure?:SetupError(@"The one-time login handoff could not be retired safely. Its state was retained."));return;}
+            if(failure||![reply[@"exitcode"] isEqual:@0]){completion(nil,failure?:SetupError(VIMLocalized(@"openglsetup.the-one-time-login-handoff-could-not-be-retired-safely", @"The one-time login handoff could not be retired safely. Its state was retained.")));return;}
             [self readStatus:^(NSDictionary *next,NSError *issue){if(issue)completion(nil,issue);else [self advanceReport:next completion:completion];}];
         }];return;
     }
@@ -677,8 +678,8 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
                 self.audioDefaultsSkipped=YES;[self advanceReport:report completion:completion];return;
             }
             if(failure||![reply[@"exitcode"] isEqual:@0]){
-                [self logFailedVerification:@"Audio routing verification" reply:reply error:failure];
-                completion(nil,failure?:SetupError(@"The virtual Mac’s sound devices are not ready. Graphics setup is preserved; the audio diagnostic state was retained."));return;
+                [self logFailedVerification:VIMLocalized(@"openglsetup.audio-routing-verification", @"Audio routing verification") reply:reply error:failure];
+                completion(nil,failure?:SetupError(VIMLocalized(@"openglsetup.the-virtual-mac-s-sound-devices-are-not-ready-graphics", @"The virtual Mac’s sound devices are not ready. Graphics setup is preserved; the audio diagnostic state was retained.")));return;
             }
             self.audioInitialized=YES;[self advanceReport:report completion:completion];
         }];return;

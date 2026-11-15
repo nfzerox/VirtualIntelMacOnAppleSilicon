@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMSMBService.h"
 #import "VIMMachine.h"
 #include <dns_sd.h>
@@ -37,7 +38,7 @@ static NSString *Instance(VIMMachine *machine) {
 static void Registered(DNSServiceRef service,DNSServiceFlags flags,DNSServiceErrorType error,
                        const char *name,const char *type,const char *domain,void *context) {
     VIMSMBService *owner=(__bridge VIMSMBService *)context;
-    if(error)owner.error=[NSError errorWithDomain:@"VirtualIntelMac.FileSharing" code:error userInfo:@{NSLocalizedDescriptionKey:@"File Sharing’s local address couldn’t be published. Restart the virtual Mac and try again."}];
+    if(error)owner.error=[NSError errorWithDomain:@"VirtualIntelMac.FileSharing" code:error userInfo:@{NSLocalizedDescriptionKey:VIMLocalized(@"smbservice.file-sharing-s-local-address-couldn-t-be-published-restart", @"File Sharing’s local address couldn’t be published. Restart the virtual Mac and try again.")}];
 }
 static void AddressRegistered(DNSServiceRef connection,DNSRecordRef record,DNSServiceFlags flags,DNSServiceErrorType error,void *context) {
     Registered(connection,flags,error,NULL,NULL,NULL,context);
@@ -68,7 +69,7 @@ static void AddressRegistered(DNSServiceRef connection,DNSRecordRef record,DNSSe
         self.hostname.UTF8String,htons(self.port),0,NULL,Registered,(__bridge void *)self);
     if(!status)status=DNSServiceSetDispatchQueue(_service,dispatch_get_main_queue());
     if(status) {
-        [self stop];self.error=[NSError errorWithDomain:@"VirtualIntelMac.FileSharing" code:status userInfo:@{NSLocalizedDescriptionKey:@"File Sharing’s local address couldn’t be published. Restart the virtual Mac and try again."}];
+        [self stop];self.error=[NSError errorWithDomain:@"VirtualIntelMac.FileSharing" code:status userInfo:@{NSLocalizedDescriptionKey:VIMLocalized(@"smbservice.file-sharing-s-local-address-couldn-t-be-published-restart", @"File Sharing’s local address couldn’t be published. Restart the virtual Mac and try again.")}];
         if(error)*error=self.error;return NO;
     }return YES;
 }

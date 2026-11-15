@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMGuestInstallation.h"
 #import "VIMGuestAgent.h"
 #import "VIMGuestTransactionEvidence.h"
@@ -24,7 +25,7 @@ static NSDictionary *InstallJSON(NSDictionary *command) {
         if(failure){completion(failure);return;}
         BOOL installed=[result[@"Phase"] isEqual:@"awaiting-reboot"]&&[result[@"FilesPublished"] isEqual:@YES]&&[result[@"RebootRequired"] isEqual:@YES];
         completion(installed||[result[@"Phase"] isEqual:@"rolled-back"]?nil:
-            InstallError(@"The previous installation has not reached a recoverable stopping point. No repair was started."));
+            InstallError(VIMLocalized(@"guestinstallation.the-previous-installation-has-not-reached-a-recoverable-stopping-point", @"The previous installation has not reached a recoverable stopping point. No repair was started.")));
     }];
 }
 + (void)archiveForRepairWithAgent:(VIMGuestAgent *)agent journal:(NSURL *)journal completion:(void (^)(NSError *))completion {
@@ -37,12 +38,12 @@ static NSDictionary *InstallJSON(NSDictionary *command) {
         if(failure){completion(failure);return;}
         BOOL installed=[result[@"Phase"] isEqual:@"awaiting-reboot"]&&[result[@"FilesPublished"] isEqual:@YES]&&[result[@"RebootRequired"] isEqual:@YES];
         if(!installed&&![result[@"Phase"] isEqual:@"rolled-back"]) {
-            completion(InstallError(@"The previous installation has not reached a recoverable stopping point. Its records were kept; no repair was started."));return;
+            completion(InstallError(VIMLocalized(@"guestinstallation.the-previous-installation-has-not-reached-a-recoverable-stopping-point-2", @"The previous installation has not reached a recoverable stopping point. Its records were kept; no repair was started.")));return;
         }
         NSDictionary *record=[NSDictionary dictionaryWithContentsOfURL:journal];
         NSString *identity=result[@"TransactionID"];
         if(![record[@"TransactionID"] isEqual:identity]||(superseded&&!VIMVerifiedInstallationSuperseded(record,report))) {
-            completion(InstallError(@"The installation record changed while checking it. No repair was started."));return;
+            completion(InstallError(VIMLocalized(@"guestinstallation.the-installation-record-changed-while-checking-it-no-repair-was", @"The installation record changed while checking it. No repair was started.")));return;
         }
         NSURL *history=[journal.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"InstallationHistory" isDirectory:YES];
         NSError *error=nil;
@@ -72,7 +73,7 @@ static NSDictionary *InstallJSON(NSDictionary *command) {
        ![state[@"Preparation"] isKindOfClass:NSDictionary.class]||
        ![state[@"Preparation"][@"TransactionID"] isEqual:identity]||
        ![state[@"Preparation"][@"TransactionJournal"] isEqual:path]) {
-        completion(nil,InstallError(@"The saved installation record is invalid. No guest command was sent."));return;
+        completion(nil,InstallError(VIMLocalized(@"guestinstallation.the-saved-installation-record-is-invalid-no-guest-command-was", @"The saved installation record is invalid. No guest command was sent.")));return;
     }
     NSString *binary=[path.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"guest-install"];
     // Retain historical evidence separately, never present it as a fresh check
@@ -95,12 +96,12 @@ static NSDictionary *InstallJSON(NSDictionary *command) {
             state[@"Phase"]=@"outcome-unknown";
             if(command[@"exitcode"])state[@"ReconciliationExitCode"]=command[@"exitcode"];
             if([command[@"stderr"] length])state[@"ReconciliationLog"]=[[NSString alloc] initWithData:command[@"stderr"] encoding:NSUTF8StringEncoding]?:@"Non-text guest output";
-            save(nil,failure?:InstallError(@"Cannot confirm the saved guest transaction. Installation was not retried."));return;
+            save(nil,failure?:InstallError(VIMLocalized(@"guestinstallation.cannot-confirm-the-saved-guest-transaction-installation-was-not-retried", @"Cannot confirm the saved guest transaction. Installation was not retried.")));return;
         }
         state[@"GuestResult"]=result;state[@"Phase"]=result[@"Phase"]?:@"outcome-unknown";
         if(!verify){save(result,nil);return;}
         if(![result[@"Phase"] isEqual:@"awaiting-reboot"]||![result[@"RebootRequired"] isEqual:@YES]) {
-            save(result,InstallError([NSString stringWithFormat:@"Graphics installation is recorded as “%@”. Its recovery information has been kept; installation was not repeated.",result[@"Phase"]?:@"unknown"]));return;
+            save(result,InstallError([NSString stringWithFormat:VIMLocalized(@"guestinstallation.graphics-installation-is-recorded-as-its-recovery-information-has-been", @"Graphics installation is recorded as “%@”. Its recovery information has been kept; installation was not repeated."),result[@"Phase"]?:@"unknown"]));return;
         }
         // Early retained verifiers only recognize the blanket AMFI bypass.
         // A verified preference-first migration supplies a current read-only
@@ -121,7 +122,7 @@ static NSDictionary *InstallJSON(NSDictionary *command) {
                 [evidence[@"VolumeUUID"] isEqual:result[@"VolumeUUID"]]&&
                 [evidence[@"BootSessionUUID"] isKindOfClass:NSString.class]&&[evidence[@"BootSessionUUID"] length]>0&&
                 ![evidence[@"BootSessionUUID"] isEqual:result[@"BootSessionUUID"]];
-            if(!valid){save(result,error?:InstallError(diagnostic.length?[NSString stringWithFormat:@"Graphics verification couldn’t finish: %@. The installer has been kept.",[diagnostic stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]]:@"Graphics verification couldn’t finish. The installer has been kept; you can check again after the desktop is ready."));return;}
+            if(!valid){save(result,error?:InstallError(diagnostic.length?[NSString stringWithFormat:VIMLocalized(@"guestinstallation.graphics-verification-couldn-t-finish-the-installer-has-been-kept", @"Graphics verification couldn’t finish: %@. The installer has been kept."),[diagnostic stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]]:VIMLocalized(@"guestinstallation.graphics-verification-couldn-t-finish-the-installer-has-been-kept-2", @"Graphics verification couldn’t finish. The installer has been kept; you can check again after the desktop is ready.")));return;}
             state[@"PostBootVerification"]=evidence;state[@"Phase"]=@"graphics-verified";
             save(evidence,nil);
         }];
@@ -132,7 +133,7 @@ static NSDictionary *InstallJSON(NSDictionary *command) {
     if(![prepared[@"Prepared"] isEqual:@YES]||![prepared[@"Planned"] isEqual:@YES]||![prepared[@"Installed"] isEqual:@NO]||
        ![identity isKindOfClass:NSString.class]||![[NSUUID alloc] initWithUUIDString:identity]||
        !InstallJournalPath(guestJournal)) {
-        completion(nil,InstallError(@"No valid prepared installation transaction is available."));return;
+        completion(nil,InstallError(VIMLocalized(@"guestinstallation.no-valid-prepared-installation-transaction-is-available", @"No valid prepared installation transaction is available.")));return;
     }
     NSMutableDictionary *state=[@{@"FormatVersion":@1,@"TransactionID":identity,@"GuestJournal":guestJournal,
         @"Preparation":prepared,@"Phase":@"dispatching",@"Ready":@NO,@"StartedAt":NSDate.date} mutableCopy];
@@ -162,7 +163,7 @@ static NSDictionary *InstallJSON(NSDictionary *command) {
             if(saved&&![saved writeToURL:journal options:NSDataWritingAtomic error:&saveError])saved=nil;
             if(!saved){completion(nil,saveError);return;}
             BOOL success=[result[@"Phase"] isEqual:@"awaiting-reboot"]&&[result[@"RebootRequired"] isEqual:@YES];
-            completion(result,success?nil:(statusError?:failure?:InstallError(result[@"Failure"]?:@"Installation is not complete. Its saved state must be checked before retrying.")));
+            completion(result,success?nil:(statusError?:failure?:InstallError(result[@"Failure"]?:VIMLocalized(@"guestinstallation.installation-is-not-complete-its-saved-state-must-be-checked", @"Installation is not complete. Its saved state must be checked before retrying."))));
         }];
     }];
 }

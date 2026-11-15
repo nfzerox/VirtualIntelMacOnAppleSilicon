@@ -1,0 +1,68 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "CFBundleName": {
+      "comment": "Bundle name",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "new",
+            "value": "Virtual Intel Mac"
+          }
+        }
+      },
+      "shouldTranslate": false
+    },
+    "NSHumanReadableCopyright": {
+      "comment": "Copyright (human-readable)",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "new",
+            "value": ""
+          }
+        }
+      },
+      "shouldTranslate": false
+    },
+    "NSMicrophoneUsageDescription": {
+      "comment": "System permission prompt.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow your virtual Macs to use this Mac’s microphone when a guest app records audio."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许虚拟 Intel Mac 在客户机应用录音时使用此 Mac 的麦克风。"
+          }
+        }
+      }
+    },
+    "NSRemovableVolumesUsageDescription": {
+      "comment": "System permission prompt.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow a USB drive you choose to be connected to your virtual Mac instead of this Mac."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许将你选择的 USB 驱动器连接到虚拟 Intel Mac，供虚拟 Intel Mac 使用。"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

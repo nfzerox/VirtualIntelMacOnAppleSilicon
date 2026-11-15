@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMInstallerWindow.h"
 #import "VIMInstallerCatalog.h"
 #import "VIMLibraryLocation.h"
@@ -52,20 +53,20 @@ static VIMInstallerWindow *installerController;
         styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable
         backing:NSBackingStoreBuffered defer:NO];
     if((self=[super initWithWindow:window])) {
-        window.title=@"macOS Installers";window.releasedWhenClosed=NO;
+        window.title=VIMLocalized(@"installerwindow.macos-installers", @"macOS Installers");window.releasedWhenClosed=NO;
         self.selection=[NSPopUpButton new];
-        self.status=[NSTextField wrappingLabelWithString:@"Choose an OS installer to download. Existing downloads resume automatically."];
+        self.status=[NSTextField wrappingLabelWithString:VIMLocalized(@"installerwindow.choose-an-os-installer-to-download-existing-downloads-resume-automatically", @"Choose an OS installer to download. Existing downloads resume automatically.")];
         self.location=[NSTextField wrappingLabelWithString:@""];self.location.selectable=YES;
         self.location.textColor=NSColor.secondaryLabelColor;
         self.progress=[NSProgressIndicator new];self.progress.indeterminate=NO;self.progress.maxValue=1;
         [self.progress.widthAnchor constraintEqualToConstant:540].active=YES;
-        self.downloadButton=[NSButton buttonWithTitle:@"Download" target:self action:@selector(download:)];
-        self.pauseButton=[NSButton buttonWithTitle:@"Pause" target:self action:@selector(pause:)];self.pauseButton.enabled=NO;
-        self.refreshButton=[NSButton buttonWithTitle:@"Update Installer List" target:self action:@selector(refresh:)];
-        self.prepareButton=[NSButton buttonWithTitle:@"Prepare Installer…" target:self action:@selector(prepare:)];
+        self.downloadButton=[NSButton buttonWithTitle:VIMLocalized(@"installerwindow.download", @"Download") target:self action:@selector(download:)];
+        self.pauseButton=[NSButton buttonWithTitle:VIMLocalized(@"installerwindow.pause", @"Pause") target:self action:@selector(pause:)];self.pauseButton.enabled=NO;
+        self.refreshButton=[NSButton buttonWithTitle:VIMLocalized(@"installerwindow.update-installer-list", @"Update Installer List") target:self action:@selector(refresh:)];
+        self.prepareButton=[NSButton buttonWithTitle:VIMLocalized(@"installerwindow.prepare-installer", @"Prepare Installer…") target:self action:@selector(prepare:)];
         self.prepareButton.enabled=NO;
         NSStackView *buttons=[NSStackView stackViewWithViews:@[self.downloadButton,self.pauseButton,self.refreshButton]];buttons.spacing=12;
-        NSButton *reveal=[NSButton buttonWithTitle:@"Show Downloads in Finder" target:self action:@selector(reveal:)];
+        NSButton *reveal=[NSButton buttonWithTitle:VIMLocalized(@"app.show-downloads-in-finder", @"Show Downloads in Finder") target:self action:@selector(reveal:)];
         NSStackView *stack=[NSStackView stackViewWithViews:@[self.selection,self.status,self.progress,buttons,self.prepareButton,self.location,reveal]];
         stack.orientation=NSUserInterfaceLayoutOrientationVertical;stack.alignment=NSLayoutAttributeLeading;stack.spacing=20;
         stack.translatesAutoresizingMaskIntoConstraints=NO;[window.contentView addSubview:stack];
@@ -106,7 +107,7 @@ static VIMInstallerWindow *installerController;
 - (void)nextFile {
     if(self.index>=self.files.count) {
         [self setBusy:NO];self.progress.doubleValue=1;
-        self.status.stringValue=@"Download complete. Choose Prepare Installer to verify Apple's package and create the installation disk image.";
+        self.status.stringValue=VIMLocalized(@"installerwindow.download-complete-choose-prepare-installer-to-verify-apple-s-package", @"Download complete. Choose Prepare Installer to verify Apple's package and create the installation disk image.");
         return;
     }
     NSURL *source=[NSURL URLWithString:self.files[self.index][@"URL"]];
@@ -116,27 +117,27 @@ static VIMInstallerWindow *installerController;
     NSURL *directory=[self.downloadRoot URLByAppendingPathComponent:key isDirectory:YES];
     NSError *error=nil;self.transfer=[[VIMDownload alloc] initWithSourceURL:source directory:directory error:&error];
     if(!self.transfer) { [self setBusy:NO];self.status.stringValue=error.localizedDescription;return; }
-    self.status.stringValue=[NSString stringWithFormat:@"Downloading %@ (%lu of %lu)…",source.lastPathComponent,self.index+1,self.files.count];
+    self.status.stringValue=[NSString stringWithFormat:VIMLocalized(@"installerwindow.downloading-lu-of-lu", @"Downloading %@ (%lu of %lu)…"),source.lastPathComponent,self.index+1,self.files.count];
     __weak VIMInstallerWindow *weakSelf=self;
     self.transfer.progress=^(int64_t received,int64_t total){
         VIMInstallerWindow *controller=weakSelf;
         controller.progress.indeterminate=total<=0;
         if(total>0)controller.progress.doubleValue=(double)received/total;
-        controller.status.stringValue=[NSString stringWithFormat:@"%@ — %@ of %@",source.lastPathComponent,
+        controller.status.stringValue=[NSString stringWithFormat:VIMLocalized(@"ui.of", @"%@ — %@ of %@"),source.lastPathComponent,
             [NSByteCountFormatter stringFromByteCount:received countStyle:NSByteCountFormatterCountStyleFile],
-            total>0?[NSByteCountFormatter stringFromByteCount:total countStyle:NSByteCountFormatterCountStyleFile]:@"unknown size"];
+            total>0?[NSByteCountFormatter stringFromByteCount:total countStyle:NSByteCountFormatterCountStyleFile]:VIMLocalized(@"installerwindow.unknown-size", @"unknown size")];
     };
     [self.transfer startWithCompletion:^(NSURL *file,NSError *error,BOOL paused){
         VIMInstallerWindow *controller=weakSelf;controller.transfer=nil;
         if([controller finishTerminationIfNeeded])return;
         if(error||paused) {
-            [controller setBusy:NO];controller.status.stringValue=error?error.localizedDescription:@"Paused. Click Download to resume; completed files will be reused.";
+            [controller setBusy:NO];controller.status.stringValue=error?error.localizedDescription:VIMLocalized(@"installerwindow.paused-click-download-to-resume-completed-files-will-be-reused", @"Paused. Click Download to resume; completed files will be reused.");
         } else {controller.downloadedFiles[controller.files[controller.index][@"Role"]]=file;controller.index++;[controller nextFile];}
     }];
 }
 - (void)pause:(id)sender {
     self.pauseButton.enabled=NO;
-    if(self.assembly){self.assembly.cancelled=YES;self.status.stringValue=@"Stopping preparation; downloaded files will be kept…";}
+    if(self.assembly){self.assembly.cancelled=YES;self.status.stringValue=VIMLocalized(@"installerwindow.stopping-preparation-downloaded-files-will-be-kept", @"Stopping preparation; downloaded files will be kept…");}
     else [self.transfer pause];
 }
 - (void)prepare:(id)sender {
@@ -155,7 +156,7 @@ static VIMInstallerWindow *installerController;
     NSURL *assemblyJob=[scratch URLByAppendingPathComponent:[identifier stringByAppendingString:@"-Assembly"]];
     NSURL *mediaJob=[scratch URLByAppendingPathComponent:[identifier stringByAppendingString:@"-Media"]];
     VIMInstallerAssembly *worker=[VIMInstallerAssembly new];self.assembly=worker;
-    [self setBusy:YES];self.pauseButton.title=@"Cancel";
+    [self setBusy:YES];self.pauseButton.title=VIMLocalized(@"common.cancel", @"Cancel");
     self.progress.indeterminate=YES;[self.progress startAnimation:nil];
     worker.progress=^(NSString *stage){self.status.stringValue=stage;};
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
@@ -171,11 +172,11 @@ static VIMInstallerWindow *installerController;
                 [NSFileManager.defaultManager removeItemAtURL:assemblyJob error:nil];
         }
         dispatch_async(dispatch_get_main_queue(), ^{
-            worker.progress=nil;self.assembly=nil;[self setBusy:NO];self.pauseButton.title=@"Pause";
+            worker.progress=nil;self.assembly=nil;[self setBusy:NO];self.pauseButton.title=VIMLocalized(@"installerwindow.pause", @"Pause");
             [self.progress stopAnimation:nil];self.progress.indeterminate=NO;self.progress.doubleValue=media?1:0;
             if([self finishTerminationIfNeeded])return;
-            self.status.stringValue=media?@"Installer disk image ready.":
-                (failure.localizedDescription?:@"Installer preparation stopped. Your downloads have been kept.");
+            self.status.stringValue=media?VIMLocalized(@"installerwindow.installer-disk-image-ready", @"Installer disk image ready."):
+                (failure.localizedDescription?:VIMLocalized(@"installerwindow.installer-preparation-stopped-your-downloads-have-been-kept", @"Installer preparation stopped. Your downloads have been kept."));
             if(media)[VIMNewMachineWindow showWithInstaller:media guest:guest];
         });
     });
@@ -185,7 +186,7 @@ static VIMInstallerWindow *installerController;
     [VIMInstallerCatalog refreshWithCompletion:^(VIMInstallerCatalog *catalog,NSError *error){
         self.refreshButton.enabled=YES;
         if(catalog){self.catalog=catalog;[self populate];}
-        self.status.stringValue=error?error.localizedDescription:@"Installer list updated.";
+        self.status.stringValue=error?error.localizedDescription:VIMLocalized(@"installerwindow.installer-list-updated", @"Installer list updated.");
     }];
 }
 - (void)reveal:(id)sender {
