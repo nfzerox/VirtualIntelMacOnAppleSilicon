@@ -45,7 +45,7 @@ codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/opengl-audio-d
 codesign --verify --strict "$output/opengl-audio-defaults"
 "$cc" -fno-objc-arc -O2 -Wall -Wextra -Werror -Wno-deprecated-declarations \
     -arch x86_64 -isysroot "$sdk" -mmacosx-version-min=10.7 \
-    "$root/tools/opengl-create-account.m" -framework Foundation -framework OpenDirectory \
+    "$root/tools/opengl-create-account.m" "$root/tools/guest-regional-policy.m" "$root/tools/guest-regional-settings.m" -framework Foundation -framework OpenDirectory \
     -framework DiskArbitration -framework IOKit -framework ServiceManagement -framework CoreServices -framework Security -framework SystemConfiguration -o "$output/opengl-create-account"
 codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/opengl-create-account"
 codesign --verify --strict "$output/opengl-create-account"

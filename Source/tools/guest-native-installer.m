@@ -4,6 +4,7 @@
 #import "guest-system-version.h"
 #import "opengl-guest-machine.h"
 #import "modern-setup-identity.h"
+#import "guest-regional-policy.h"
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <unistd.h>
@@ -66,6 +67,11 @@ int main(int argc,const char **argv){@autoreleasepool{
     if(argc!=2||(!start&&strcmp(argv[1],"--plan")))return 64;
     Require(geteuid()==0&&VIMModernSetupGuestMachine(),@"Run native installation only in this virtual Mac’s privileged guest service.");
     NSDictionary *request=Request();NSString *guest=request[@"Guest"];
+    NSDictionary *regional=nil;
+    if(request[@"RegionalSettings"]){
+        NSError *regionalError=nil;regional=VIMRegionalNormalizeRequest(request[@"RegionalSettings"],&regionalError);
+        Require(regional!=nil,regionalError.localizedDescription?:@"Invalid regional settings.");
+    }
     NSDictionary *system=[NSDictionary dictionaryWithContentsOfFile:@"/System/Library/CoreServices/SystemVersion.plist"];
     Require([VIMGuestForSystemVersion(system[@"ProductVersion"]) isEqual:guest],@"The recovery system does not match the requested OS.");
     NSFileManager *fm=NSFileManager.defaultManager;
@@ -86,9 +92,10 @@ int main(int argc,const char **argv){@autoreleasepool{
     for(NSString *path in @[@"System/Library/CoreServices/SystemVersion.plist",@"macOS Install Data",@"OS X Install Data"])
         Require(![fm fileExistsAtPath:[mount stringByAppendingPathComponent:path]],@"Installation has already started on this disk; it was not repeated.");
     NSArray *arguments=@[@"--volume",mount,@"--agreetolicense",@"--nointeraction",@"--rebootdelay",@"0"];
-    NSDictionary *plan=@{@"FormatVersion":@1,@"Guest":guest,@"MachineIdentifier":request[@"MachineIdentifier"],
+    NSMutableDictionary *plan=[@{@"FormatVersion":@1,@"Guest":guest,@"MachineIdentifier":request[@"MachineIdentifier"],
         @"VolumeUUID":request[@"VolumeUUID"],@"MountPoint":mount,@"Executable":installer,@"Arguments":arguments,
-        @"TargetDiskUUID":target[@"DiskUUID"]?:@"",@"EraseRequested":@NO,@"InstallationStarted":@NO};
+        @"TargetDiskUUID":target[@"DiskUUID"]?:@"",@"EraseRequested":@NO,@"InstallationStarted":@NO} mutableCopy];
+    if(regional)plan[@"RegionalSettings"]=regional;
     if(!start){NSData *json=[NSJSONSerialization dataWithJSONObject:plan options:0 error:NULL];fwrite(json.bytes,1,json.length,stdout);puts("");return 0;}
     // No elapsed-time deadline or retry. A real failure exits; successful
     // preparation may reboot the guest and close the caller's control channel.
@@ -104,6 +111,7 @@ int main(int argc,const char **argv){@autoreleasepool{
     for(NSString *key in @[@"FileSharing",@"RemoteLogin",@"AutomaticLogin"]){
         Require([request[key] isEqual:@YES]||[request[key] isEqual:@NO],@"The automatic service policy is invalid.");owner[key]=request[key];
     }
+    if(regional)owner[@"RegionalSettings"]=regional;
     NSString *ownership=[mount stringByAppendingPathComponent:[VIMModernInstallerOwnership substringFromIndex:1]];
     NSDictionary *prior=[NSDictionary dictionaryWithContentsOfFile:ownership];
     Require(![fm fileExistsAtPath:ownership]||[prior isEqual:owner],@"Another setup already owns this target.");

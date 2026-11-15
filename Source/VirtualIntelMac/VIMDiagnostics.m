@@ -85,8 +85,8 @@ static BOOL WriteRecord(NSDictionary *record,NSURL *URL,NSError **error) {
                     @"AppArchitecture":architecture,
                     @"ExportedAt":NSDate.date},[folder URLByAppendingPathComponent:@"App.plist"],&error);
                 NSArray *keys=@[@"Guest",@"CPUCount",@"MemoryMiB",@"DiskGiB",@"DisplayMode",@"RetinaEnabled",@"NetworkConnected",@"NetworkMode",@"BridgeInterface",@"AudioEnabled"];
-                NSArray *records=@[@"GuestStatus.plist",@"GuestInstallation.plist",@"GuestPreparation.plist"];
-                NSArray *reportKeys=@[@"Phase",@"Guest",@"ProductVersion",@"ProductBuildVersion",@"KernelBuild",@"DesktopRunning",@"SetupComplete",@"RebootRequired",@"ProtocolVersion",@"UpdatedAt",@"Error",@"Message"];
+                NSArray *records=@[@"GuestStatus.plist",@"GuestInstallation.plist",@"GuestPreparation.plist",@"RegionalSettings.plist"];
+                NSArray *reportKeys=@[@"Phase",@"Guest",@"ProductVersion",@"ProductBuildVersion",@"KernelBuild",@"DesktopRunning",@"SetupComplete",@"RebootRequired",@"ProtocolVersion",@"UpdatedAt",@"Error",@"Message",@"Requested",@"Resolved",@"Warnings",@"Skipped"];
                 NSUInteger index=0;
                 for(NSURL *machine in [fm contentsOfDirectoryAtURL:library includingPropertiesForKeys:@[NSURLIsSymbolicLinkKey] options:NSDirectoryEnumerationSkipsHiddenFiles error:NULL]) {
                     if(!ok||index>=100)break;

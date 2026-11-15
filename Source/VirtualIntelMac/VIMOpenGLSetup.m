@@ -1,4 +1,5 @@
 #import "VIMLocalization.h"
+#import "VIMRegionalSettings.h"
 #import "VIMOpenGLSetup.h"
 #import "VIMMachine.h"
 #import "VIMGuestAgent.h"
@@ -28,6 +29,9 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
 @property VIMQMPConnection *control;
 @property NSDictionary *profile;
 @property NSString *bootUUID;
+@property NSString *regionalBoot;
+@property NSString *regionalAccountBoot;
+@property NSString *regionalAccountExecutable;
 @property BOOL testedGraphics;
 @property BOOL audioInitialized;
 @property NSUInteger audioDeviceWaits;
@@ -341,8 +345,41 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
     }
     self.logVerificationFailure(message);
 }
+- (void)withCurrentRegionalAccountTool:(void (^)(NSString *,NSError *))completion {
+    if(self.regionalAccountExecutable&&[self.regionalAccountBoot isEqual:self.bootUUID]){completion(self.regionalAccountExecutable,nil);return;}
+    // A pending installation may already contain a helper from an older app.
+    // Use the matching bundled binary once per boot; credentials stay
+    // on stdin and the installed guest helper/ownership records are preserved.
+    NSURL *tool=[[self bundledSupport] URLByAppendingPathComponent:@"opengl-create-account"];
+    [self.agent stageFiles:@{@"opengl-create-account":tool} progress:nil completion:^(NSDictionary *receipt,NSError *error){
+        if(error){completion(nil,error);return;}
+        NSString *program=[receipt[@"Directory"] stringByAppendingPathComponent:@"opengl-create-account"];
+        [self.agent runExecutable:@"/bin/chmod" arguments:@[@"0700",program] timeout:0 completion:^(NSDictionary *reply,NSError *failure){
+            if(failure||![reply[@"exitcode"] isEqual:@0]){
+                completion(nil,failure?:SetupError(VIMLocalized(@"modernsetup.the-automatic-setup-tools-could-not-be-prepared", @"The automatic setup tools could not be prepared.")));return;
+            }
+            self.regionalAccountBoot=self.bootUUID;self.regionalAccountExecutable=program;completion(program,nil);
+        }];
+    }];
+}
 - (void)runAccountToolForSharingRepair:(BOOL)repair input:(NSData *)input completion:(void (^)(NSDictionary *,NSError *))completion {
-    if(!repair){[self tool:@"opengl-create-account" arguments:@[@"--create"] input:input completion:completion];return;}
+    if(!repair){
+        void (^useTool)(NSString *,NSError *)=^(NSString *program,NSError *toolError){
+            if(toolError){completion(nil,toolError);return;}
+            void (^create)(NSError *)=^(NSError *error){
+                if(error){completion(nil,error);return;}
+                [self.agent runExecutable:program arguments:@[@"--create"] standardInput:input timeout:0 completion:completion];
+            };
+            if(!self.profile[@"RegionalSettings"]||[self.regionalBoot isEqual:self.bootUUID])create(nil);
+            else [VIMRegionalSettings preflightRequest:self.profile[@"RegionalSettings"] agent:self.agent executable:program packageURL:self.machine.URL completion:^(NSError *error){
+                if(!error)self.regionalBoot=self.bootUUID;create(error);
+            }];
+        };
+        if(self.profile[@"RegionalSettings"])
+            [self withCurrentRegionalAccountTool:useTool];
+        else useTool([GuestTools stringByAppendingPathComponent:@"opengl-create-account"],nil);
+        return;
+    }
     // An older installed helper predates this repair even when its graphics
     // hashes still match. Stage the app's verified, self-contained native
     // control instead of invoking a new argument on that stale executable.
@@ -549,6 +586,12 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
 - (void)advanceReport:(NSDictionary *)report completion:(void (^)(NSDictionary *,NSError *))completion {
     NSMutableDictionary *identified=[report mutableCopy];identified[@"BootSessionUUID"]=self.bootUUID;report=identified;
     NSDictionary *account=report[@"Account"];
+    if(account[@"RegionalSettings"]&&self.profile[@"RegionalSettings"]){
+        NSError *regionalError=nil;
+        if(![VIMRegionalSettings storeResult:account[@"RegionalSettings"] requested:self.profile[@"RegionalSettings"] packageURL:self.machine.URL error:&regionalError]){
+            completion(nil,regionalError?:SetupError(VIMLocalized(@"regional.invalid-result", @"The guest’s regional setup result could not be confirmed.")));return;
+        }
+    }
     BOOL automatic=[self.profile[@"Enabled"] boolValue];NSString *phase=account[@"Phase"];
     BOOL needsFirstLoginPolicy=[phase isEqual:@"autologin-armed"]&&![account[@"FirstLoginPolicyPrepared"] boolValue];
     BOOL recoverLogin=[@[@"elcapitan",@"sierra"] containsObject:self.machine.guest]&&[report[@"AutoLoginHandoffMissing"] isEqual:@YES];
@@ -566,6 +609,7 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
             NSError *error=nil;NSString *password=provided?:[VIMAutomaticSetup passwordForIdentifier:credential error:&error];
             NSMutableDictionary *request=[identity mutableCopy];if(password)request[@"Password"]=password;
+            if(self.profile[@"RegionalSettings"])request[@"RegionalSettings"]=self.profile[@"RegionalSettings"];
             NSData *input=password?[NSJSONSerialization dataWithJSONObject:request options:0 error:&error]:nil;
             dispatch_async(dispatch_get_main_queue(),^{
                 if(!password){

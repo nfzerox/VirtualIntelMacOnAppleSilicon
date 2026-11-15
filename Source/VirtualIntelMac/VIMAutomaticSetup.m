@@ -122,6 +122,7 @@ static BOOL PrivateCredential(struct stat *st) {return S_ISREG(st->st_mode)&&st-
            ![profile[@"VolumeUUID"] isEqual:target[@"VolumeUUID"]]){SetupFailure(error,VIMLocalized(@"automaticsetup.the-saved-automatic-setup-target-does-not-match-this-mac", @"The saved automatic setup target does not match this Mac."));return nil;}
         if(![self validateUsername:profile[@"Username"] error:error])return nil;
         for(NSString *key in @[@"Enabled",@"Username",@"FileSharing",@"RemoteLogin",@"AutomaticLogin"])if(profile[key])policy[key]=profile[key];
+        if(profile[@"RegionalSettings"])policy[@"RegionalSettings"]=profile[@"RegionalSettings"];
     }
     NSURL *image=[state URLByAppendingPathComponent:@"LegacySetup.iso"],*receipt=[state URLByAppendingPathComponent:@"LegacySetupMedia.plist"];
     struct stat st;

@@ -2,6 +2,8 @@
 // The recovery bootstrap authorizes exactly one new volume/account transaction.
 // JSON password arrives through stdin; never print or persist the request.
 #import <Foundation/Foundation.h>
+#import "guest-regional-settings.h"
+#import "guest-regional-policy.h"
 #ifdef VIM_MODERN_ACCOUNT_SETUP
 #import "guest-system-version.h"
 #import "modern-setup-identity.h"
@@ -104,6 +106,9 @@ static BOOL AdoptModernOwnership(NSDictionary *request,NSString *guest,NSString 
        ![[prepared objectForKey:@"VolumeUUID"] isEqual:[request objectForKey:@"TargetVolumeUUID"]]||
        !(UUID([prepared objectForKey:@"TargetDiskUUID"])?VIMModernRootStoreMatches(volume,[prepared objectForKey:@"TargetDiskUUID"]):
          [[prepared objectForKey:@"VolumeUUID"] caseInsensitiveCompare:volume]==NSOrderedSame))return NO;
+    id expectedRegional=[request objectForKey:@"RegionalSettings"];
+    id preparedRegional=[prepared objectForKey:@"RegionalSettings"];
+    if((expectedRegional||preparedRegional)&&![expectedRegional isEqual:preparedRegional])return NO;
     // Do not turn the shared var/db ancestors into private directories. Only
     // the authorization/transaction directory itself contains private state.
     if(![[NSFileManager defaultManager] createDirectoryAtPath:State withIntermediateDirectories:YES
@@ -289,6 +294,27 @@ static BOOL LoginOnce(NSString *name,NSString *password,NSMutableDictionary *jou
     return VIMOpenGLSetLoginUserWithPendingPublication(name,allowPendingSync);
 }
 int main(int argc,char **argv) {@autoreleasepool {
+    if(argc==2&&!strcmp(argv[1],"--regional-plan")) {
+        NSMutableData *input=[NSMutableData data];unsigned char buffer[2048];ssize_t size;
+        while((size=read(STDIN_FILENO,buffer,sizeof(buffer)))!=0) {
+            if(size<0){if(errno==EINTR)continue;return 65;}
+            if([input length]+(NSUInteger)size>16384)return 65;
+            [input appendBytes:buffer length:(NSUInteger)size];
+        }
+        id request=[NSJSONSerialization JSONObjectWithData:input options:0 error:NULL];
+        NSDictionary *normalized=VIMRegionalNormalizeRequest(request,NULL);if(!normalized)return 65;
+        NSDictionary *capabilities=VIMGuestRegionalCapabilities();
+        NSDictionary *plan=VIMGuestRegionalPlan(normalized,capabilities,NULL);
+        if(!plan){fputs("The requested regional settings are unsupported.\n",stderr);return 65;}
+        NSDictionary *receipt=[NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithInt:1],@"FormatVersion",[capabilities objectForKey:@"Environment"],@"Environment",plan,@"Plan",nil];
+        NSData *json=[NSJSONSerialization dataWithJSONObject:receipt options:0 error:NULL];
+        if(!json)return 65;fwrite([json bytes],1,[json length],stdout);puts("");return 0;
+    }
+    if(argc==2&&!strcmp(argv[1],"--regional-capabilities")){
+        NSDictionary *capabilities=VIMGuestRegionalCapabilities();
+        NSData *json=[NSJSONSerialization dataWithJSONObject:capabilities options:0 error:NULL];
+        if(!json)return 65;fwrite([json bytes],1,[json length],stdout);puts("");return 0;
+    }
 #ifdef VIM_MODERN_ACCOUNT_SETUP
     BOOL status=argc==2&&!strcmp(argv[1],"--status"),finish=argc==2&&!strcmp(argv[1],"--finish-first-login");
     if(argc!=2||(!status&&!finish&&strcmp(argv[1],"--preflight")&&strcmp(argv[1],"--create")))return 64;
@@ -313,6 +339,13 @@ int main(int argc,char **argv) {@autoreleasepool {
     }
     id request=[NSJSONSerialization JSONObjectWithData:bytes options:0 error:NULL];
     if(![request isKindOfClass:[NSDictionary class]])return Failure("invalid private input");
+    if([request objectForKey:@"RegionalSettings"]){
+        NSError *regionalError=nil;
+        NSDictionary *normalized=VIMRegionalNormalizeRequest([request objectForKey:@"RegionalSettings"],&regionalError);
+        if(!normalized)return Failure("invalid regional settings request");
+        NSMutableDictionary *validated=[NSMutableDictionary dictionaryWithDictionary:request];
+        [validated setObject:normalized forKey:@"RegionalSettings"];request=validated;
+    }
     NSString *name=[request objectForKey:@"Username"],*password=[request objectForKey:@"Password"];
     NSString *machine=[request objectForKey:@"MachineIdentifier"],*volume=[request objectForKey:@"VolumeUUID"];
     NSRegularExpression *pattern=[NSRegularExpression regularExpressionWithPattern:@"^[a-z][a-z0-9_-]{0,30}$" options:0 error:NULL];
@@ -340,6 +373,8 @@ int main(int argc,char **argv) {@autoreleasepool {
        ![[ownership objectForKey:@"MachineIdentifier"] isEqual:machine]||
        ![[ownership objectForKey:@"VolumeUUID"] isEqual:volume]||
        ![[ownership objectForKey:@"Username"] isEqual:name])return Failure("bootstrap identity does not match");
+    id requestedRegional=[request objectForKey:@"RegionalSettings"],authorizedRegional=[ownership objectForKey:@"RegionalSettings"];
+    if((requestedRegional||authorizedRegional)&&![requestedRegional isEqual:authorizedRegional])return Failure("regional settings do not match the authorized installation");
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1050
     // Tiger's native Admin account operation is distinct from the Darwin9
     // credential repair. Never send the latter to a preexisting Tiger user.
@@ -378,8 +413,9 @@ int main(int argc,char **argv) {@autoreleasepool {
             [journal setObject:@"complete" forKey:@"Phase"];
             if(!Save(journal,journalPath))return Failure("saving the first desktop handoff");
         }
-        NSDictionary *result=@{@"Phase":[journal objectForKey:@"Phase"]?:@"pending",@"MachineIdentifier":machine,@"VolumeUUID":volume,
-            @"Username":name,@"UID":@(identifier),@"FirstLoginPolicyBootSessionUUID":[journal objectForKey:@"FirstLoginPolicyBootSessionUUID"]?:@""};
+        NSMutableDictionary *result=[NSMutableDictionary dictionaryWithObjectsAndKeys:[journal objectForKey:@"Phase"]?:@"pending",@"Phase",machine,@"MachineIdentifier",volume,@"VolumeUUID",
+            name,@"Username",[NSNumber numberWithUnsignedInt:identifier],@"UID",[journal objectForKey:@"FirstLoginPolicyBootSessionUUID"]?:@"",@"FirstLoginPolicyBootSessionUUID",nil];
+        if([journal objectForKey:@"RegionalSettings"])[result setObject:[journal objectForKey:@"RegionalSettings"] forKey:@"RegionalSettings"];
         NSData *json=[NSJSONSerialization dataWithJSONObject:result options:0 error:NULL];fwrite(json.bytes,1,json.length,stdout);puts("");close(lock);return 0;
     }
 #endif
@@ -412,6 +448,11 @@ int main(int argc,char **argv) {@autoreleasepool {
     if(!journal){
         if(record||getpwnam([name UTF8String])||[[NSFileManager defaultManager] fileExistsAtPath:@"/var/db/.AppleSetupDone"])
             return Failure("the system already has an account or completed Setup Assistant");
+        if(requestedRegional){
+            NSError *regionalError=nil;
+            if(!VIMGuestRegionalPlan(requestedRegional,VIMGuestRegionalCapabilities(),&regionalError))
+                return Failure("the requested regional settings are unsupported; finish Setup Assistant manually or use supported alternatives");
+        }
         uid_t identifier=501;while(identifier<60000&&getpwuid(identifier))identifier++;
         if(identifier>=60000)return Failure("no local account identifier is available");
         CFUUIDRef uuid=CFUUIDCreate(NULL);NSString *guid=[(NSString *)CFUUIDCreateString(NULL,uuid) autorelease];CFRelease(uuid);
@@ -481,6 +522,13 @@ int main(int argc,char **argv) {@autoreleasepool {
         if(!NameComputer(name))return Failure("naming the computer");
         [journal setObject:[NSNumber numberWithBool:YES] forKey:@"ComputerNameConfigured"];
         if(!Save(journal,journalPath))return Failure("saving the computer name");
+    }
+    if(requestedRegional){
+        NSError *regionalError=nil;
+        if(!VIMGuestApplyRegionalSettings(requestedRegional,name,(uid_t)[uid intValue],journal,journalPath,&regionalError)){
+            if(regionalError)fprintf(stderr,"Regional setup: %s\n",[[regionalError localizedDescription] UTF8String]);
+            return Failure("applying and verifying initial regional settings");
+        }
     }
     if([[journal objectForKey:@"Phase"] isEqual:@"planned"]){
         [journal setObject:@"account-created" forKey:@"Phase"];
@@ -643,6 +691,9 @@ int main(int argc,char **argv) {@autoreleasepool {
     if(marker>=0)close(marker);else if(errno!=EEXIST)return Failure("completing native Setup Assistant policy");
     [journal setObject:@"autologin-armed" forKey:@"Phase"];
     if(!Save(journal,journalPath))return Failure("saving desktop handoff");
-    puts("{\"AccountCreated\":true,\"HomeVerified\":true,\"SetupCompleted\":true,\"RestartRequired\":true}");
+    NSMutableDictionary *result=[NSMutableDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithBool:YES],@"AccountCreated",[NSNumber numberWithBool:YES],@"HomeVerified",[NSNumber numberWithBool:YES],@"SetupCompleted",[NSNumber numberWithBool:YES],@"RestartRequired",nil];
+    if([journal objectForKey:@"RegionalSettings"])[result setObject:[journal objectForKey:@"RegionalSettings"] forKey:@"RegionalSettings"];
+    NSData *resultJSON=[NSJSONSerialization dataWithJSONObject:result options:0 error:NULL];
+    if(!resultJSON)return Failure("encoding account completion");fwrite([resultJSON bytes],1,[resultJSON length],stdout);puts("");
     close(lock);return 0;
 }}

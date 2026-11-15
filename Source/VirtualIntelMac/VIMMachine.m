@@ -1,4 +1,5 @@
 #import "VIMLocalization.h"
+#import "../tools/guest-regional-policy.h"
 #import "VIMMachine.h"
 #import "VIMToolPropertyList.h"
 #import "VIMImageSlots.h"
@@ -446,7 +447,13 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
     // Old saved transactions retain their one-time-login behavior. New UI
     // and CLI transactions explicitly request persistent automatic login.
     if(profile[@"AutomaticLogin"]) [allowed addObject:@"AutomaticLogin"];
+    if(profile[@"RegionalSettings"]) [allowed addObject:@"RegionalSettings"];
     if(![allowed isEqual:[NSSet setWithArray:profile.allKeys]])return Fail(error,VIMLocalized(@"ui.automatic-setup-contains-an-unsupported-option", @"Automatic setup contains an unsupported option."));
+    if(profile[@"RegionalSettings"]) {
+        NSDictionary *regional=VIMRegionalNormalizeRequest(profile[@"RegionalSettings"],error);
+        if(!regional)return NO;
+        NSMutableDictionary *normalized=[profile mutableCopy];normalized[@"RegionalSettings"]=regional;profile=normalized;
+    }
     if(![VIMAutomaticSetup validateUsername:profile[@"Username"] error:error]||
        ![profile[@"CredentialIdentifier"] isKindOfClass:NSString.class]||![[NSUUID alloc] initWithUUIDString:profile[@"CredentialIdentifier"]])
         return Fail(error,VIMLocalized(@"ui.check-the-virtual-mac-s-account-and-setup-credential", @"Check the virtual Mac’s account and setup credential."));
@@ -464,6 +471,8 @@ static BOOL RemovePreparedMedia(NSString *path,NSURL *owner) {
         if([NSFileManager.defaultManager fileExistsAtPath:journal.path]) {
             NSDictionary *existing=[NSDictionary dictionaryWithContentsOfURL:journal];
             if(!existing)return Fail(error,VIMLocalized(@"ui.the-saved-automatic-setup-state-could-not-be-read-it-was-not", @"The saved automatic setup state could not be read. It was not replaced."));
+            if(existing[@"RegionalSettings"]&&![existing[@"RegionalSettings"] isEqual:profile[@"RegionalSettings"]])
+                return Fail(error,VIMLocalized(@"ui.this-mac-s-initial-account-setup-has-already-been-saved-resume-that", @"This Mac’s initial account setup has already been saved. Resume that setup before changing it."));
             for(NSString *key in allowed)if(![existing[key] isEqual:profile[key]])
                 return Fail(error,VIMLocalized(@"ui.this-mac-s-initial-account-setup-has-already-been-saved-resume-that", @"This Mac’s initial account setup has already been saved. Resume that setup before changing it."));
             return YES; // Never reset an in-progress/completed journal to pending.

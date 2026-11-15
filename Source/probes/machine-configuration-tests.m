@@ -236,7 +236,7 @@ int main(void) {@autoreleasepool {
     NSURL *cachedMedia=[attempt URLByAppendingPathComponent:@"Media/Installer.iso"];
     [fm createDirectoryAtURL:cachedMedia.URLByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];
     [@"fixture" writeToURL:cachedMedia atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    NSMutableDictionary *cacheReceipt=[@{@"FormatVersion":@1,@"Guest":@"mojave",@"Stage":@"media-created",@"Media":@"Installer.iso",@"Size":@7} mutableCopy];
+    NSMutableDictionary *cacheReceipt=[@{@"FormatVersion":@1,@"Guest":@"mojave",@"Stage":@"media-created",@"Media":@"Installer.iso",@"Size":@7,@"SerialRecoveryVersion":@2} mutableCopy];
     NSURL *cacheRecord=[cachedMedia.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"Media.plist"];
     [cacheReceipt writeToURL:cacheRecord atomically:YES];
     NSDictionary *retainedMedia=[VIMInstallerAssembly retainedInstallerForGuest:@"mojave" library:root];

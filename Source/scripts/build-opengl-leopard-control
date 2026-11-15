@@ -14,6 +14,7 @@ flags=(-O2 -arch x86_64 -isysroot "$VIM_LEOPARD_SDK" -mmacosx-version-min=10.5 -
 "$cc" "${flags[@]}" -c "$root/tools/opengl-period-foundation.m" -o "$output/PeriodFoundation.o"
 "$cc" "${flags[@]}" -c "$root/tools/opengl-leopard-directory.m" -o "$output/Directory.o"
 "$cc" "${flags[@]}" -include "$root/tools/opengl-period-foundation.h" "$root/tools/opengl-create-account.m" \
+    "$root/tools/guest-regional-policy.m" "$root/tools/guest-regional-settings.m" \
     "$output/JSONKit.o" "$output/PeriodFoundation.o" "$output/Directory.o" \
     -framework Foundation -framework DirectoryService -framework IOKit -framework DiskArbitration -framework SystemConfiguration \
     -framework CoreServices -framework Security -o "$output/opengl-create-account"

@@ -24,7 +24,7 @@ build_objc tools/opengl-desktop-status.m -framework SystemConfiguration -framewo
 build_objc tools/guest-host-connection.m -o "$output/guest-host-connection"
 build_objc tools/guest-display.m -framework ApplicationServices -o "$output/guest-display"
 build_objc tools/opengl-guest-agent.m -framework IOKit -o "$output/opengl-guest-agent"
-build_objc tools/opengl-create-account.m -framework OpenDirectory -framework DiskArbitration -framework IOKit \
+build_objc tools/opengl-create-account.m "$root/tools/guest-regional-policy.m" "$root/tools/guest-regional-settings.m" -framework OpenDirectory -framework DiskArbitration -framework IOKit \
     -framework CoreServices -framework Security -framework SystemConfiguration -o "$output/opengl-create-account"
 build_objc tools/opengl-install-bootstrap.m -framework IOKit -framework DiskArbitration -o "$output/opengl-install-bootstrap"
 build_objc tools/opengl-setup-status.m -framework SystemConfiguration -framework DiskArbitration -framework IOKit \

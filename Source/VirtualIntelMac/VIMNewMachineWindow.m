@@ -1,4 +1,5 @@
 #import "VIMLocalization.h"
+#import "VIMRegionalSettingsView.h"
 #import "VIMNewMachineWindow.h"
 #import "VIMMachine.h"
 #import "VIMLibraryLocation.h"
@@ -241,6 +242,8 @@ static NSURL *InstallerDownloadDirectory(NSURL *source,NSString *library) {
 @property NSButton *advancedButton;
 @property NSWindow *automaticSheet;
 @property NSArray<NSNumber *> *automaticDraft;
+@property NSDictionary *regionalDraft;
+@property VIMRegionalSettingsView *regionalView;
 @property BOOL editingAutomaticOptions;
 @property NSSwitch *automaticSwitch;
 @property NSSwitch *automaticSharing;
@@ -407,6 +410,8 @@ static VIMNewMachineWindow *creationController;
                 self.automaticSharing.state=[setup[@"FileSharing"] boolValue]?NSControlStateValueOn:NSControlStateValueOff;
                 self.automaticRemoteLogin.state=[setup[@"RemoteLogin"] boolValue]?NSControlStateValueOn:NSControlStateValueOff;
                 self.automaticLogin.state=[setup[@"AutomaticLogin"] boolValue]?NSControlStateValueOn:NSControlStateValueOff;
+                [self.regionalView restoreRequest:setup[@"RegionalSettings"]];
+                self.regionalView.frozen=YES;
                 self.guestPassword.stringValue=[VIMAutomaticSetup passwordForIdentifier:setup[@"CredentialIdentifier"] error:NULL]?:@"";
                 [self automaticSetupChanged:nil];
             }
@@ -559,13 +564,16 @@ static VIMNewMachineWindow *creationController;
     NSStackView *options=[NSStackView stackViewWithViews:rows];
     options.orientation=NSUserInterfaceLayoutOrientationVertical;options.alignment=NSLayoutAttributeLeading;options.spacing=18;
     for(NSView *row in rows)[row.widthAnchor constraintEqualToAnchor:options.widthAnchor].active=YES;
-    NSStackView *section=[NSStackView stackViewWithViews:@[heading,explanation,divider,options]];
+    self.regionalView=[[VIMRegionalSettingsView alloc] initWithRequest:nil];
+    NSBox *regionalDivider=[NSBox new];regionalDivider.boxType=NSBoxSeparator;
+    NSStackView *section=[NSStackView stackViewWithViews:@[heading,explanation,divider,options,regionalDivider,self.regionalView]];
     section.orientation=NSUserInterfaceLayoutOrientationVertical;section.alignment=NSLayoutAttributeLeading;section.spacing=14;
-    for(NSView *row in @[heading,explanation,divider,options])[row.widthAnchor constraintEqualToAnchor:section.widthAnchor].active=YES;
+    for(NSView *row in @[heading,explanation,divider,options,regionalDivider,self.regionalView])[row.widthAnchor constraintEqualToAnchor:section.widthAnchor].active=YES;
     return section;
 }
 - (void)automaticSetupChanged:(id)sender {
     BOOL enabled=self.automaticSwitch.state==NSControlStateValueOn;
+    self.regionalView.enabled=enabled;
     for(NSControl *control in @[self.guestUsername,self.guestPassword,self.visibleGuestPassword,self.passwordVisibility,self.automaticSharing,self.automaticRemoteLogin,self.automaticLogin])control.enabled=enabled;
     if(!self.editingAutomaticOptions){
         NSString *guest=CreationGuests()[self.system.indexOfSelectedItem];
@@ -581,8 +589,9 @@ static VIMNewMachineWindow *creationController;
     [self.window makeFirstResponder:nil];
     NSArray<NSSwitch *> *switches=@[self.automaticSwitch,self.automaticSharing,self.automaticRemoteLogin,self.automaticLogin];
     NSMutableArray *saved=[NSMutableArray array];for(NSSwitch *control in switches)[saved addObject:@(control.state)];self.automaticDraft=saved;
+    self.regionalDraft=self.regionalView.draftState;
     if(!self.automaticSheet){
-        self.automaticSheet=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,420,320) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+        self.automaticSheet=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,610) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
         self.automaticSheet.title=VIMLocalized(@"creation.advanced-setup", @"Advanced Setup");self.automaticSheet.releasedWhenClosed=NO;
         NSView *page=self.automaticSheet.contentView;
         AddAssistantView(page,self.automaticSection);
@@ -594,17 +603,24 @@ static VIMNewMachineWindow *creationController;
             [self.automaticSection.leadingAnchor constraintEqualToAnchor:page.leadingAnchor constant:24],
             [self.automaticSection.trailingAnchor constraintEqualToAnchor:page.trailingAnchor constant:-24],
             [self.automaticSection.topAnchor constraintEqualToAnchor:page.topAnchor constant:24],
+            [buttons.topAnchor constraintEqualToAnchor:self.automaticSection.bottomAnchor constant:24],
             [buttons.trailingAnchor constraintEqualToAnchor:page.trailingAnchor constant:-20],[buttons.bottomAnchor constraintEqualToAnchor:page.bottomAnchor constant:-20]]];
+        [self.automaticSheet setContentSize:NSMakeSize(480,ceil(self.automaticSection.fittingSize.height)+24+24+32+20)];
     }
     __weak typeof(self) weakSelf=self;
     self.editingAutomaticOptions=YES;
     [self.window beginSheet:self.automaticSheet completionHandler:^(NSModalResponse result){
         typeof(self) self=weakSelf;if(!self)return;
         if(result!=NSModalResponseOK)for(NSUInteger i=0;i<switches.count;i++)switches[i].state=self.automaticDraft[i].integerValue;
+        if(result!=NSModalResponseOK)[self.regionalView restoreDraftState:self.regionalDraft];
+        self.regionalDraft=nil;
         self.automaticDraft=nil;self.editingAutomaticOptions=NO;[self automaticSetupChanged:nil];[self focusConfigurationEditor];
     }];
 }
 - (void)finishAutomaticOptions:(NSButton *)sender {
+    if(sender.tag&&self.automaticSwitch.state==NSControlStateValueOn&&!self.regionalView.hidden){
+        NSError *error=nil;[self.regionalView requestWithError:&error];if(error){VIMPresentError(error,self.automaticSheet);return;}
+    }
     [self.window endSheet:self.automaticSheet returnCode:sender.tag?NSModalResponseOK:NSModalResponseCancel];
 }
 - (void)toggleGuestPassword:(id)sender {
@@ -767,6 +783,8 @@ static VIMNewMachineWindow *creationController;
     self.diskField.integerValue=DefaultDiskGiB(VIMLibraryLocation.currentURL);
     for(NSSwitch *control in @[self.automaticSwitch,self.automaticSharing,self.automaticRemoteLogin,self.automaticLogin])
         control.state=NSControlStateValueOn;
+    self.regionalView.frozen=NO;self.regionalView.hidden=NO;
+    [self.regionalView restoreRequest:nil];
     self.guestUsername.stringValue=VIMAutomaticSetup.defaultUsername;
     self.guestPassword.stringValue=@"";self.visibleGuestPassword.stringValue=@"";
     if(!self.visibleGuestPassword.hidden)[self toggleGuestPassword:nil];
@@ -903,13 +921,19 @@ static VIMNewMachineWindow *creationController;
     if(!self.job){self.job=[@{@"Identifier":NSUUID.UUID.UUIDString,@"Library":VIMLibraryLocation.currentURL.path,@"Guest":guest} mutableCopy];self.overallProgress=0;}
     if(automatic) {
         NSError *issue=nil;
+        NSDictionary *regional=self.job[@"AutomaticSetup"]?self.job[@"AutomaticSetup"][@"RegionalSettings"]:[self.regionalView requestWithError:&issue];
+        if(issue){[self presentCreationError:issue.localizedDescription];return;}
         if(![VIMAutomaticSetup savePassword:password identifier:self.job[@"Identifier"] error:&issue]){[self presentCreationError:issue.localizedDescription];return;}
-        self.job[@"AutomaticSetup"]=@{@"FormatVersion":@1,@"Enabled":@YES,@"Username":self.guestUsername.stringValue,
+        NSMutableDictionary *setup=[@{@"FormatVersion":@1,@"Enabled":@YES,@"Username":self.guestUsername.stringValue,
             @"FileSharing":@(self.automaticSharing.state==NSControlStateValueOn),@"RemoteLogin":@(self.automaticRemoteLogin.state==NSControlStateValueOn),
-            @"AutomaticLogin":@(self.automaticLogin.state==NSControlStateValueOn),@"CredentialIdentifier":self.job[@"Identifier"]};
+            @"AutomaticLogin":@(self.automaticLogin.state==NSControlStateValueOn),@"CredentialIdentifier":self.job[@"Identifier"]} mutableCopy];
+        if(regional)setup[@"RegionalSettings"]=regional;
+        [self.regionalView restoreRequest:regional];self.regionalView.frozen=YES;
+        self.job[@"AutomaticSetup"]=setup;
     } else {
         if(self.job[@"AutomaticSetup"]&&!self.job[@"Machine"])[VIMAutomaticSetup removePasswordForIdentifier:self.job[@"Identifier"] error:NULL];
         [self.job removeObjectForKey:@"AutomaticSetup"];
+        if(!self.job[@"Machine"]){self.regionalView.frozen=NO;self.regionalView.hidden=NO;}
     }
     if(!self.downloadOnly&&!self.installer&&!self.job[@"SourceInstaller"]&&!self.job[@"Media"]) {
         NSDictionary *retained=[VIMInstallerAssembly retainedInstallerForGuest:guest library:[NSURL fileURLWithPath:self.job[@"Library"]]];

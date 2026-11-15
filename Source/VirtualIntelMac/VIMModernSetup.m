@@ -3,6 +3,7 @@
 #import "VIMMachine.h"
 #import "VIMGuestAgent.h"
 #import "VIMAutomaticSetup.h"
+#import "VIMRegionalSettings.h"
 static NSError *SetupError(NSString *text){return [NSError errorWithDomain:@"VirtualIntelMac.AutomaticSetup" code:1 userInfo:@{NSLocalizedDescriptionKey:text}];}
 @interface VIMModernSetup ()
 @property VIMMachine *machine;
@@ -13,6 +14,7 @@ static NSError *SetupError(NSString *text){return [NSError errorWithDomain:@"Vir
 @property NSURL *journal;
 @property NSString *helperDirectory;
 @property NSString *helperBoot;
+@property NSString *regionalBoot;
 @end
 @implementation VIMModernSetup
 - (instancetype)initWithMachine:(VIMMachine *)machine agent:(VIMGuestAgent *)agent {
@@ -47,15 +49,23 @@ static NSError *SetupError(NSString *text){return [NSError errorWithDomain:@"Vir
         }];
     }];
 }
+- (void)prepareRegionalForBoot:(NSString *)boot completion:(void (^)(NSError *))completion {
+    if(!self.profile[@"RegionalSettings"]||[self.regionalBoot isEqual:boot]){completion(nil);return;}
+    [VIMRegionalSettings preflightRequest:self.profile[@"RegionalSettings"] agent:self.agent executable:[self.helperDirectory stringByAppendingPathComponent:@"guest-create-account"] packageURL:self.machine.URL completion:^(NSError *error){
+        if(!error)self.regionalBoot=boot;completion(error);
+    }];
+}
 - (NSDictionary *)requestForReport:(NSDictionary *)report {
     NSMutableDictionary *request=[@{@"FormatVersion":@1,@"MachineIdentifier":self.machine.configuration[@"Identifier"],@"Guest":self.machine.guest,
         @"VolumeUUID":report[@"VolumeUUID"],@"TargetVolumeUUID":self.target[@"VolumeUUID"],@"Username":self.profile[@"Username"],
         @"FileSharing":self.profile[@"FileSharing"],@"RemoteLogin":self.profile[@"RemoteLogin"],
         @"AutomaticLogin":self.profile[@"AutomaticLogin"]?:@YES} mutableCopy];
+    if(self.profile[@"RegionalSettings"])request[@"RegionalSettings"]=self.profile[@"RegionalSettings"];
     NSDictionary *plan=self.state[@"InstallerPlan"];
     if([self.state[@"InstallDispatched"] isEqual:@YES]&&
        [plan[@"MachineIdentifier"] isEqual:request[@"MachineIdentifier"]]&&
-       [plan[@"VolumeUUID"] isEqual:request[@"TargetVolumeUUID"]]){
+       [plan[@"VolumeUUID"] isEqual:request[@"TargetVolumeUUID"]]&&
+       ((!plan[@"RegionalSettings"]&&!request[@"RegionalSettings"])||[plan[@"RegionalSettings"] isEqual:request[@"RegionalSettings"]])){
         request[@"NativeInstallDispatched"]=@YES;
         if([[NSUUID alloc] initWithUUIDString:plan[@"TargetDiskUUID"]?:@""])request[@"TargetDiskUUID"]=plan[@"TargetDiskUUID"];
     }
@@ -155,49 +165,57 @@ static NSError *SetupError(NSString *text){return [NSError errorWithDomain:@"Vir
     [self withHelpersForBoot:boot completion:^(NSError *error){
         if(error){completion(nil,error);return;}
         if(finishing&&![report[@"DesktopRunning"] isEqual:@YES]){completion(@{@"Handled":@YES,@"Message":VIMLocalized(@"modernsetup.signing-in-to-your-virtual-mac", @"Signing in to your virtual Mac…")},nil);return;}
-        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
-            NSError *issue=nil;NSString *password=finishing?@"":[VIMAutomaticSetup passwordForIdentifier:self.profile[@"CredentialIdentifier"] error:&issue];
-            dispatch_async(dispatch_get_main_queue(),^{
-                if(!password){completion(nil,issue?:SetupError(VIMLocalized(@"modernsetup.the-saved-setup-password-is-unavailable-on-this-mac", @"The saved setup password is unavailable on this Mac.")));return;}
-                NSMutableDictionary *request=[[self requestForReport:report] mutableCopy];request[@"Password"]=password;
-                [self run:@"guest-create-account" mode:finishing?@"--finish-first-login":@"--create" request:request completion:^(NSDictionary *reply,NSError *failure){
-                    if(!failure&&[reply[@"exitcode"] isEqual:@75]){completion(@{@"Handled":@YES,@"Message":VIMLocalized(@"modernsetup.preparing-your-account-and-sharing", @"Preparing your account and sharing…")},nil);return;}
-                    id result=[reply[@"exitcode"] isEqual:@0]?[NSJSONSerialization JSONObjectWithData:reply[@"stdout"]?:NSData.data options:0 error:NULL]:nil;
-                    if(failure||![result isKindOfClass:NSDictionary.class]){
-                        NSString *detail=[[NSString alloc] initWithData:reply[@"stderr"]?:NSData.data encoding:NSUTF8StringEncoding];
-                        // The guest tool refuses (without touching anything) when the user already created an
-                        // account or finished Setup Assistant by hand. That is not a failure: there is nothing
-                        // left for automatic setup to do. Retire it so the session continues to graphics setup
-                        // instead of showing this error forever and never installing the accelerated drivers.
-                        if(!failure&&!finishing&&[detail containsString:@"already has an account or completed Setup Assistant"]){
+        void (^beginAccount)(NSError *)=^(NSError *regionalError){
+            if(regionalError){completion(nil,regionalError);return;}
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+                NSError *issue=nil;NSString *password=finishing?@"":[VIMAutomaticSetup passwordForIdentifier:self.profile[@"CredentialIdentifier"] error:&issue];
+                dispatch_async(dispatch_get_main_queue(),^{
+                    if(!password){completion(nil,issue?:SetupError(VIMLocalized(@"modernsetup.the-saved-setup-password-is-unavailable-on-this-mac", @"The saved setup password is unavailable on this Mac.")));return;}
+                    NSMutableDictionary *request=[[self requestForReport:report] mutableCopy];request[@"Password"]=password;
+                    [self run:@"guest-create-account" mode:finishing?@"--finish-first-login":@"--create" request:request completion:^(NSDictionary *reply,NSError *failure){
+                        if(!failure&&[reply[@"exitcode"] isEqual:@75]){completion(@{@"Handled":@YES,@"Message":VIMLocalized(@"modernsetup.preparing-your-account-and-sharing", @"Preparing your account and sharing…")},nil);return;}
+                        id result=[reply[@"exitcode"] isEqual:@0]?[NSJSONSerialization JSONObjectWithData:reply[@"stdout"]?:NSData.data options:0 error:NULL]:nil;
+                        if(failure||![result isKindOfClass:NSDictionary.class]){
+                            NSString *detail=[[NSString alloc] initWithData:reply[@"stderr"]?:NSData.data encoding:NSUTF8StringEncoding];
+                            // The guest tool refuses (without touching anything) when the user already created an
+                            // account or finished Setup Assistant by hand. That is not a failure: there is nothing
+                            // left for automatic setup to do. Retire it so the session continues to graphics setup
+                            // instead of showing this error forever and never installing the accelerated drivers.
+                            if(!failure&&!finishing&&[detail containsString:@"already has an account or completed Setup Assistant"]){
+                                NSMutableDictionary *profile=[self.profile mutableCopy];profile[@"Phase"]=@"complete";
+                                NSURL *file=[self.machine.URL URLByAppendingPathComponent:@"State/AutomaticSetup.plist"];
+                                NSError *skipError=nil;
+                                if([profile writeToURL:file error:&skipError]){
+                                    self.profile=profile;
+                                    [VIMAutomaticSetup removePasswordForIdentifier:profile[@"CredentialIdentifier"] error:NULL];
+                                    completion(@{@"Handled":@NO},nil);return;
+                                }
+                            }
+                            completion(nil,failure?:SetupError(detail.length?detail:VIMLocalized(@"modernsetup.the-automatic-account-setup-did-not-finish-its-records-were", @"The automatic account setup did not finish. Its records were retained.")));return;
+                        }
+                        NSError *saveError=nil;
+                        if(result[@"RegionalSettings"]&&self.profile[@"RegionalSettings"]&&
+                           ![VIMRegionalSettings storeResult:result[@"RegionalSettings"] requested:self.profile[@"RegionalSettings"] packageURL:self.machine.URL error:&saveError]){
+                            completion(nil,saveError?:SetupError(VIMLocalized(@"regional.invalid-result", @"The guest’s regional setup result could not be confirmed.")));return;
+                        }
+                        if(finishing){
+                            if(![result[@"Phase"] isEqual:@"complete"]){completion(nil,SetupError(VIMLocalized(@"modernsetup.the-first-desktop-login-could-not-be-verified", @"The first desktop login could not be verified.")));return;}
                             NSMutableDictionary *profile=[self.profile mutableCopy];profile[@"Phase"]=@"complete";
                             NSURL *file=[self.machine.URL URLByAppendingPathComponent:@"State/AutomaticSetup.plist"];
-                            NSError *skipError=nil;
-                            if([profile writeToURL:file error:&skipError]){
-                                self.profile=profile;
-                                [VIMAutomaticSetup removePasswordForIdentifier:profile[@"CredentialIdentifier"] error:NULL];
-                                completion(@{@"Handled":@NO},nil);return;
-                            }
+                            if(![profile writeToURL:file error:&saveError]){completion(nil,saveError);return;}self.profile=profile;
+                            [VIMAutomaticSetup removePasswordForIdentifier:profile[@"CredentialIdentifier"] error:NULL];
+                            [self savePhase:@"complete" error:&saveError];completion(@{@"Handled":@NO},saveError);
+                        }else{
+                            if(![result[@"SetupCompleted"] isEqual:@YES]){completion(nil,SetupError(VIMLocalized(@"modernsetup.the-automatic-account-handoff-could-not-be-confirmed", @"The automatic account handoff could not be confirmed.")));return;}
+                            self.state[@"AccountBootSessionUUID"]=boot;
+                            if(![self savePhase:@"awaiting-first-login" error:&saveError]){completion(nil,saveError);return;}
+                            completion(@{@"Handled":@YES,@"Restart":@YES,@"Message":VIMLocalized(@"session.restarting-to-sign-in", @"Restarting to sign in…")},nil);
                         }
-                        completion(nil,failure?:SetupError(detail.length?detail:VIMLocalized(@"modernsetup.the-automatic-account-setup-did-not-finish-its-records-were", @"The automatic account setup did not finish. Its records were retained.")));return;
-                    }
-                    NSError *saveError=nil;
-                    if(finishing){
-                        if(![result[@"Phase"] isEqual:@"complete"]){completion(nil,SetupError(VIMLocalized(@"modernsetup.the-first-desktop-login-could-not-be-verified", @"The first desktop login could not be verified.")));return;}
-                        NSMutableDictionary *profile=[self.profile mutableCopy];profile[@"Phase"]=@"complete";
-                        NSURL *file=[self.machine.URL URLByAppendingPathComponent:@"State/AutomaticSetup.plist"];
-                        if(![profile writeToURL:file error:&saveError]){completion(nil,saveError);return;}self.profile=profile;
-                        [VIMAutomaticSetup removePasswordForIdentifier:profile[@"CredentialIdentifier"] error:NULL];
-                        [self savePhase:@"complete" error:&saveError];completion(@{@"Handled":@NO},saveError);
-                    }else{
-                        if(![result[@"SetupCompleted"] isEqual:@YES]){completion(nil,SetupError(VIMLocalized(@"modernsetup.the-automatic-account-handoff-could-not-be-confirmed", @"The automatic account handoff could not be confirmed.")));return;}
-                        self.state[@"AccountBootSessionUUID"]=boot;
-                        if(![self savePhase:@"awaiting-first-login" error:&saveError]){completion(nil,saveError);return;}
-                        completion(@{@"Handled":@YES,@"Restart":@YES,@"Message":VIMLocalized(@"session.restarting-to-sign-in", @"Restarting to sign in…")},nil);
-                    }
-                }];
+                    }];
+                });
             });
-        });
+        };
+        if(finishing)beginAccount(nil);else [self prepareRegionalForBoot:boot completion:beginAccount];
     }];
 }
 @end

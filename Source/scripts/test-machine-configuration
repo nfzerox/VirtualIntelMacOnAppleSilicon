@@ -1,7 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 source_dir="$(cd "$(dirname "$0")/.." && pwd)"
-mkdir -p "$source_dir/Build/Probes"
+test_dir=$(mktemp -d /tmp/vim-machine-configuration.XXXXXX)
+trap 'rm -rf "$test_dir"' EXIT
 xcrun clang -fobjc-arc -fmodules -mmacosx-version-min=11.0 -arch arm64 -arch x86_64 \
   -I "$source_dir/VirtualIntelMac" "$source_dir/probes/machine-configuration-tests.m" \
   "$source_dir/VirtualIntelMac/VIMMachine.m" "$source_dir/VirtualIntelMac/VIMInstallerAssembly.m" \
@@ -9,8 +10,9 @@ xcrun clang -fobjc-arc -fmodules -mmacosx-version-min=11.0 -arch arm64 -arch x86
   "$source_dir/VirtualIntelMac/VIMAlerts.m" \
   "$source_dir/VirtualIntelMac/VIMNetworkDefaults.m" \
   "$source_dir/VirtualIntelMac/VIMAutomaticSetup.m" \
+  "$source_dir/tools/guest-regional-policy.m" \
   "$source_dir/VirtualIntelMac/VIMInstallerCatalog.m" \
   "$source_dir/VirtualIntelMac/VIMInstallerSource.m" \
   "$source_dir/VirtualIntelMac/VIMHFSInstallerDisk.c" \
-  -framework Cocoa -framework Security -o "$source_dir/Build/Probes/machine-configuration-tests"
-"$source_dir/Build/Probes/machine-configuration-tests"
+  -framework Cocoa -framework Security -o "$test_dir/machine-configuration-tests"
+"$test_dir/machine-configuration-tests"

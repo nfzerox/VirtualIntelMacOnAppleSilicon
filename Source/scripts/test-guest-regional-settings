@@ -1,0 +1,20 @@
+#!/bin/zsh
+set -euo pipefail
+source_root=${0:A:h:h}
+test_dir=$(mktemp -d /tmp/vim-guest-regional.XXXXXX)
+trap 'rm -rf "$test_dir"' EXIT
+for ownership in -fno-objc-arc -fobjc-arc; do
+xcrun clang "$ownership" -Wall -Wextra -Werror -Wno-unused-parameter -Wno-deprecated-declarations \
+    -I "$source_root/tools" "$source_root/probes/guest-regional-settings-tests.m" \
+    "$source_root/tools/guest-regional-settings.m" "$source_root/tools/guest-regional-policy.m" \
+    -framework Foundation -o "$test_dir/test"
+"$test_dir/test"
+done
+xcrun clang -fno-objc-arc -Wall -Wextra -Werror -Wno-deprecated-declarations -Wunguarded-availability \
+    -mmacosx-version-min=10.4 -c "$source_root/tools/guest-regional-settings.m" -o "$test_dir/settings-period.o"
+xcrun clang -fno-objc-arc -arch x86_64 -mmacosx-version-min=10.14 \
+    -Wall -Wextra -Werror -Wno-unused-parameter -Wno-deprecated-declarations \
+    -I "$source_root/tools" "$source_root/probes/guest-regional-settings-tests.m" \
+    "$source_root/tools/guest-regional-settings.m" "$source_root/tools/guest-regional-policy.m" \
+    -framework Foundation -o "$test_dir/test-x86"
+"$test_dir/test-x86"

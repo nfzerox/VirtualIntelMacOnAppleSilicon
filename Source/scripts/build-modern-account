@@ -14,6 +14,7 @@ cc=${VIM_MODERN_SETUP_CC:-$(xcrun --sdk macosx --find clang)}
 "$cc" -arch x86_64 -isysroot "$sdk" -mmacosx-version-min=10.14 -O2 \
     -fno-objc-arc -Wall -Wextra -Werror -Werror=unguarded-availability-new -Wno-deprecated-declarations \
     -DVIM_MODERN_ACCOUNT_SETUP=1 "$root/tools/opengl-create-account.m" \
+    "$root/tools/guest-regional-policy.m" "$root/tools/guest-regional-settings.m" \
     -framework Foundation -framework OpenDirectory -framework DiskArbitration \
     -framework SystemConfiguration -framework IOKit -framework Security \
     -framework CoreServices -framework ServiceManagement -o "$out"

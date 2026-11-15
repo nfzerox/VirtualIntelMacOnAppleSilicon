@@ -598,13 +598,13 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     };
     [session.guestAgent connectWithCompletion:^(NSError *error){
         if(error){finish(error);return;}
-        [session.guestAgent runExecutable:@"/usr/sbin/systemsetup" arguments:@[@"-setremotelogin",@"on"] timeout:30 completion:^(NSDictionary *result,NSError *failure){
+        [session.guestAgent runExecutable:@"/usr/bin/env" arguments:@[@"LC_ALL=C",@"LANG=C",@"/usr/sbin/systemsetup",@"-setremotelogin",@"on"] timeout:30 completion:^(NSDictionary *result,NSError *failure){
             if(failure||![result[@"exitcode"] isEqual:@0]) {
                 finish(failure?:VIMSessionError(VIMLocalized(@"session.macos-could-not-enable-remote-login-automatically-in-the-virtual", @"macOS could not enable Remote Login automatically. In the virtual Mac, open System Preferences → Sharing and select Remote Login.")));return;
             }
             // systemsetup can print an authorization failure yet exit zero.
             // Confirm the actual setting rather than trusting its exit code.
-            [session.guestAgent runExecutable:@"/usr/sbin/systemsetup" arguments:@[@"-getremotelogin"] timeout:15 completion:^(NSDictionary *check,NSError *checkError){
+            [session.guestAgent runExecutable:@"/usr/bin/env" arguments:@[@"LC_ALL=C",@"LANG=C",@"/usr/sbin/systemsetup",@"-getremotelogin"] timeout:15 completion:^(NSDictionary *check,NSError *checkError){
                 NSString *text=[[NSString alloc] initWithData:check[@"stdout"]?:NSData.data encoding:NSUTF8StringEncoding];
                 BOOL enabled=[check[@"exitcode"] isEqual:@0]&&text.length&&[text rangeOfString:@"Remote Login: On"].location!=NSNotFound;
                 finish(checkError?:(!enabled?VIMSessionError(VIMLocalized(@"session.remote-login-is-still-off-enable-it-in-the-virtual", @"Remote Login is still off. Enable it in the virtual Mac’s System Preferences → Sharing; macOS may require your approval there.")):nil));

@@ -20754,6 +20754,312 @@
           }
         }
       }
+    },
+    "regional.experimental": {
+      "comment": "Explicit opt-in to experimental guest regional setup in Advanced Setup; disabled by default.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Set language, region and time zone (Experimental)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设置语言、地区和时区（实验性）"
+          }
+        }
+      }
+    },
+    "regional.experimental-explanation": {
+      "comment": "Explains why experimental guest regional setup is disabled by default.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This experimental feature may prevent initial setup from completing on some macOS versions. Leave it disabled to use the guest’s defaults."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此实验性功能可能导致部分 macOS 版本无法完成首次设置。保持禁用可使用虚拟机的默认设置。"
+          }
+        }
+      }
+    },
+    "regional.follow-host": {
+      "comment": "First-install regional configuration. Guest OS support is independent of host app translations.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use this Mac’s language, region and time zone"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用此 Mac 的语言、地区和时区"
+          }
+        }
+      }
+    },
+    "regional.allow-fallback": {
+      "comment": "First-install regional configuration. Guest OS support is independent of host app translations.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use supported alternatives when needed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "必要时使用受支持的替代设置"
+          }
+        }
+      }
+    },
+    "regional.language": {
+      "comment": "First-install guest regional configuration.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preferred languages:"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "偏好语言："
+          }
+        }
+      }
+    },
+    "regional.region": {
+      "comment": "First-install regional configuration. Guest OS support is independent of host app translations.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Region:"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "地区："
+          }
+        }
+      }
+    },
+    "regional.time-zone": {
+      "comment": "First-install regional configuration. Guest OS support is independent of host app translations.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Time zone:"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "时区："
+          }
+        }
+      }
+    },
+    "regional.explanation": {
+      "comment": "First-install guest regional configuration.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applied once before the first desktop login. Add languages in preference order, using names or language IDs separated by commas. Support depends on the guest’s macOS version. Later changes inside the virtual Mac are preserved."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在首次登录桌面前应用一次。请按偏好顺序添加语言，可输入语言名称或标识符，并以逗号分隔。支持情况取决于客户机的 macOS 版本。之后在虚拟 Intel Mac 中所做的更改会保留。"
+          }
+        }
+      }
+    },
+    "regional.invalid-request": {
+      "comment": "First-install regional configuration. Guest OS support is independent of host app translations.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a valid language, region and time zone."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请选择有效的语言、地区和时区。"
+          }
+        }
+      }
+    },
+    "regional.initial-settings": {
+      "comment": "First-install regional configuration. Guest OS support is independent of host app translations.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Initial regional settings"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "初始语言与地区设置"
+          }
+        }
+      }
+    },
+    "regional.guest-default": {
+      "comment": "First-install regional configuration. Guest OS support is independent of host app translations.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Guest default"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "客户机默认值"
+          }
+        }
+      }
+    },
+    "regional.result-summary": {
+      "comment": "First-install regional configuration. Guest OS support is independent of host app translations.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Language: %@\nRegion: %@\nTime zone: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "语言：%@\n地区：%@\n时区：%@"
+          }
+        }
+      }
+    },
+    "regional.fallback-summary": {
+      "comment": "First-install regional configuration. Guest OS support is independent of host app translations.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some requested settings are unavailable in this macOS version. Supported alternatives or guest defaults were used."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此 macOS 版本不支持部分请求的设置，已使用受支持的替代设置或客户机默认值。"
+          }
+        }
+      }
+    },
+    "regional.invalid-result": {
+      "comment": "Verification of the first-install regional settings receipt.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The guest’s regional setup result could not be confirmed."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法确认客户机的初始语言与地区设置结果。"
+          }
+        }
+      }
+    },
+    "regional.tools-required": {
+      "comment": "First-install guest regional configuration.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This guest’s setup tools do not support regional settings. Rebuild or update the guest tools, or allow supported alternatives."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此客户机的设置工具不支持语言与地区设置。请重新构建或更新客户机工具，或允许使用支持的替代设置。"
+          }
+        }
+      }
+    },
+    "regional.unsupported": {
+      "comment": "First-install guest regional configuration.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This macOS version does not support all requested regional settings. Choose other settings or allow supported alternatives."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此 macOS 版本无法支持所有请求的语言与地区设置。请选择其他设置，或允许使用支持的替代设置。"
+          }
+        }
+      }
+    },
+    "regional.capabilities-unconfirmed": {
+      "comment": "First-install guest regional configuration.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The installed guest’s regional capabilities could not be confirmed. Try setup again after the installed system has started."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法确认已安装客户机支持的语言与地区设置。请在已安装系统启动后重试设置。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
