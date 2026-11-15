@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMHostSupport.h"
 #import "VIMAlerts.h"
 #include <signal.h>
@@ -32,7 +33,7 @@ NSString *VIMHostUpdateNotice(NSOperatingSystemVersion version) {
     NSString *number=[NSString stringWithFormat:@"%ld",version.majorVersion];
     if(version.minorVersion||version.patchVersion)number=[number stringByAppendingFormat:@".%ld",version.minorVersion];
     if(version.patchVersion)number=[number stringByAppendingFormat:@".%ld",version.patchVersion];
-    return [NSString stringWithFormat:@"Virtual Intel Mac requires an update for macOS %@.",number];
+    return [NSString stringWithFormat:VIMLocalized(@"hostsupport.virtual-intel-mac-requires-an-update-for-macos", @"Virtual Intel Mac requires an update for macOS %@."),number];
 }
 static void CheckRosetta(BOOL required,void (^completion)(BOOL,NSError *)) {
 #if !defined(__arm64__)
@@ -46,7 +47,7 @@ static void CheckRosetta(BOOL required,void (^completion)(BOOL,NSError *)) {
         NSString *root=required?VIMDevelopmentSourceRoot():nil;
         helper=[root stringByAppendingPathComponent:@"artifacts/host-arm64/apple-gfx-helper-app"];
         if(!helper.length||![NSFileManager.defaultManager isExecutableFileAtPath:helper]) {
-            NSError *error=required?[NSError errorWithDomain:@"VirtualIntelMac.Host" code:2 userInfo:@{NSLocalizedDescriptionKey:@"The Intel graphics helper is missing. Reinstall Virtual Intel Mac before starting a virtual Mac."}]:nil;
+            NSError *error=required?[NSError errorWithDomain:@"VirtualIntelMac.Host" code:2 userInfo:@{NSLocalizedDescriptionKey:VIMLocalized(@"hostsupport.the-intel-graphics-helper-is-missing-reinstall-virtual-intel-mac", @"The Intel graphics helper is missing. Reinstall Virtual Intel Mac before starting a virtual Mac.")}]:nil;
             completion(NO,error);return;
         }
     }
@@ -64,14 +65,14 @@ static void CheckRosetta(BOOL required,void (^completion)(BOOL,NSError *)) {
         if(!code)code=posix_spawn(&child,helper.fileSystemRepresentation,&files,&attr,arguments,environment);
         posix_spawn_file_actions_destroy(&files);posix_spawnattr_destroy(&attr);
         BOOL missing=code==EBADARCH;NSError *error=nil;
-        if(code&&!missing)error=[NSError errorWithDomain:NSPOSIXErrorDomain code:code userInfo:@{NSLocalizedDescriptionKey:@"The Intel graphics helper could not be checked. Reinstall Virtual Intel Mac and try again."}];
+        if(code&&!missing)error=[NSError errorWithDomain:NSPOSIXErrorDomain code:code userInfo:@{NSLocalizedDescriptionKey:VIMLocalized(@"hostsupport.the-intel-graphics-helper-could-not-be-checked-reinstall-virtual", @"The Intel graphics helper could not be checked. Reinstall Virtual Intel Mac and try again.")}];
         if(!code) {
             int status=0;pid_t result=0;double deadline=NSProcessInfo.processInfo.systemUptime+10;
             do {result=waitpid(child,&status,WNOHANG);if(result==0)usleep(20000);}
             while((result==0||(result<0&&errno==EINTR))&&NSProcessInfo.processInfo.systemUptime<deadline);
             if(result!=child||!WIFEXITED(status)||WEXITSTATUS(status)!=64) {
                 if(result==0){kill(child,SIGKILL);while(waitpid(child,&status,0)<0&&errno==EINTR){}}
-                error=[NSError errorWithDomain:@"VirtualIntelMac.Host" code:1 userInfo:@{NSLocalizedDescriptionKey:@"The Intel graphics helper could not finish its startup check. Reinstall Virtual Intel Mac or check for a macOS update."}];
+                error=[NSError errorWithDomain:@"VirtualIntelMac.Host" code:1 userInfo:@{NSLocalizedDescriptionKey:VIMLocalized(@"hostsupport.the-intel-graphics-helper-could-not-finish-its-startup-check", @"The Intel graphics helper could not finish its startup check. Reinstall Virtual Intel Mac or check for a macOS update.")}];
             }
         }
         dispatch_async(dispatch_get_main_queue(),^{completion(missing,error);});
@@ -84,9 +85,9 @@ void VIMPresentRosettaRequiredAlert(NSWindow *window) {
     static BOOL presenting=NO;
     if(presenting)return;
     presenting=YES;
-    NSAlert *alert=[NSAlert new];alert.messageText=@"Install Rosetta to start your virtual Macs";
-    alert.informativeText=@"Virtual Intel Mac needs Rosetta for Intel graphics support on this Apple silicon Mac. Install Rosetta using Apple’s installer, then try starting your virtual Mac again.";
-    [alert addButtonWithTitle:@"Install Rosetta…"];[alert addButtonWithTitle:@"Not Now"];
+    NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"hostsupport.install-rosetta-to-start-your-virtual-macs", @"Install Rosetta to start your virtual Macs");
+    alert.informativeText=VIMLocalized(@"hostsupport.virtual-intel-mac-needs-rosetta-for-intel-graphics-support-on", @"Virtual Intel Mac needs Rosetta for Intel graphics support on this Apple silicon Mac. Install Rosetta using Apple’s installer, then try starting your virtual Mac again.");
+    [alert addButtonWithTitle:VIMLocalized(@"hostsupport.install-rosetta", @"Install Rosetta…")];[alert addButtonWithTitle:VIMLocalized(@"app.not-now", @"Not Now")];
     VIMPresentAlert(alert,window,^(NSModalResponse response){
         presenting=NO;
         if(response==NSAlertFirstButtonReturn)[NSWorkspace.sharedWorkspace openApplicationAtURL:

@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMNewMachineWindow.h"
 #import "VIMMachine.h"
 #import "VIMLibraryLocation.h"
@@ -323,7 +324,7 @@ static VIMNewMachineWindow *creationController;
     NSWindow *window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,872,584)
         styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskFullSizeContentView backing:NSBackingStoreBuffered defer:NO];
     if((self=[super initWithWindow:window])) {
-        window.title=@"Create Virtual Intel Mac";window.titleVisibility=NSWindowTitleHidden;window.titlebarAppearsTransparent=YES;
+        window.title=VIMLocalized(@"creation.create-virtual-intel-mac", @"Create Virtual Intel Mac");window.titleVisibility=NSWindowTitleHidden;window.titlebarAppearsTransparent=YES;
         window.releasedWhenClosed=NO;window.delegate=self;
         window.autorecalculatesKeyViewLoop=YES;
         window.backgroundColor=NSColor.windowBackgroundColor;
@@ -342,23 +343,23 @@ static VIMNewMachineWindow *creationController;
         for(NSTextField *field in @[self.cpuField,self.memoryField,self.diskField]) {
             [field.widthAnchor constraintEqualToConstant:56].active=YES;field.alignment=NSTextAlignmentRight;
         }
-        self.mediaLabel=AssistantText(@"Downloaded from Apple. Your Mac starts automatically when its installer is ready.",12,NSFontWeightRegular);self.mediaLabel.textColor=NSColor.secondaryLabelColor;
-        self.chooseButton=[NSButton buttonWithTitle:@"Choose Installer…" target:self action:@selector(choose:)];
-        self.createButton=[NSButton buttonWithTitle:@"Create" target:self action:@selector(beginSetup:)];self.createButton.keyEquivalent=@"\r";
+        self.mediaLabel=AssistantText(VIMLocalized(@"creation.downloaded-from-apple-your-mac-starts-automatically-when-its-installer", @"Downloaded from Apple. Your Mac starts automatically when its installer is ready."),12,NSFontWeightRegular);self.mediaLabel.textColor=NSColor.secondaryLabelColor;
+        self.chooseButton=[NSButton buttonWithTitle:VIMLocalized(@"creation.choose-installer", @"Choose Installer…") target:self action:@selector(choose:)];
+        self.createButton=[NSButton buttonWithTitle:VIMLocalized(@"ui.create", @"Create") target:self action:@selector(beginSetup:)];self.createButton.keyEquivalent=@"\r";
         self.status=AssistantText(@"",12,NSFontWeightRegular);self.status.textColor=NSColor.secondaryLabelColor;
         self.configurationStatus=self.status;
-        self.systemTitle=AssistantText(@"Configure Your Mac",27,NSFontWeightSemibold);
+        self.systemTitle=AssistantText(VIMLocalized(@"creation.configure-your-mac", @"Configure Your Mac"),27,NSFontWeightSemibold);
         NSUInteger hostGiB=NSProcessInfo.processInfo.physicalMemory/(1024ULL*1024*1024);
         self.memorySlider=[NSSlider sliderWithValue:4 minValue:1 maxValue:MAX(1,MIN(64,hostGiB-1)) target:self action:@selector(memoryChanged:)];
         self.memorySlider.numberOfTickMarks=(NSInteger)self.memorySlider.maxValue;
         self.memorySlider.allowsTickMarkValuesOnly=YES;
-        [self.memorySlider.widthAnchor constraintEqualToConstant:140].active=YES;self.memorySlider.accessibilityLabel=@"Memory in gigabytes";
+        [self.memorySlider.widthAnchor constraintEqualToConstant:140].active=YES;self.memorySlider.accessibilityLabel=VIMLocalized(@"creation.memory-in-gigabytes", @"Memory in gigabytes");
         self.memoryField.target=self;self.memoryField.action=@selector(memoryFieldChanged:);
         self.cpuSlider=[NSSlider sliderWithValue:self.cpuField.doubleValue minValue:1 maxValue:MIN(64,NSProcessInfo.processInfo.processorCount) target:self action:@selector(cpuChanged:)];
         [self.cpuSlider.widthAnchor constraintEqualToConstant:140].active=YES;
-        self.cpuSlider.accessibilityLabel=@"Number of processors";self.cpuField.target=self;self.cpuField.action=@selector(cpuFieldChanged:);
+        self.cpuSlider.accessibilityLabel=VIMLocalized(@"creation.number-of-processors", @"Number of processors");self.cpuField.target=self;self.cpuField.action=@selector(cpuFieldChanged:);
         NSStackView *memory=[NSStackView stackViewWithViews:@[self.memorySlider,self.memoryField,[NSTextField labelWithString:@"GB"]]];memory.spacing=8;
-        NSStackView *cpu=[NSStackView stackViewWithViews:@[self.cpuSlider,self.cpuField,[NSTextField labelWithString:@"cores"]]];cpu.spacing=8;
+        NSStackView *cpu=[NSStackView stackViewWithViews:@[self.cpuSlider,self.cpuField,[NSTextField labelWithString:VIMLocalized(@"ui.cores", @"cores")]]];cpu.spacing=8;
         NSStackView *disk=[NSStackView stackViewWithViews:@[self.diskField,[NSTextField labelWithString:@"GB"]]];disk.spacing=8;
         self.automaticSection=[self automaticSetupSection];
         NSGridView *form=[NSGridView gridViewWithViews:@[
@@ -371,8 +372,8 @@ static VIMNewMachineWindow *creationController;
         form.rowSpacing=16;form.columnSpacing=14;[form columnAtIndex:0].xPlacement=NSGridCellPlacementLeading;
         self.hardwareForm=form;
         self.usernameRow=[form rowAtIndex:1];self.passwordRow=[form rowAtIndex:2];
-        NSTextField *intro=AssistantText(@"Start with the recommended settings, or make room for the apps you want to run.",14,NSFontWeightRegular);
-        NSTextField *storage=AssistantText(@"Storage size can’t be changed later. If you need additional storage in the future, set a larger size now.",12,NSFontWeightRegular);storage.textColor=NSColor.secondaryLabelColor;
+        NSTextField *intro=AssistantText(VIMLocalized(@"creation.start-with-the-recommended-settings-or-make-room-for-the", @"Start with the recommended settings, or make room for the apps you want to run."),14,NSFontWeightRegular);
+        NSTextField *storage=AssistantText(VIMLocalized(@"creation.storage-size-can-t-be-changed-later-if-you-need", @"Storage size can’t be changed later. If you need additional storage in the future, set a larger size now."),12,NSFontWeightRegular);storage.textColor=NSColor.secondaryLabelColor;
         NSStackView *heading=[self headingWithTitle:self.systemTitle guest:@"mojave"];
         self.configurationIcon=(NSImageView *)heading.arrangedSubviews.firstObject;
         NSStackView *stack=[NSStackView stackViewWithViews:@[heading,intro,form,storage]];
@@ -386,8 +387,8 @@ static VIMNewMachineWindow *creationController;
             self.configurationCenterY,
             [self.nameField.widthAnchor constraintEqualToConstant:240]]];
         self.configurationArtwork=[self artworkForGuest:@"mojave" page:window.contentView];
-        NSButton *back=[NSButton buttonWithTitle:@"Go Back" target:self action:@selector(showChoices:)];
-        self.advancedButton=[NSButton buttonWithTitle:@"Advanced…" target:self action:@selector(showAutomaticOptions:)];
+        NSButton *back=[NSButton buttonWithTitle:VIMLocalized(@"creation.go-back", @"Go Back") target:self action:@selector(showChoices:)];
+        self.advancedButton=[NSButton buttonWithTitle:VIMLocalized(@"settings.advanced", @"Advanced…") target:self action:@selector(showAutomaticOptions:)];
         [self footerOnPage:window.contentView leading:self.advancedButton trailing:@[back,self.createButton]];
         self.configuration=window.contentView;
         self.job=[[NSUserDefaults.standardUserDefaults dictionaryForKey:@"VIMCreationJob"] mutableCopy];
@@ -410,20 +411,20 @@ static VIMNewMachineWindow *creationController;
                 [self automaticSetupChanged:nil];
             }
             [self systemChanged:nil];self.memorySlider.doubleValue=self.memoryField.doubleValue;self.cpuSlider.doubleValue=self.cpuField.doubleValue;
-            self.createButton.title=@"Resume Setup";
+            self.createButton.title=VIMLocalized(@"creation.resume-setup", @"Resume Setup");
             self.overallProgress=[self.job[@"Progress"] doubleValue];
         } else [self showChoices:nil];
         [window center];
     }return self;
 }
 - (BOOL)windowShouldClose:(NSWindow *)sender {
-    if(self.creating){[self presentCreationError:@"Your virtual Mac is being created. Wait for this step to finish before closing the window."];return NO;}
+    if(self.creating){[self presentCreationError:VIMLocalized(@"creation.your-virtual-mac-is-being-created-wait-for-this-step", @"Your virtual Mac is being created. Wait for this step to finish before closing the window.")];return NO;}
     if(!self.showingProgress||!self.job)return YES;
     [self confirmCancellationClosing:YES];return NO;
 }
 - (void)windowDidEndSheet:(NSNotification *)notification {dispatch_async(dispatch_get_main_queue(),^{[self presentPendingFailure];});}
 - (void)presentCreationError:(NSString *)message {
-    [self presentCreationTitle:@"Your Mac couldn’t be set up" detail:message?:@"Setup could not finish. Please try again."];
+    [self presentCreationTitle:VIMLocalized(@"creation.your-mac-couldn-t-be-set-up", @"Your Mac couldn’t be set up") detail:message?:VIMLocalized(@"creation.setup-could-not-finish-please-try-again", @"Setup could not finish. Please try again.")];
 }
 - (void)presentCreationTitle:(NSString *)title detail:(NSString *)detail {
     self.pendingFailureTitle=title;self.pendingFailure=detail;[self presentPendingFailure];
@@ -431,7 +432,7 @@ static VIMNewMachineWindow *creationController;
 - (NSAlert *)creationAlertWithTitle:(NSString *)title detail:(NSString *)detail {
     NSAlert *alert=[NSAlert new];alert.messageText=title;alert.informativeText=detail;
     VIMSetInstallerAlertIcon(alert,CreationGuests()[self.system.indexOfSelectedItem]);
-    [alert addButtonWithTitle:@"OK"];return alert;
+    [alert addButtonWithTitle:VIMLocalized(@"common.ok", @"OK")];return alert;
 }
 - (void)presentPendingFailure {
     if(self.window.attachedSheet)return;
@@ -440,11 +441,11 @@ static VIMNewMachineWindow *creationController;
         NSString *guest=CreationGuests()[self.system.indexOfSelectedItem];
         NSString *name=CreationNames()[self.system.indexOfSelectedItem];
         NSAlert *alert=[NSAlert new];VIMSetInstallerAlertIcon(alert,guest);
-        alert.messageText=[NSString stringWithFormat:@"Unable to Download Mac OS X %@ from the Internet Archive",name];
+        alert.messageText=[NSString stringWithFormat:VIMLocalized(@"creation.unable-to-download-mac-os-x-from-the-internet-archive", @"Unable to Download Mac OS X %@ from the Internet Archive"),name];
         NSString *filename=source.lastPathComponent;
-        NSString *copy=[NSString stringWithFormat:@"Installing Mac OS X %@ requires downloading the installer from the Internet Archive, which is not available in your region. Download %@ using a connection where the Internet Archive is available, then choose Use Existing Installer.\n\nYou can also install Mac OS X Lion 10.7 or later instead, which are directly downloaded from Apple and does not require access to the Internet Archive.",name,filename];
+        NSString *copy=[NSString stringWithFormat:VIMLocalized(@"creation.installing-mac-os-x-requires-downloading-the-installer-from-the", @"Installing Mac OS X %@ requires downloading the installer from the Internet Archive, which is not available in your region. Download %@ using a connection where the Internet Archive is available, then choose Use Existing Installer.\n\nYou can also install Mac OS X Lion 10.7 or later instead, which are directly downloaded from Apple and does not require access to the Internet Archive."),name,filename];
         alert.informativeText=copy;
-        [alert addButtonWithTitle:@"Use Existing Installer"];[alert addButtonWithTitle:@"Choose Different Version"];
+        [alert addButtonWithTitle:VIMLocalized(@"creation.use-existing-installer", @"Use Existing Installer")];[alert addButtonWithTitle:VIMLocalized(@"creation.choose-different-version", @"Choose Different Version")];
         [alert layout];
         NSTextField *paragraph=AlertParagraph(alert.window.contentView,copy);
         NSMutableParagraphStyle *style=[NSMutableParagraphStyle new];style.alignment=NSTextAlignmentLeft;
@@ -462,7 +463,7 @@ static VIMNewMachineWindow *creationController;
         NSAlert *alert=[NSAlert new];VIMSetInstallerAlertIcon(alert,CreationGuests()[self.system.indexOfSelectedItem]);
         alert.messageText=self.pendingFailureTitle;alert.informativeText=self.pendingFailure;
         self.pendingFailure=nil;self.pendingFailureTitle=nil;self.pendingInstallerRecovery=NO;
-        [alert addButtonWithTitle:@"Use Existing Installer"];[alert addButtonWithTitle:@"Choose Different Version"];
+        [alert addButtonWithTitle:VIMLocalized(@"creation.use-existing-installer", @"Use Existing Installer")];[alert addButtonWithTitle:VIMLocalized(@"creation.choose-different-version", @"Choose Different Version")];
         VIMPresentAlert(alert,self.window,^(NSModalResponse response){
             if(response==NSAlertFirstButtonReturn)[self choose:nil];else [self showChoices:nil];
         });return;
@@ -480,7 +481,7 @@ static VIMNewMachineWindow *creationController;
 }
 - (void)presentInstallerChoiceFailure:(NSString *)detail {
     self.pendingInstallerRecovery=self.archiveInstallerRecovery;
-    [self presentCreationTitle:@"Choose a supported OS installer" detail:detail];
+    [self presentCreationTitle:VIMLocalized(@"creation.choose-a-supported-os-installer", @"Choose a supported OS installer") detail:detail];
 }
 - (NSStackView *)headingWithTitle:(NSTextField *)title guest:(NSString *)guest {
     // Artwork may be acquiring its original installer asset during development.
@@ -492,27 +493,33 @@ static VIMNewMachineWindow *creationController;
     [title.widthAnchor constraintEqualToAnchor:heading.widthAnchor constant:-60].active=YES;return heading;
 }
 - (NSView *)configurationLabel:(NSString *)title symbol:(NSString *)symbol {
+    NSDictionary *labels=@{@"Name":VIMLocalizedLabel(@"Name"),
+        @"Username":VIMLocalized(@"creation.label.username", @"Username"),
+        @"Password":VIMLocalized(@"creation.label.password", @"Password"),
+        @"Processors":VIMLocalized(@"creation.label.processors", @"Processors"),
+        @"Memory":VIMLocalized(@"creation.label.memory", @"Memory"),
+        @"Storage":VIMLocalized(@"creation.label.storage", @"Storage")};
     NSImageView *icon=[NSImageView imageViewWithImage:[NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil]];icon.contentTintColor=NSColor.secondaryLabelColor;
     [icon.widthAnchor constraintEqualToConstant:18].active=YES;[icon.heightAnchor constraintEqualToConstant:18].active=YES;
-    NSStackView *label=[NSStackView stackViewWithViews:@[icon,[NSTextField labelWithString:title]]];label.spacing=8;return label;
+    NSStackView *label=[NSStackView stackViewWithViews:@[icon,[NSTextField labelWithString:labels[title]?:title]]];label.spacing=8;return label;
 }
 - (NSStackView *)automaticSetupSection {
     self.automaticSwitch=[NSSwitch new];self.automaticSwitch.state=NSControlStateValueOn;
     self.automaticSwitch.controlSize=NSControlSizeRegular;
     self.automaticSwitch.target=self;self.automaticSwitch.action=@selector(automaticSetupChanged:);
-    self.automaticSwitch.accessibilityLabel=@"Automatic Setup";
-    self.guestUsername=[NSTextField textFieldWithString:VIMAutomaticSetup.defaultUsername];self.guestUsername.accessibilityLabel=@"Guest account name";
+    self.automaticSwitch.accessibilityLabel=VIMLocalized(@"creation.automatic-setup", @"Automatic Setup");
+    self.guestUsername=[NSTextField textFieldWithString:VIMAutomaticSetup.defaultUsername];self.guestUsername.accessibilityLabel=VIMLocalized(@"creation.guest-account-name", @"Guest account name");
     self.guestPassword=[NSSecureTextField new];self.guestPassword.cell=[[VIMSecurePasswordCell alloc] initTextCell:@""];self.guestPassword.bordered=YES;self.guestPassword.bezeled=YES;self.guestPassword.editable=YES;
-    self.guestPassword.accessibilityLabel=@"Guest password";
+    self.guestPassword.accessibilityLabel=VIMLocalized(@"creation.guest-password", @"Guest password");
     self.visibleGuestPassword=[NSTextField new];self.visibleGuestPassword.cell=[[VIMPasswordCell alloc] initTextCell:@""];self.visibleGuestPassword.bordered=YES;self.visibleGuestPassword.bezeled=YES;self.visibleGuestPassword.editable=YES;
     // This creates a guest account, not a login to a host app or website.
     // Keep native secure entry without offering the host's saved passwords.
     for(NSTextField *field in @[self.guestPassword,self.visibleGuestPassword])
         if([field respondsToSelector:@selector(_setPasswordAutofillEnabled:)])[field _setPasswordAutofillEnabled:NO];
-    self.visibleGuestPassword.hidden=YES;self.visibleGuestPassword.accessibilityLabel=@"Guest password, visible";
-    self.passwordVisibility=[NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"eye.slash" accessibilityDescription:@"Show password"] target:self action:@selector(toggleGuestPassword:)];
+    self.visibleGuestPassword.hidden=YES;self.visibleGuestPassword.accessibilityLabel=VIMLocalized(@"creation.guest-password-visible", @"Guest password, visible");
+    self.passwordVisibility=[NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"eye.slash" accessibilityDescription:VIMLocalized(@"creation.show-password", @"Show password")] target:self action:@selector(toggleGuestPassword:)];
     self.passwordVisibility.bordered=NO;self.passwordVisibility.controlSize=NSControlSizeSmall;self.passwordVisibility.contentTintColor=NSColor.secondaryLabelColor;
-    self.passwordVisibility.toolTip=@"Show password";self.passwordVisibility.accessibilityLabel=@"Show password";
+    self.passwordVisibility.toolTip=VIMLocalized(@"creation.show-password", @"Show password");self.passwordVisibility.accessibilityLabel=VIMLocalized(@"creation.show-password", @"Show password");
     NSView *password=[NSView new];
     self.passwordFieldContainer=password;
     [password.widthAnchor constraintEqualToConstant:240].active=YES;[password.heightAnchor constraintEqualToConstant:22].active=YES;
@@ -526,22 +533,22 @@ static VIMNewMachineWindow *creationController;
     [NSLayoutConstraint activateConstraints:@[[self.passwordVisibility.trailingAnchor constraintEqualToAnchor:password.trailingAnchor constant:-4],[self.passwordVisibility.centerYAnchor constraintEqualToAnchor:password.centerYAnchor],[self.passwordVisibility.widthAnchor constraintEqualToConstant:20],[self.passwordVisibility.heightAnchor constraintEqualToConstant:18]]];
     [self.guestUsername.widthAnchor constraintEqualToConstant:240].active=YES;
     [self.guestUsername.heightAnchor constraintEqualToConstant:22].active=YES;
-    self.automaticSharing=[NSSwitch new];self.automaticSharing.state=NSControlStateValueOn;self.automaticSharing.accessibilityLabel=@"Enable File Sharing";
-    self.automaticRemoteLogin=[NSSwitch new];self.automaticRemoteLogin.state=NSControlStateValueOn;self.automaticRemoteLogin.accessibilityLabel=@"Enable Remote Login";
+    self.automaticSharing=[NSSwitch new];self.automaticSharing.state=NSControlStateValueOn;self.automaticSharing.accessibilityLabel=VIMLocalized(@"creation.enable-file-sharing", @"Enable File Sharing");
+    self.automaticRemoteLogin=[NSSwitch new];self.automaticRemoteLogin.state=NSControlStateValueOn;self.automaticRemoteLogin.accessibilityLabel=VIMLocalized(@"creation.enable-remote-login", @"Enable Remote Login");
     self.automaticSharing.controlSize=NSControlSizeSmall;self.automaticRemoteLogin.controlSize=NSControlSizeSmall;
     self.automaticLogin=[NSSwitch new];self.automaticLogin.state=NSControlStateValueOn;
-    self.automaticLogin.controlSize=NSControlSizeSmall;self.automaticLogin.accessibilityLabel=@"Automatic Login";
-    self.automaticLogin.toolTip=@"Sign in to this virtual Mac automatically after it starts. Its password is stored by the guest’s standard automatic-login service.";
+    self.automaticLogin.controlSize=NSControlSizeSmall;self.automaticLogin.accessibilityLabel=VIMLocalized(@"creation.automatic-login", @"Automatic Login");
+    self.automaticLogin.toolTip=VIMLocalized(@"creation.sign-in-to-this-virtual-mac-automatically-after-it-starts", @"Sign in to this virtual Mac automatically after it starts. Its password is stored by the guest’s standard automatic-login service.");
     NSView *headingSpacer=[NSView new];[headingSpacer setContentHuggingPriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
-    NSStackView *headingTitle=(NSStackView *)[self configurationLabel:@"Automatic Setup" symbol:@"wand.and.stars"];
+    NSStackView *headingTitle=(NSStackView *)[self configurationLabel:VIMLocalized(@"creation.automatic-setup", @"Automatic Setup") symbol:@"wand.and.stars"];
     ((NSTextField *)headingTitle.arrangedSubviews.lastObject).font=[NSFont systemFontOfSize:17 weight:NSFontWeightSemibold];
     NSStackView *heading=[NSStackView stackViewWithViews:@[headingTitle,headingSpacer,self.automaticSwitch]];
     heading.spacing=12;heading.alignment=NSLayoutAttributeCenterY;
-    NSTextField *explanation=AssistantText(@"Install the operating system and create your account automatically. Turn this off to complete installation and account setup yourself.",13,NSFontWeightRegular);
+    NSTextField *explanation=AssistantText(VIMLocalized(@"creation.install-the-operating-system-and-create-your-account-automatically-turn", @"Install the operating system and create your account automatically. Turn this off to complete installation and account setup yourself."),13,NSFontWeightRegular);
     explanation.textColor=NSColor.secondaryLabelColor;
     NSBox *divider=[NSBox new];divider.boxType=NSBoxSeparator;
     NSMutableArray *rows=[NSMutableArray array];
-    NSArray *titles=@[@"File Sharing",@"Remote Login",@"Automatic Login"];
+    NSArray *titles=@[VIMLocalized(@"settings.file-sharing", @"File Sharing"),VIMLocalized(@"settings.remote-login", @"Remote Login"),VIMLocalized(@"creation.automatic-login", @"Automatic Login")];
     NSArray *symbols=@[@"folder",@"terminal",@"person.crop.circle"];
     NSArray *switches=@[self.automaticSharing,self.automaticRemoteLogin,self.automaticLogin];
     for(NSUInteger index=0;index<titles.count;index++){
@@ -576,11 +583,11 @@ static VIMNewMachineWindow *creationController;
     NSMutableArray *saved=[NSMutableArray array];for(NSSwitch *control in switches)[saved addObject:@(control.state)];self.automaticDraft=saved;
     if(!self.automaticSheet){
         self.automaticSheet=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,420,320) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
-        self.automaticSheet.title=@"Advanced Setup";self.automaticSheet.releasedWhenClosed=NO;
+        self.automaticSheet.title=VIMLocalized(@"creation.advanced-setup", @"Advanced Setup");self.automaticSheet.releasedWhenClosed=NO;
         NSView *page=self.automaticSheet.contentView;
         AddAssistantView(page,self.automaticSection);
-        NSButton *cancel=[NSButton buttonWithTitle:@"Cancel" target:self action:@selector(finishAutomaticOptions:)];cancel.tag=0;cancel.keyEquivalent=@"\e";
-        NSButton *done=[NSButton buttonWithTitle:@"OK" target:self action:@selector(finishAutomaticOptions:)];done.tag=1;done.keyEquivalent=@"\r";
+        NSButton *cancel=[NSButton buttonWithTitle:VIMLocalized(@"common.cancel", @"Cancel") target:self action:@selector(finishAutomaticOptions:)];cancel.tag=0;cancel.keyEquivalent=@"\e";
+        NSButton *done=[NSButton buttonWithTitle:VIMLocalized(@"common.ok", @"OK") target:self action:@selector(finishAutomaticOptions:)];done.tag=1;done.keyEquivalent=@"\r";
         NSStackView *buttons=[NSStackView stackViewWithViews:@[cancel,done]];buttons.spacing=12;AddAssistantView(page,buttons);
         for(NSButton *button in @[cancel,done])[button.widthAnchor constraintGreaterThanOrEqualToConstant:80].active=YES;
         [NSLayoutConstraint activateConstraints:@[
@@ -605,7 +612,7 @@ static VIMNewMachineWindow *creationController;
     if(show)self.visibleGuestPassword.stringValue=self.guestPassword.stringValue;
     else self.guestPassword.stringValue=self.visibleGuestPassword.stringValue;
     self.visibleGuestPassword.hidden=!show;self.guestPassword.hidden=show;
-    NSString *description=show?@"Hide password":@"Show password";
+    NSString *description=show?VIMLocalized(@"creation.hide-password", @"Hide password"):VIMLocalized(@"creation.show-password", @"Show password");
     self.passwordVisibility.image=[NSImage imageWithSystemSymbolName:show?@"eye":@"eye.slash" accessibilityDescription:description];
     self.passwordVisibility.accessibilityLabel=description;self.passwordVisibility.toolTip=description;
     [self.window recalculateKeyViewLoop];
@@ -640,10 +647,10 @@ static VIMNewMachineWindow *creationController;
     [self sizeAssistantForConfiguration:NO];
     NSView *page=[VIMAssistantPage new];self.choices=page;self.window.contentView=page;
     self.status=self.configurationStatus;
-    NSTextField *title=AssistantText(@"Create Virtual Intel Mac",27,NSFontWeightSemibold);
+    NSTextField *title=AssistantText(VIMLocalized(@"creation.create-virtual-intel-mac", @"Create Virtual Intel Mac"),27,NSFontWeightSemibold);
     NSImageView *appIcon=[NSImageView imageViewWithImage:NSApp.applicationIconImage];[appIcon.widthAnchor constraintEqualToConstant:48].active=YES;[appIcon.heightAnchor constraintEqualToConstant:48].active=YES;
     NSStackView *heading=[NSStackView stackViewWithViews:@[appIcon,title]];heading.spacing=12;AddAssistantView(page,heading);
-    NSTextField *intro=AssistantText(@"Choose a version to run the Intel or PowerPC apps you love and revisit classic Mac designs. Every version supports graphics acceleration.",13,NSFontWeightRegular);intro.alignment=NSTextAlignmentCenter;AddAssistantView(page,intro);
+    NSTextField *intro=AssistantText(VIMLocalized(@"creation.choose-a-version-to-run-the-intel-or-powerpc-apps", @"Choose a version to run the Intel or PowerPC apps you love and revisit classic Mac designs. Every version supports graphics acceleration."),13,NSFontWeightRegular);intro.alignment=NSTextAlignmentCenter;AddAssistantView(page,intro);
     NSMutableParagraphStyle *paragraph=[NSMutableParagraphStyle new];paragraph.alignment=NSTextAlignmentCenter;paragraph.lineSpacing=5;
     intro.attributedStringValue=[[NSAttributedString alloc] initWithString:intro.stringValue attributes:@{NSFontAttributeName:intro.font,NSParagraphStyleAttributeName:paragraph,NSForegroundColorAttributeName:NSColor.labelColor}];
     [NSLayoutConstraint activateConstraints:@[[heading.topAnchor constraintEqualToAnchor:page.topAnchor constant:25],[heading.centerXAnchor constraintEqualToAnchor:page.centerXAnchor],[intro.topAnchor constraintEqualToAnchor:heading.bottomAnchor constant:5],[intro.centerXAnchor constraintEqualToAnchor:page.centerXAnchor],[intro.widthAnchor constraintEqualToConstant:450]]];
@@ -658,7 +665,7 @@ static VIMNewMachineWindow *creationController;
         button.accessibilityLabel=button.title;
         [button.heightAnchor constraintEqualToConstant:46].active=YES;[rows addObject:button];
     }
-    VIMSystemOption *newer=[VIMSystemOption new];newer.title=@"macOS Monterey 12 or later";
+    VIMSystemOption *newer=[VIMSystemOption new];newer.title=VIMLocalized(@"creation.macos-monterey-12-or-later", @"macOS Monterey 12 or later");
     newer.target=self;newer.action=@selector(showNewerSystems:);newer.recommendation=YES;newer.tag=rows.count;
     newer.roundel=[NSImage imageNamed:@"montereyIcon"];newer.bordered=NO;newer.focusRingType=NSFocusRingTypeNone;
     newer.accessibilityLabel=newer.title;
@@ -680,8 +687,8 @@ static VIMNewMachineWindow *creationController;
     }
     NSStackView *stack=[NSStackView stackViewWithViews:pairs];stack.orientation=NSUserInterfaceLayoutOrientationVertical;stack.alignment=NSLayoutAttributeLeading;stack.spacing=4;AddAssistantView(page,stack);
     [NSLayoutConstraint activateConstraints:@[[stack.centerXAnchor constraintEqualToAnchor:page.centerXAnchor],[stack.topAnchor constraintEqualToAnchor:intro.bottomAnchor constant:20]]];
-    self.chooseButton.title=@"Use an Existing Installer…";self.chooseButton.bezelStyle=NSBezelStyleRounded;
-    NSButton *next=[NSButton buttonWithTitle:@"Continue" target:self action:@selector(continueToConfiguration:)];next.keyEquivalent=@"\r";
+    self.chooseButton.title=VIMLocalized(@"creation.use-an-existing-installer", @"Use an Existing Installer…");self.chooseButton.bezelStyle=NSBezelStyleRounded;
+    NSButton *next=[NSButton buttonWithTitle:VIMLocalized(@"ui.continue", @"Continue") target:self action:@selector(continueToConfiguration:)];next.keyEquivalent=@"\r";
     [self footerOnPage:page leading:self.chooseButton trailing:@[next]];
     [self.window makeFirstResponder:self.systemOptions[self.system.indexOfSelectedItem]];
 }
@@ -694,9 +701,9 @@ static VIMNewMachineWindow *creationController;
     NSFont *font=[NSFont systemFontOfSize:13];
     NSMutableParagraphStyle *paragraph=[NSMutableParagraphStyle new];paragraph.lineSpacing=3;
     NSDictionary *attributes=@{NSFontAttributeName:font,NSForegroundColorAttributeName:NSColor.labelColor,NSParagraphStyleAttributeName:paragraph};
-    NSMutableAttributedString *text=[[NSMutableAttributedString alloc] initWithString:@"You can virtualize macOS Monterey 12 and later using " attributes:attributes];
+    NSMutableAttributedString *text=[[NSMutableAttributedString alloc] initWithString:VIMLocalized(@"creation.you-can-virtualize-macos-monterey-12-and-later-using", @"You can virtualize macOS Monterey 12 and later using ") attributes:attributes];
     for(NSUInteger i=0;i<names.count;i++) {
-        if(i)[text appendAttributedString:[[NSAttributedString alloc] initWithString:i==names.count-1?@", or ":@", " attributes:attributes]];
+        if(i)[text appendAttributedString:[[NSAttributedString alloc] initWithString:i==names.count-1?VIMLocalized(@"ui.or", @", or "):VIMLocalized(@"ui.list-separator", @", ") attributes:attributes]];
         NSTextAttachment *icon=[NSTextAttachment new];icon.image=[NSImage imageNamed:images[i]];icon.bounds=NSMakeRect(0,-3,18,18);
         [text appendAttributedString:[NSAttributedString attributedStringWithAttachment:icon]];
         // Attachments otherwise create an independent Unicode line-break
@@ -708,7 +715,7 @@ static VIMNewMachineWindow *creationController;
         // The symbol is an inline part of the same underlined link. No button
         // image padding or stack-view gap between the name and arrow.
         NSTextAttachment *arrow=[NSTextAttachment new];
-        NSImage *symbol=[NSImage imageWithSystemSymbolName:@"arrow.up.right" accessibilityDescription:@"Opens website"];
+        NSImage *symbol=[NSImage imageWithSystemSymbolName:@"arrow.up.right" accessibilityDescription:VIMLocalized(@"creation.opens-website", @"Opens website")];
         if(@available(macOS 12.0,*))
             arrow.image=[symbol imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithHierarchicalColor:NSColor.linkColor]];
         else arrow.image=[NSImage imageWithSize:symbol.size flipped:NO drawingHandler:^BOOL(NSRect bounds){
@@ -719,7 +726,7 @@ static VIMNewMachineWindow *creationController;
         [text appendAttributedString:[NSAttributedString attributedStringWithAttachment:arrow]];
         [text addAttributes:@{NSLinkAttributeName:[NSURL URLWithString:URLs[i]],NSForegroundColorAttributeName:NSColor.linkColor,NSUnderlineStyleAttributeName:@(NSUnderlineStyleSingle)} range:NSMakeRange(start,text.length-start)];
     }
-    [text appendAttributedString:[[NSAttributedString alloc] initWithString:arm?@", then run Intel-based apps using Rosetta.":@"." attributes:attributes]];
+    [text appendAttributedString:[[NSAttributedString alloc] initWithString:arm?VIMLocalized(@"creation.then-run-intel-based-apps-using-rosetta", @", then run Intel-based apps using Rosetta."):@"." attributes:attributes]];
     CGFloat width=350;
     VIMRecommendationParagraph *body=[[VIMRecommendationParagraph alloc] initWithFrame:NSMakeRect(18,16,width,200)];
     body.editable=NO;body.selectable=NO;body.drawsBackground=NO;body.textContainerInset=NSZeroSize;body.textContainer.lineFragmentPadding=0;
@@ -737,8 +744,8 @@ static VIMNewMachineWindow *creationController;
     [self.system selectItemAtIndex:sender.tag];[self systemChanged:nil];self.installer=nil;
     for(VIMSystemOption *option in self.systemOptions)option.state=option.tag==sender.tag?NSControlStateValueOn:NSControlStateValueOff;
     NSString *guest=CreationGuests()[self.system.indexOfSelectedItem];
-    self.mediaLabel.stringValue=[NSString stringWithFormat:@"%@ will be downloaded from %@ and prepared automatically.",
-        VIMOperatingSystemName(guest),[@[@"tiger",@"leopard",@"snowleopard"] containsObject:guest]?@"the Internet Archive":@"Apple"];
+    self.mediaLabel.stringValue=[NSString stringWithFormat:VIMLocalized(@"creation.will-be-downloaded-from-and-prepared-automatically", @"%@ will be downloaded from %@ and prepared automatically."),
+        VIMOperatingSystemName(guest),[@[@"tiger",@"leopard",@"snowleopard"] containsObject:guest]?VIMLocalized(@"creation.the-internet-archive", @"the Internet Archive"):@"Apple"];
 }
 - (void)continueToConfiguration:(id)sender {
     self.showingProgress=NO;
@@ -788,11 +795,11 @@ static VIMNewMachineWindow *creationController;
 - (void)cpuFieldChanged:(id)sender {self.cpuSlider.doubleValue=self.cpuField.doubleValue;}
 - (void)choose:(id)sender {
     NSOpenPanel *panel=[NSOpenPanel openPanel];panel.canChooseDirectories=YES;panel.canChooseFiles=YES;panel.allowsMultipleSelection=NO;
-    panel.canCreateDirectories=NO;panel.resolvesAliases=YES;panel.title=@"Choose an OS Installer";
-    panel.allowedContentTypes=@[UTTypeApplicationBundle,UTTypeDiskImage];panel.treatsFilePackagesAsDirectories=NO;panel.prompt=@"Use Installer";
+    panel.canCreateDirectories=NO;panel.resolvesAliases=YES;panel.title=VIMLocalized(@"creation.choose-an-os-installer", @"Choose an OS Installer");
+    panel.allowedContentTypes=@[UTTypeApplicationBundle,UTTypeDiskImage];panel.treatsFilePackagesAsDirectories=NO;panel.prompt=VIMLocalized(@"creation.use-installer", @"Use Installer");
     [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response){
         if(response!=NSModalResponseOK){
-            if(self.archiveInstallerRecovery)[self presentInstallerChoiceFailure:@"Choose a downloaded installer, or choose a different OS version to continue."];
+            if(self.archiveInstallerRecovery)[self presentInstallerChoiceFailure:VIMLocalized(@"creation.choose-a-downloaded-installer-or-choose-a-different-os-version", @"Choose a downloaded installer, or choose a different OS version to continue.")];
             return;
         }
         self.chooseButton.enabled=NO;
@@ -803,10 +810,10 @@ static VIMNewMachineWindow *creationController;
         if(!guest&&[error.domain isEqual:VIMInstallerReleaseErrorDomain]){[self presentUnsupportedRelease:error];return;}
         if(!guest){[self presentInstallerChoiceFailure:error.localizedDescription];return;}
         NSUInteger index=[CreationGuests() indexOfObject:guest];
-        if(index==NSNotFound){[self presentInstallerChoiceFailure:@"Choose a Tiger, Leopard or Snow Leopard restore DVD, or a Lion through Big Sur installer app."];return;}
+        if(index==NSNotFound){[self presentInstallerChoiceFailure:VIMLocalized(@"creation.choose-a-tiger-leopard-or-snow-leopard-restore-dvd-or", @"Choose a Tiger, Leopard or Snow Leopard restore DVD, or a Lion through Big Sur installer app.")];return;}
         self.archiveInstallerRecovery=NO;
         [self selectSystem:self.systemOptions[index]];
-        self.installer=panel.URL;self.mediaLabel.stringValue=[NSString stringWithFormat:@"Installer: %@",panel.URL.lastPathComponent];[self continueToConfiguration:nil];
+        self.installer=panel.URL;self.mediaLabel.stringValue=[NSString stringWithFormat:VIMLocalized(@"ui.installer", @"Installer: %@"),panel.URL.lastPathComponent];[self continueToConfiguration:nil];
         });
         });
     }];
@@ -819,9 +826,9 @@ static VIMNewMachineWindow *creationController;
     NSAlert *alert=[NSAlert new];alert.messageText=error.localizedDescription;
     alert.informativeText=error.localizedRecoverySuggestion?:@"";
     if(index!=NSNotFound)VIMSetInstallerAlertIcon(alert,guest);
-    if(index!=NSNotFound)[alert addButtonWithTitle:@"Download Automatically"];
-    if(download)[alert addButtonWithTitle:@"Open Download Page"];
-    [alert addButtonWithTitle:@"Cancel"];
+    if(index!=NSNotFound)[alert addButtonWithTitle:VIMLocalized(@"creation.download-automatically", @"Download Automatically")];
+    if(download)[alert addButtonWithTitle:VIMLocalized(@"creation.open-download-page", @"Open Download Page")];
+    [alert addButtonWithTitle:VIMLocalized(@"common.cancel", @"Cancel")];
     VIMPresentAlert(alert,self.window,^(NSModalResponse response){
         NSModalResponse automatic=index!=NSNotFound?NSAlertFirstButtonReturn:NSNotFound;
         NSModalResponse page=download?(index!=NSNotFound?NSAlertSecondButtonReturn:NSAlertFirstButtonReturn):NSNotFound;
@@ -838,9 +845,9 @@ static VIMNewMachineWindow *creationController;
 - (void)setPhase:(NSString *)phase {
     if(self.job){self.job[@"Phase"]=phase;[self saveJob];}
     BOOL busy=[@[@"downloading",@"preparing",@"creating",@"stopping"] containsObject:phase];
-    if(busy&&!self.sleepActivity)self.sleepActivity=[VIMInstallationActivity beginWithReason:@"Preparing a virtual Mac installer"];
+    if(busy&&!self.sleepActivity)self.sleepActivity=[VIMInstallationActivity beginWithReason:VIMLocalized(@"creation.preparing-a-virtual-mac-installer", @"Preparing a virtual Mac installer")];
     else if(!busy)self.sleepActivity=nil;
-    self.pauseResume.title=busy?@"Pause":([phase isEqual:@"failed"]?@"Try Again":@"Resume");
+    self.pauseResume.title=busy?VIMLocalized(@"installerwindow.pause", @"Pause"):([phase isEqual:@"failed"]?VIMLocalized(@"library.try-again", @"Try Again"):VIMLocalized(@"ui.resume", @"Resume"));
     self.pauseResume.enabled=![phase isEqual:@"creating"]&&![phase isEqual:@"stopping"];
     self.cancelButton.enabled=![phase isEqual:@"creating"]&&![phase isEqual:@"stopping"];
 }
@@ -854,23 +861,23 @@ static VIMNewMachineWindow *creationController;
 - (void)beginSetup:(id)sender {
     if(self.creating||self.transfer||self.assembly)return;
     NSString *name=[self.nameField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    NSString *recipient=name.length?name:@"this virtual Mac";
+    NSString *recipient=name.length?name:VIMLocalized(@"creation.this-virtual-mac", @"this virtual Mac");
     NSInteger maxCores=self.cpuSlider.maxValue,maxMemory=self.memorySlider.maxValue;
     if(![self wholeNumber:self.cpuField minimum:1 maximum:maxCores]) {
-        [self presentCreationTitle:@"Enter a valid number of cores" detail:[NSString stringWithFormat:@"You can assign between 1 and %ld cores to %@.",(long)maxCores,recipient]];return;
+        [self presentCreationTitle:VIMLocalized(@"creation.enter-a-valid-number-of-cores", @"Enter a valid number of cores") detail:[NSString stringWithFormat:VIMLocalized(@"creation.you-can-assign-between-1-and-ld-cores-to", @"You can assign between 1 and %ld cores to %@."),(long)maxCores,recipient]];return;
     }
     if(![self wholeNumber:self.memoryField minimum:1 maximum:maxMemory]) {
-        [self presentCreationTitle:@"Enter a valid amount of memory" detail:[NSString stringWithFormat:@"You can assign between 1 and %ld GB of memory to %@. Leave memory available for macOS and graphics processing.",(long)maxMemory,recipient]];return;
+        [self presentCreationTitle:VIMLocalized(@"creation.enter-a-valid-amount-of-memory", @"Enter a valid amount of memory") detail:[NSString stringWithFormat:VIMLocalized(@"creation.you-can-assign-between-1-and-ld-gb-of-memory", @"You can assign between 1 and %ld GB of memory to %@. Leave memory available for macOS and graphics processing."),(long)maxMemory,recipient]];return;
     }
     if(![self wholeNumber:self.diskField minimum:40 maximum:2048]) {
-        [self presentCreationTitle:@"Enter a valid storage size" detail:[NSString stringWithFormat:@"You can assign between 40 and 2048 GB of storage to %@.",recipient]];return;
+        [self presentCreationTitle:VIMLocalized(@"creation.enter-a-valid-storage-size", @"Enter a valid storage size") detail:[NSString stringWithFormat:VIMLocalized(@"creation.you-can-assign-between-40-and-2048-gb-of-storage", @"You can assign between 40 and 2048 GB of storage to %@."),recipient]];return;
     }
     if(!name.length) {
-        [self presentCreationTitle:@"Enter a name for your Mac" detail:@"Give this virtual Mac a name so you can find it in your library."];return;
+        [self presentCreationTitle:VIMLocalized(@"creation.enter-a-name-for-your-mac", @"Enter a name for your Mac") detail:VIMLocalized(@"creation.give-this-virtual-mac-a-name-so-you-can-find", @"Give this virtual Mac a name so you can find it in your library.")];return;
     }
     self.nameField.stringValue=name;
     if((uint64_t)self.memoryField.integerValue*1024*1024*1024>=NSProcessInfo.processInfo.physicalMemory) {
-        [self presentCreationError:@"Leave memory available for this Mac. Allocating all of your host’s memory can make both Macs unresponsive. Choose a smaller amount."];return;
+        [self presentCreationError:VIMLocalized(@"creation.leave-memory-available-for-this-mac-allocating-all-of-your", @"Leave memory available for this Mac. Allocating all of your host’s memory can make both Macs unresponsive. Choose a smaller amount.")];return;
     }
     NSString *guest=CreationGuests()[self.system.indexOfSelectedItem];
     NSString *password=self.visibleGuestPassword.hidden?self.guestPassword.stringValue:self.visibleGuestPassword.stringValue;
@@ -878,12 +885,12 @@ static VIMNewMachineWindow *creationController;
     if(automatic) {
         NSError *issue=nil;
         if(![VIMAutomaticSetup validateUsername:self.guestUsername.stringValue error:&issue]||![VIMAutomaticSetup validatePassword:password error:&issue]) {
-            [self presentCreationTitle:@"Check your virtual Mac’s account" detail:issue.localizedDescription];return;
+            [self presentCreationTitle:VIMLocalized(@"creation.check-your-virtual-mac-s-account", @"Check your virtual Mac’s account") detail:issue.localizedDescription];return;
         }
         if(!password.length) {
-            NSAlert *alert=[NSAlert new];alert.messageText=@"Enter a password for your virtual Mac";
-            alert.informativeText=@"Automatic Setup needs a password to create your account. To set up the account yourself, turn off Automatic Setup in \"Advanced...\".";
-            VIMSetInstallerAlertIcon(alert,guest);[alert addButtonWithTitle:@"OK"];
+            NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"creation.enter-a-password-for-your-virtual-mac", @"Enter a password for your virtual Mac");
+            alert.informativeText=VIMLocalized(@"creation.automatic-setup-needs-a-password-to-create-your-account-to", @"Automatic Setup needs a password to create your account. To set up the account yourself, turn off Automatic Setup in \"Advanced...\".");
+            VIMSetInstallerAlertIcon(alert,guest);[alert addButtonWithTitle:VIMLocalized(@"common.ok", @"OK")];
             VIMPresentAlert(alert,self.window,^(NSModalResponse result){
                 [self.window makeFirstResponder:self.visibleGuestPassword.hidden?self.guestPassword:self.visibleGuestPassword];
             });return;
@@ -914,14 +921,14 @@ static VIMNewMachineWindow *creationController;
     // Measure the volume that will hold this Mac's disk: the selected library's
     // Machines destination, which may be a symlink or mount on another drive.
     NSDictionary *space=LibraryDestinationSpace([NSURL fileURLWithPath:self.job[@"Library"]],&spaceError);
-    if(!space){[self presentCreationError:spaceError.localizedDescription?:@"Connect your library drive before continuing."];return;}
+    if(!space){[self presentCreationError:spaceError.localizedDescription?:VIMLocalized(@"creation.connect-your-library-drive-before-continuing", @"Connect your library drive before continuing.")];return;}
     // The guest disk is sparse, so reserve what setup actually writes, not its
     // capacity: downloads, the peak of installer assembly and media creation
     // (scratch is deleted as each step finishes), and the installed system.
     BOOL bigSur=[guest isEqual:@"bigsur"];
     uint64_t required=(self.job[@"Media"]?(bigSur?28ULL:22ULL):(bigSur?64ULL:44ULL))<<30;
     if(!self.job[@"Machine"]&&[space[NSFileSystemFreeSize] unsignedLongLongValue]<required) {
-        [self presentCreationError:[NSString stringWithFormat:@"Your library drive needs at least %@ available for this disk and installer preparation.",[NSByteCountFormatter stringFromByteCount:required countStyle:NSByteCountFormatterCountStyleFile]]];return;
+        [self presentCreationError:[NSString stringWithFormat:VIMLocalized(@"creation.your-library-drive-needs-at-least-available-for-this-disk", @"Your library drive needs at least %@ available for this disk and installer preparation."),[NSByteCountFormatter stringFromByteCount:required countStyle:NSByteCountFormatterCountStyleFile]]];return;
     }
     self.job[@"Name"]=self.nameField.stringValue;self.job[@"CPU"]=@(self.cpuField.integerValue);
     self.job[@"Memory"]=@(self.memoryField.integerValue);self.job[@"Disk"]=@(self.diskField.integerValue);
@@ -939,12 +946,12 @@ static VIMNewMachineWindow *creationController;
     }
     if(self.job[@"SourceInstaller"]) {
         NSError *issue=nil;NSURL *app=[NSURL fileURLWithPath:self.job[@"SourceInstaller"]];
-        if(![VIMInstallerAssembly validateInstallerApplication:app guest:guest error:&issue]){[self presentCreationTitle:[NSString stringWithFormat:@"Choose a matching %@ installer",VIMOperatingSystemName(guest)] detail:issue.localizedDescription];return;}
+        if(![VIMInstallerAssembly validateInstallerApplication:app guest:guest error:&issue]){[self presentCreationTitle:[NSString stringWithFormat:VIMLocalized(@"creation.choose-a-matching-installer", @"Choose a matching %@ installer"),VIMOperatingSystemName(guest)] detail:issue.localizedDescription];return;}
         [self showProgress];[self prepareMedia];return;
     }
     NSError *error=nil;VIMInstallerCatalog *catalog=[VIMInstallerCatalog currentCatalogWithError:&error];
     self.files=nil;for(NSDictionary *entry in catalog.supportedInstallers)if([entry[@"Guest"] isEqual:guest])self.files=entry[@"Files"];
-    if(!self.files.count){[self presentCreationError:error.localizedDescription?:@"The installer list is unavailable. Try again later."];return;}
+    if(!self.files.count){[self presentCreationError:error.localizedDescription?:VIMLocalized(@"creation.the-installer-list-is-unavailable-try-again-later", @"The installer list is unavailable. Try again later.")];return;}
     self.inputs=[NSMutableDictionary dictionary];self.fileIndex=0;[self showProgress];[self loadDownloadLengths];[self nextFile];
 }
 - (void)showProgress {
@@ -952,25 +959,25 @@ static VIMNewMachineWindow *creationController;
     [self sizeAssistantForConfiguration:NO];
     NSView *page=[VIMAssistantPage new];self.window.contentView=page;
     [self artworkForGuest:self.job[@"Guest"] page:page];
-    self.status=AssistantText(@"Preparing your Mac…",13,NSFontWeightRegular);
-    self.progressDetail=AssistantText(@"Estimating remaining time…",12,NSFontWeightRegular);self.progressDetail.textColor=NSColor.secondaryLabelColor;
+    self.status=AssistantText(VIMLocalized(@"creation.preparing-your-mac", @"Preparing your Mac…"),13,NSFontWeightRegular);
+    self.progressDetail=AssistantText(VIMLocalized(@"creation.estimating-remaining-time", @"Estimating remaining time…"),12,NSFontWeightRegular);self.progressDetail.textColor=NSColor.secondaryLabelColor;
     self.progressDetail.font=[NSFont monospacedDigitSystemFontOfSize:12 weight:NSFontWeightRegular];
     NSString *system=@{@"mojave":@"macOS Mojave",@"catalina":@"macOS Catalina",@"bigsur":@"macOS Big Sur"}[self.job[@"Guest"]]?:self.system.titleOfSelectedItem;
     BOOL existing=self.job[@"SourceInstaller"]!=nil;
-    NSTextField *title=AssistantText([(existing?@"Preparing\n":@"Downloading\n") stringByAppendingString:system],27,NSFontWeightSemibold);
+    NSTextField *title=AssistantText([(existing?VIMLocalized(@"ui.preparing", @"Preparing\n"):VIMLocalized(@"ui.downloading", @"Downloading\n")) stringByAppendingString:system],27,NSFontWeightSemibold);
     NSStackView *heading=[self headingWithTitle:title guest:self.job[@"Guest"]];
     NSString *os=VIMOperatingSystemName(self.job[@"Guest"]);
-    NSString *preparation=existing?[NSString stringWithFormat:@"We’ll prepare your %@ installer.",os]:
-        [@[@"tiger",@"leopard",@"snowleopard"] containsObject:self.job[@"Guest"]]?[NSString stringWithFormat:@"We’ll download Mac OS X %@ from the Internet Archive and prepare its installer.",CreationNames()[[CreationGuests() indexOfObject:self.job[@"Guest"]]]]:
-        [NSString stringWithFormat:@"We’ll download %@ from Apple and prepare its installer.",os];
-    NSString *instructions=[self.job[@"AutomaticSetup"][@"Enabled"] boolValue]?@"Your virtual Mac will install and set itself up automatically.":
-        [@[@"tiger",@"leopard",@"snowleopard"] containsObject:self.job[@"Guest"]]?@"When the installer opens, follow the onscreen instructions and install on Macintosh HD.":
-        [NSString stringWithFormat:@"When %@ Utilities appears, choose Reinstall %@ and install on Macintosh HD.",os,os];
-    NSTextField *intro=AssistantText([NSString stringWithFormat:@"%@ %@ Installation may take up to 2 hours.",preparation,instructions],13,NSFontWeightRegular);
+    NSString *preparation=existing?[NSString stringWithFormat:VIMLocalized(@"creation.we-ll-prepare-your-installer", @"We’ll prepare your %@ installer."),os]:
+        [@[@"tiger",@"leopard",@"snowleopard"] containsObject:self.job[@"Guest"]]?[NSString stringWithFormat:VIMLocalized(@"creation.we-ll-download-mac-os-x-from-the-internet-archive", @"We’ll download Mac OS X %@ from the Internet Archive and prepare its installer."),CreationNames()[[CreationGuests() indexOfObject:self.job[@"Guest"]]]]:
+        [NSString stringWithFormat:VIMLocalized(@"creation.we-ll-download-from-apple-and-prepare-its-installer", @"We’ll download %@ from Apple and prepare its installer."),os];
+    NSString *instructions=[self.job[@"AutomaticSetup"][@"Enabled"] boolValue]?VIMLocalized(@"creation.your-virtual-mac-will-install-and-set-itself-up-automatically", @"Your virtual Mac will install and set itself up automatically."):
+        [@[@"tiger",@"leopard",@"snowleopard"] containsObject:self.job[@"Guest"]]?VIMLocalized(@"creation.when-the-installer-opens-follow-the-onscreen-instructions-and-install", @"When the installer opens, follow the onscreen instructions and install on Macintosh HD."):
+        [NSString stringWithFormat:VIMLocalized(@"creation.when-utilities-appears-choose-reinstall-and-install-on-macintosh-hd", @"When %@ Utilities appears, choose Reinstall %@ and install on Macintosh HD."),os,os];
+    NSTextField *intro=AssistantText([NSString stringWithFormat:VIMLocalized(@"creation.installation-may-take-up-to-2-hours", @"%@ %@ Installation may take up to 2 hours."),preparation,instructions],13,NSFontWeightRegular);
     NSMutableParagraphStyle *paragraph=[NSMutableParagraphStyle new];paragraph.lineSpacing=4;paragraph.lineBreakMode=NSLineBreakByWordWrapping;
     intro.attributedStringValue=[[NSAttributedString alloc] initWithString:intro.stringValue attributes:@{NSFontAttributeName:intro.font,NSForegroundColorAttributeName:NSColor.labelColor,NSParagraphStyleAttributeName:paragraph}];
-    self.pauseResume=[NSButton buttonWithTitle:@"Pause" target:self action:@selector(togglePause:)];
-    self.cancelButton=[NSButton buttonWithTitle:@"Cancel" target:self action:@selector(cancelSetup:)];
+    self.pauseResume=[NSButton buttonWithTitle:VIMLocalized(@"installerwindow.pause", @"Pause") target:self action:@selector(togglePause:)];
+    self.cancelButton=[NSButton buttonWithTitle:VIMLocalized(@"common.cancel", @"Cancel") target:self action:@selector(cancelSetup:)];
     // AppKit can animate a reused indicator from the preceding job's end value.
     // Set the new page's initial value before the fresh indicator is attached.
     self.progress=[NSProgressIndicator new];self.progress.style=NSProgressIndicatorStyleBar;
@@ -988,7 +995,7 @@ static VIMNewMachineWindow *creationController;
     // tool percentages, falling back to measured-duration estimates.
     self.overallProgress=MAX(self.overallProgress,MIN(1,MAX(0,fraction)));
     self.progress.indeterminate=NO;self.progress.doubleValue=self.overallProgress;
-    if([self.job[@"Phase"] isEqual:@"preparing"])self.progressDetail.stringValue=@"Download complete. Preparing the installer.";
+    if([self.job[@"Phase"] isEqual:@"preparing"])self.progressDetail.stringValue=VIMLocalized(@"creation.download-complete-preparing-the-installer", @"Download complete. Preparing the installer.");
     if(self.job&&fabs([self.job[@"Progress"] doubleValue]-self.overallProgress)>=.005){
         self.job[@"Progress"]=@(self.overallProgress);
         // Phase changes refresh the library. Byte updates should not rescan it.
@@ -1026,18 +1033,18 @@ static VIMNewMachineWindow *creationController;
         NSString *key=file[@"URL"];received+=[self.downloadReceived[key] longLongValue];
         int64_t length=[self.downloadLengths[key] longLongValue];if(length<=0)known=NO;else total+=length;
     }
-    NSString *amount=known?[NSString stringWithFormat:@"%.2f GB of %.2f GB",received/1e9,total/1e9]:[NSString stringWithFormat:@"%.2f GB downloaded",received/1e9];
-    NSString *rate=self.bytesPerSecond>0?[NSString stringWithFormat:@" (%.2f MB/s)",self.bytesPerSecond/1e6]:@" (Calculating speed…)";
-    NSString *remaining=@"Estimating time remaining…";
+    NSString *amount=known?[NSString stringWithFormat:VIMLocalized(@"creation.2f-gb-of-2f-gb", @"%.2f GB of %.2f GB"),received/1e9,total/1e9]:[NSString stringWithFormat:VIMLocalized(@"creation.2f-gb-downloaded", @"%.2f GB downloaded"),received/1e9];
+    NSString *rate=self.bytesPerSecond>0?[NSString stringWithFormat:VIMLocalized(@"creation.2f-mb-s", @" (%.2f MB/s)"),self.bytesPerSecond/1e6]:VIMLocalized(@"creation.calculating-speed", @" (Calculating speed…)");
+    NSString *remaining=VIMLocalized(@"creation.estimating-time-remaining", @"Estimating time remaining…");
     if(known&&self.bytesPerSecond>0&&total>received) {
         NSInteger minutes=MAX(1,(NSInteger)ceil((total-received)/self.bytesPerSecond/60));
-        if(minutes<60)remaining=[NSString stringWithFormat:@"%ld minute%@ remaining",(long)minutes,minutes==1?@"":@"s"];
+        if(minutes<60)remaining=VIMMinutesRemaining(minutes,NO);
         else {
             NSInteger hours=minutes/60,remainder=minutes%60;
-            remaining=remainder?[NSString stringWithFormat:@"%ld hour%@ %ld minute%@ remaining",(long)hours,hours==1?@"":@"s",(long)remainder,remainder==1?@"":@"s"]:[NSString stringWithFormat:@"%ld hour%@ remaining",(long)hours,hours==1?@"":@"s"];
+            remaining=VIMHoursRemaining(hours,remainder);
         }
     }
-    if(known&&received>=total)remaining=@"Download complete";
+    if(known&&received>=total)remaining=VIMLocalized(@"creation.download-complete", @"Download complete");
     self.progressDetail.stringValue=[NSString stringWithFormat:@"%@%@ - %@",amount,rate,remaining];
 }
 - (double)downloadProgressForFileFraction:(double)fraction {
@@ -1055,7 +1062,7 @@ static VIMNewMachineWindow *creationController;
     if(self.fileIndex==self.files.count){
         if(self.downloadOnly){
             [self stopLengthProbes];[self setPhase:@"downloaded"];
-            self.status.stringValue=@"Download complete";self.progressDetail.stringValue=@"The installer download is saved in your library’s Downloads folder.";
+            self.status.stringValue=VIMLocalized(@"creation.download-complete", @"Download complete");self.progressDetail.stringValue=VIMLocalized(@"creation.the-installer-download-is-saved-in-your-library-s-downloads", @"The installer download is saved in your library’s Downloads folder.");
             [self updateOverallProgress:1];self.pauseResume.enabled=NO;return;
         }
         [self prepareMedia];return;
@@ -1070,7 +1077,7 @@ static VIMNewMachineWindow *creationController;
     if(!self.transfer){[self setPhase:@"failed"];[self presentCreationError:error.localizedDescription];return;}
     self.rateSampleTime=0;self.bytesPerSecond=0;
     [self setPhase:@"downloading"];
-    self.status.stringValue=[NSString stringWithFormat:@"Downloading %@…",VIMOperatingSystemName(self.job[@"Guest"])];
+    self.status.stringValue=[NSString stringWithFormat:VIMLocalized(@"ui.downloading.named", @"Downloading %@…"),VIMOperatingSystemName(self.job[@"Guest"])];
     __weak typeof(self) weakSelf=self;
     self.transfer.progress=^(int64_t received,int64_t total){
         typeof(self) self=weakSelf;if(!self)return;
@@ -1082,13 +1089,13 @@ static VIMNewMachineWindow *creationController;
             self.bytesPerSecond=self.bytesPerSecond>0?.7*self.bytesPerSecond+.3*rate:rate;self.rateSampleTime=now;self.rateSampleBytes=received;
         }
         [self updateOverallProgress:[self downloadProgressForFileFraction:total>0?(double)received/total:0]];
-        self.status.stringValue=[NSString stringWithFormat:@"Downloading %@…",VIMOperatingSystemName(self.job[@"Guest"])];
+        self.status.stringValue=[NSString stringWithFormat:VIMLocalized(@"ui.downloading.named", @"Downloading %@…"),VIMOperatingSystemName(self.job[@"Guest"])];
         [self refreshDownloadDetail];
     };
     [self.transfer startWithCompletion:^(NSURL *file,NSError *failure,BOOL paused){
         typeof(self) self=weakSelf;if(!self)return;self.transfer=nil;
         if([self finishCancellation]||[self completeTermination])return;
-        if(paused||failure){[self stopLengthProbes];[self setPhase:failure?@"failed":@"paused"];if(failure)[self presentDownloadFailure:failure source:source];else self.status.stringValue=@"Download paused";[self.progress stopAnimation:nil];return;}
+        if(paused||failure){[self stopLengthProbes];[self setPhase:failure?@"failed":@"paused"];if(failure)[self presentDownloadFailure:failure source:source];else self.status.stringValue=VIMLocalized(@"creation.download-paused", @"Download paused");[self.progress stopAnimation:nil];return;}
         NSDictionary *attributes=[NSFileManager.defaultManager attributesOfItemAtPath:file.path error:nil];
         if(attributes[NSFileSize])self.downloadReceived[source.absoluteString]=self.downloadLengths[source.absoluteString]=attributes[NSFileSize];
         [self updateOverallProgress:[self downloadProgressForFileFraction:1]];
@@ -1124,7 +1131,7 @@ static void VIMRemoveAbandonedPreparation(NSURL *root,NSURL *library,NSString *j
 - (void)prepareMedia {
     [self stopLengthProbes];
     [self setPhase:@"preparing"];
-    self.status.stringValue=@"Checking download and preparing your Mac…";[self updateOverallProgress:.70];
+    self.status.stringValue=VIMLocalized(@"creation.checking-download-and-preparing-your-mac", @"Checking download and preparing your Mac…");[self updateOverallProgress:.70];
     VIMInstallerAssembly *worker=[VIMInstallerAssembly new];self.assembly=worker;
     NSString *guest=self.job[@"Guest"];NSDictionary *inputs=[self.inputs copy];NSString *existingInstaller=[self.job[@"SourceInstaller"] copy];
     NSString *preparedInput=[self.job[@"PreparedInstaller"] copy];
@@ -1134,14 +1141,14 @@ static void VIMRemoveAbandonedPreparation(NSURL *root,NSURL *library,NSString *j
     if(![fm createDirectoryAtURL:root withIntermediateDirectories:YES attributes:nil error:&lockError]){self.assembly=nil;[self setPhase:@"failed"];[self presentCreationError:lockError.localizedDescription];return;}
     int preparationLock=open([root URLByAppendingPathComponent:@".Preparation.lock"].fileSystemRepresentation,O_CREAT|O_RDWR|O_NOFOLLOW|O_CLOEXEC,0600);struct stat lockInfo;
     if(preparationLock<0||fstat(preparationLock,&lockInfo)||!S_ISREG(lockInfo.st_mode)||lockInfo.st_nlink!=1||flock(preparationLock,LOCK_EX|LOCK_NB)) {
-        if(preparationLock>=0)close(preparationLock);self.assembly=nil;[self setPhase:@"failed"];[self presentCreationError:@"Another Mac is preparing an installer in this library. Try again when it finishes."];return;
+        if(preparationLock>=0)close(preparationLock);self.assembly=nil;[self setPhase:@"failed"];[self presentCreationError:VIMLocalized(@"creation.another-mac-is-preparing-an-installer-in-this-library-try", @"Another Mac is preparing an installer in this library. Try again when it finishes.")];return;
     }
     VIMRemoveAbandonedPreparation(root,[NSURL fileURLWithPath:self.job[@"Library"]],self.job[@"Media"],existingInstaller);
     worker.progress=^(NSString *stage){self.status.stringValue=stage;};
     worker.workProgress=^(double fraction){[self updateOverallProgress:.70+.30*fraction];};
     worker.timeRemaining=^(NSTimeInterval seconds){
         NSInteger minutes=MAX(1,(NSInteger)ceil(seconds/60));
-        self.progressDetail.stringValue=[NSString stringWithFormat:@"About %ld minute%@ remaining",(long)minutes,minutes==1?@"":@"s"];
+        self.progressDetail.stringValue=VIMMinutesRemaining(minutes,YES);
     };
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
         NSError *error=nil;NSURL *installer=nil;
@@ -1182,24 +1189,24 @@ static void VIMRemoveAbandonedPreparation(NSURL *root,NSURL *library,NSString *j
             worker.progress=nil;worker.workProgress=nil;worker.timeRemaining=nil;self.assembly=nil;[self.progress stopAnimation:nil];
             close(preparationLock);
             if([self finishCancellation]||[self completeTermination])return;
-            if(!media){[self setPhase:worker.cancelled?@"paused":@"failed"];if(!worker.cancelled)[self presentCreationTitle:@"The installer couldn’t be prepared" detail:[NSString stringWithFormat:@"%@\n\n%@",error.localizedDescription?:@"Preparation could not finish.",error.localizedRecoverySuggestion?:@"Your downloads are saved. Try again to resume setup."]];else self.status.stringValue=@"Preparation paused";return;}
-            [self updateOverallProgress:1];self.progressDetail.stringValue=@"Installer ready. Creating your virtual Mac.";[self create:nil];
+            if(!media){[self setPhase:worker.cancelled?@"paused":@"failed"];if(!worker.cancelled)[self presentCreationTitle:VIMLocalized(@"creation.the-installer-couldn-t-be-prepared", @"The installer couldn’t be prepared") detail:[NSString stringWithFormat:@"%@\n\n%@",error.localizedDescription?:VIMLocalized(@"creation.preparation-could-not-finish", @"Preparation could not finish."),error.localizedRecoverySuggestion?:VIMLocalized(@"creation.your-downloads-are-saved-try-again-to-resume-setup", @"Your downloads are saved. Try again to resume setup.")]];else self.status.stringValue=VIMLocalized(@"creation.preparation-paused", @"Preparation paused");return;}
+            [self updateOverallProgress:1];self.progressDetail.stringValue=VIMLocalized(@"creation.installer-ready-creating-your-virtual-mac", @"Installer ready. Creating your virtual Mac.");[self create:nil];
         });
     });
 }
 - (void)pause:(id)sender {
     [self stopLengthProbes];
     [self setPhase:@"stopping"];
-    if(self.assembly){self.assembly.cancelled=YES;self.status.stringValue=@"Stopping preparation safely…";}
+    if(self.assembly){self.assembly.cancelled=YES;self.status.stringValue=VIMLocalized(@"creation.stopping-preparation-safely", @"Stopping preparation safely…");}
     else [self.transfer pause];
 }
 - (NSAlert *)cancellationAlert {
-    NSAlert *alert=[NSAlert new];alert.messageText=@"Are you sure you want to cancel creating this Mac?";
+    NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"creation.are-you-sure-you-want-to-cancel-creating-this-mac", @"Are you sure you want to cancel creating this Mac?");
     VIMSetInstallerAlertIcon(alert,CreationGuests()[self.system.indexOfSelectedItem]);
-    alert.informativeText=@"Downloaded files and any Mac already created will be kept.";
+    alert.informativeText=VIMLocalized(@"creation.downloaded-files-and-any-mac-already-created-will-be-kept", @"Downloaded files and any Mac already created will be kept.");
     // AppKit lays out the first button on the right. Keep No on the left and
     // make it the safe Return-key default, as in the reference confirmation.
-    [alert addButtonWithTitle:@"Yes"];[alert addButtonWithTitle:@"No"];alert.buttons.firstObject.keyEquivalent=@"";alert.buttons.lastObject.keyEquivalent=@"\r";
+    [alert addButtonWithTitle:VIMLocalized(@"ui.yes", @"Yes")];[alert addButtonWithTitle:VIMLocalized(@"ui.no", @"No")];alert.buttons.firstObject.keyEquivalent=@"";alert.buttons.lastObject.keyEquivalent=@"\r";
     return alert;
 }
 - (void)cancelSetup:(id)sender {
@@ -1244,7 +1251,7 @@ static void VIMRemoveAbandonedPreparation(NSURL *root,NSURL *library,NSString *j
     NSScanner *scanner=[NSScanner scannerWithString:self.diskField.stringValue];long long size=0;
     if(!self.installer||!name.length||![scanner scanLongLong:&size]||!scanner.isAtEnd||size<40||size>2048){
         [self setPhase:@"failed"];
-        [self presentCreationError:@"Choose an installer, enter a name, and use a disk size from 40 to 2048 GB."];return;
+        [self presentCreationError:VIMLocalized(@"creation.choose-an-installer-enter-a-name-and-use-a-disk", @"Choose an installer, enter a name, and use a disk size from 40 to 2048 GB.")];return;
     }
     NSURL *runtime=[NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"Runtime"];
     NSURL *firmware=[runtime URLByAppendingPathComponent:[@"Firmware" stringByAppendingPathComponent:guest]];
@@ -1267,12 +1274,12 @@ static void VIMRemoveAbandonedPreparation(NSURL *root,NSURL *library,NSString *j
     }
     for(NSURL *file in @[code,vars,boot,image])if(![NSFileManager.defaultManager fileExistsAtPath:file.path]){
         [self setPhase:@"failed"];
-        [self presentCreationError:[NSString stringWithFormat:@"This build is missing a creation resource: %@",file.lastPathComponent]];return;
+        [self presentCreationError:[NSString stringWithFormat:VIMLocalized(@"creation.this-build-is-missing-a-creation-resource", @"This build is missing a creation resource: %@"),file.lastPathComponent]];return;
     }
     NSURL *library=self.job?[NSURL fileURLWithPath:self.job[@"Library"]]:VIMLibraryLocation.currentURL,*installer=self.installer;
     self.creating=YES;self.createButton.enabled=self.chooseButton.enabled=self.system.enabled=self.nameField.enabled=self.diskField.enabled=NO;
     [self setPhase:@"creating"];
-    self.status.stringValue=@"Creating Macintosh HD.";
+    self.status.stringValue=VIMLocalized(@"creation.creating-macintosh-hd", @"Creating Macintosh HD.");
     [self.progress startAnimation:nil];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
         NSError *error=nil;
@@ -1281,7 +1288,7 @@ static void VIMRemoveAbandonedPreparation(NSURL *root,NSURL *library,NSString *j
         dispatch_async(dispatch_get_main_queue(), ^{
             self.creating=NO;self.createButton.enabled=self.chooseButton.enabled=self.system.enabled=self.nameField.enabled=self.diskField.enabled=YES;
             [self.progress stopAnimation:nil];
-            if(!machine){[self setPhase:@"failed"];[self presentCreationError:error.localizedDescription?:@"Could not create this Mac."];return;}
+            if(!machine){[self setPhase:@"failed"];[self presentCreationError:error.localizedDescription?:VIMLocalized(@"creation.could-not-create-this-mac", @"Could not create this Mac.")];return;}
             self.job[@"Machine"]=machine.URL.path;[self saveJob];
             NSError *settingsError=nil;
             if(self.job[@"AutomaticSetup"]&&![machine saveAutomaticSetup:self.job[@"AutomaticSetup"] error:&settingsError]) {
@@ -1291,10 +1298,10 @@ static void VIMRemoveAbandonedPreparation(NSURL *root,NSURL *library,NSString *j
                 [self setPhase:@"failed"];[self presentCreationError:settingsError.localizedDescription];return;
             }
             [NSNotificationCenter.defaultCenter postNotificationName:@"VIMLibraryChanged" object:nil];
-            self.status.stringValue=[NSString stringWithFormat:@"Your Mac is ready to install %@.",VIMOperatingSystemName(guest)];
+            self.status.stringValue=[NSString stringWithFormat:VIMLocalized(@"creation.your-mac-is-ready-to-install", @"Your Mac is ready to install %@."),VIMOperatingSystemName(guest)];
             NSError *launchError=nil;
             if([VIMSession openMachine:machine error:&launchError]){[self finishJob];[self close];}
-            else {[self setPhase:@"failed"];[self presentCreationError:[NSString stringWithFormat:@"Your Mac was saved in the library, but could not start: %@",launchError.localizedDescription]];}
+            else {[self setPhase:@"failed"];[self presentCreationError:[NSString stringWithFormat:VIMLocalized(@"creation.your-mac-was-saved-in-the-library-but-could-not", @"Your Mac was saved in the library, but could not start: %@"),launchError.localizedDescription]];}
         });
     });
 }

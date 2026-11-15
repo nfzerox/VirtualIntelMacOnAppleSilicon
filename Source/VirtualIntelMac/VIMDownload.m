@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMDownload.h"
 #import "VIMInstallerCatalog.h"
 #import "VIMInstallerSource.h"
@@ -30,7 +31,7 @@ static NSError *DownloadError(NSString *message) {
 @implementation VIMDownload
 - (instancetype)initWithSourceURL:(NSURL *)URL directory:(NSURL *)directory error:(NSError **)error {
     if(![VIMInstallerSource isApprovedURL:URL]||!directory.isFileURL) {
-        if(error)*error=DownloadError(@"Invalid installer download location.");return nil;
+        if(error)*error=DownloadError(VIMLocalized(@"download.invalid-installer-download-location", @"Invalid installer download location."));return nil;
     }
     if((self=[super init])) {
         _sourceURL=URL;_directory=directory.URLByResolvingSymlinksInPath;_file=-1;_lockFile=-1;_total=-1;
@@ -48,7 +49,7 @@ static NSError *DownloadError(NSString *message) {
 }
 - (void)startWithCompletion:(void (^)(NSURL *,NSError *,BOOL))completion {
     NSAssert(NSThread.isMainThread,@"Download lifecycle is main-thread owned");
-    if(self.active) { completion(nil,DownloadError(@"This download is already running."),NO);return; }
+    if(self.active) { completion(nil,DownloadError(VIMLocalized(@"download.this-download-is-already-running", @"This download is already running.")),NO);return; }
     self.active=YES;self.completion=completion;self.pausing=NO;self.failure=nil;self.accepted=NO;
     [self.queue addOperationWithBlock:^{[self beginTransfer];}];
 }
@@ -56,14 +57,14 @@ static NSError *DownloadError(NSString *message) {
     NSError *error=nil;NSFileManager *fm=NSFileManager.defaultManager;
     if(![fm createDirectoryAtURL:self.directory withIntermediateDirectories:YES attributes:nil error:&error]) { [self finish:nil error:error];return; }
     self.lockFile=open([[self.directory URLByAppendingPathComponent:@"Download.lock"] fileSystemRepresentation],O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC,0600);
-    if(self.lockFile<0 || flock(self.lockFile,LOCK_EX|LOCK_NB)) { [self finish:nil error:DownloadError(@"Another process is using this download.")];return; }
+    if(self.lockFile<0 || flock(self.lockFile,LOCK_EX|LOCK_NB)) { [self finish:nil error:DownloadError(VIMLocalized(@"download.another-process-is-using-this-download", @"Another process is using this download."))];return; }
     NSDictionary *stored=[NSDictionary dictionaryWithContentsOfURL:self.metadataURL];
     if(stored && (![stored[@"FormatVersion"] isEqual:@1] || ![stored[@"SourceURL"] isEqual:self.sourceURL.absoluteString])) {
-        [self finish:nil error:DownloadError(@"This download folder belongs to another file.")];return;
+        [self finish:nil error:DownloadError(VIMLocalized(@"download.this-download-folder-belongs-to-another-file", @"This download folder belongs to another file."))];return;
     }
     self.metadata=stored?[stored mutableCopy]:[@{@"FormatVersion":@1,@"SourceURL":self.sourceURL.absoluteString} mutableCopy];
     for(NSString *key in @[@"Length",@"Complete"])if(self.metadata[key] && ![self.metadata[key] isKindOfClass:NSNumber.class]) {
-        [self finish:nil error:DownloadError(@"Invalid download state.")];return;
+        [self finish:nil error:DownloadError(VIMLocalized(@"download.invalid-download-state", @"Invalid download state."))];return;
     }
     // Recover an interruption between the final rename and completion journal.
     NSDictionary *finished=[fm attributesOfItemAtPath:self.finishedURL.path error:NULL];
@@ -84,12 +85,12 @@ static NSError *DownloadError(NSString *message) {
             // unlink and metadata removal must not make this URL unresumable.
             [self.metadata removeObjectsForKeys:@[@"Complete",@"Length",@"ETag",@"LastModified"]];
             if(![self saveMetadata:&error]){[self finish:nil error:error];return;}
-        } else { [self finish:nil error:DownloadError(@"The cached installer is incomplete. Remove this download through the app before retrying.")];return; }
+        } else { [self finish:nil error:DownloadError(VIMLocalized(@"download.the-cached-installer-is-incomplete-remove-this-download-through-the", @"The cached installer is incomplete. Remove this download through the app before retrying."))];return; }
     }
     self.file=open(self.partialURL.fileSystemRepresentation,O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC,0600);
     struct stat st;
     if(self.file<0||flock(self.file,LOCK_EX|LOCK_NB)||fstat(self.file,&st)||!S_ISREG(st.st_mode)) {
-        [self finish:nil error:DownloadError(@"Cannot open this download, or another process is using it.")];return;
+        [self finish:nil error:DownloadError(VIMLocalized(@"download.cannot-open-this-download-or-another-process-is-using-it", @"Cannot open this download, or another process is using it."))];return;
     }
     self.received=st.st_size;
     if(self.received>0 && self.received==[self.metadata[@"Length"] longLongValue]) {
@@ -100,7 +101,7 @@ static NSError *DownloadError(NSString *message) {
     NSString *validator=[etag isKindOfClass:NSString.class] && etag.length && ![etag hasPrefix:@"W/"]?etag:
         ([modified isKindOfClass:NSString.class]?modified:nil);
     if(self.received && !validator.length) {
-        if(ftruncate(self.file,0)) { [self finish:nil error:DownloadError(@"Could not restart the partial download.")];return; }
+        if(ftruncate(self.file,0)) { [self finish:nil error:DownloadError(VIMLocalized(@"download.could-not-restart-the-partial-download", @"Could not restart the partial download."))];return; }
         self.received=0;
     }
     if(![self saveMetadata:&error]) { [self finish:nil error:error];return; }
@@ -147,11 +148,11 @@ static NSError *DownloadError(NSString *message) {
     if(self.total>100LL*1024*1024*1024)valid=NO;
     if(!valid) {
         self.failure=[NSError errorWithDomain:@"VirtualIntelMac.Download" code:2 userInfo:@{
-            NSLocalizedDescriptionKey:[NSString stringWithFormat:@"The server returned an invalid download response (HTTP %ld).",http.statusCode]}];
+            NSLocalizedDescriptionKey:[NSString stringWithFormat:VIMLocalized(@"download.the-server-returned-an-invalid-download-response-http-ld", @"The server returned an invalid download response (HTTP %ld)."),http.statusCode]}];
         completionHandler(NSURLSessionResponseCancel);return;
     }
     if(lseek(self.file,self.received,SEEK_SET)<0) {
-        self.failure=DownloadError(@"Could not position the partial download.");completionHandler(NSURLSessionResponseCancel);return;
+        self.failure=DownloadError(VIMLocalized(@"download.could-not-position-the-partial-download", @"Could not position the partial download."));completionHandler(NSURLSessionResponseCancel);return;
     }
     NSString *etag=[http valueForHTTPHeaderField:@"ETag"],*modified=[http valueForHTTPHeaderField:@"Last-Modified"];
     if(etag)self.metadata[@"ETag"]=etag;else [self.metadata removeObjectForKey:@"ETag"];
@@ -165,13 +166,13 @@ static NSError *DownloadError(NSString *message) {
     if(!self.accepted||self.failure)return;
     if(self.received>100LL*1024*1024*1024-(int64_t)data.length ||
         (self.total>=0 && (int64_t)data.length>self.total-self.received)) {
-        self.failure=DownloadError(@"The download exceeded its expected length.");[task cancel];return;
+        self.failure=DownloadError(VIMLocalized(@"download.the-download-exceeded-its-expected-length", @"The download exceeded its expected length."));[task cancel];return;
     }
     const uint8_t *bytes=data.bytes;size_t remaining=data.length;
     while(remaining) {
         ssize_t n=write(self.file,bytes,remaining);
         if(n<0&&errno==EINTR)continue;
-        if(n<=0) { self.failure=DownloadError(@"Could not save the download. Check available disk space.");[task cancel];return; }
+        if(n<=0) { self.failure=DownloadError(VIMLocalized(@"download.could-not-save-the-download-check-available-disk-space", @"Could not save the download. Check available disk space."));[task cancel];return; }
         bytes+=n;remaining-=n;self.received+=n;
     }
     CFAbsoluteTime now=CFAbsoluteTimeGetCurrent();
@@ -188,8 +189,8 @@ static NSError *DownloadError(NSString *message) {
 - (void)completeTransferWithError:(NSError *)error {
     error=self.failure?:error;
     if(self.pausing) { [self finish:nil error:nil];return; }
-    if(!error && (!self.accepted || !self.received || (self.total>=0&&self.received!=self.total)))error=DownloadError(@"The installer download did not finish completely.");
-    if(!error && fsync(self.file))error=DownloadError(@"Could not flush the completed download to disk.");
+    if(!error && (!self.accepted || !self.received || (self.total>=0&&self.received!=self.total)))error=DownloadError(VIMLocalized(@"download.the-installer-download-did-not-finish-completely", @"The installer download did not finish completely."));
+    if(!error && fsync(self.file))error=DownloadError(VIMLocalized(@"download.could-not-flush-the-completed-download-to-disk", @"Could not flush the completed download to disk."));
     if(!error && ![VIMInstallerSource verifyFile:self.partialURL source:self.sourceURL error:&error]) {
         // Retain the failed bytes for diagnosis; never publish them as complete.
         [self finish:nil error:error];return;

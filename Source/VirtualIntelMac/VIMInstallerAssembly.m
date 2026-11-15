@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMInstallerAssembly.h"
 #include "../tools/opengl-installer-paths.h"
 #import <signal.h>
@@ -101,19 +102,19 @@ static NSNumber *FlushGeneratedImage(NSURL *URL,NSError **error) {
         !lstat(URL.fileSystemRepresentation,&path)&&S_ISREG(path.st_mode)&&
         path.st_dev==after.st_dev&&path.st_ino==after.st_ino&&path.st_size==after.st_size;
     if(fd>=0&&close(fd))valid=NO;
-    if(!valid){AssemblyError(error,@"The installer image couldn’t be saved reliably. Its working files were retained. Check that the library drive is connected, then try preparing the installer again.");return nil;}
+    if(!valid){AssemblyError(error,VIMLocalized(@"installerassembly.the-installer-image-couldn-t-be-saved-reliably-its-working", @"The installer image couldn’t be saved reliably. Its working files were retained. Check that the library drive is connected, then try preparing the installer again."));return nil;}
     return @(after.st_size);
 }
 static BOOL VerifyOpenGLSupport(NSURL *directory,NSString *guest,NSError **error) {
     NSArray *files=[NSFileManager.defaultManager subpathsAtPath:directory.path];
     for(NSString *name in @[@"opengl-guest-agent",@"opengl-install-bootstrap",@"opengl-create-account",@"guest-ssh",@"guest-host-connection"])
-        if(!NonemptyFile([directory URLByAppendingPathComponent:name]))return AssemblyError(error,@"This app is missing its OS X guest support. Rebuild or reinstall the complete app.");
+        if(!NonemptyFile([directory URLByAppendingPathComponent:name]))return AssemblyError(error,VIMLocalized(@"installerassembly.this-app-is-missing-its-os-x-guest-support-rebuild", @"This app is missing its OS X guest support. Rebuild or reinstall the complete app."));
     for(NSString *name in files) {
         NSURL *file=[directory URLByAppendingPathComponent:name];struct stat st;
         if(!lstat(file.fileSystemRepresentation,&st)&&S_ISDIR(st.st_mode))continue;
         if(![file.URLByResolvingSymlinksInPath.path hasPrefix:[directory.URLByResolvingSymlinksInPath.path stringByAppendingString:@"/"]]||
            lstat(file.fileSystemRepresentation,&st)||!S_ISREG(st.st_mode)||st.st_size<0||st.st_size>64*1024*1024)
-            return AssemblyError(error,@"A bundled guest support file is missing or invalid.");
+            return AssemblyError(error,VIMLocalized(@"installerassembly.a-bundled-guest-support-file-is-missing-or-invalid", @"A bundled guest support file is missing or invalid."));
     }
     return YES;
 }
@@ -162,14 +163,14 @@ static BOOL ClassicReleaseSupported(NSString *guest,NSDictionary *version,NSErro
     if(!supported||([found isEqual:supported]&&(!build||[foundBuild isEqual:build])))return YES;
     NSString *name=@{@"tiger":@"Mac OS X Tiger",@"leopard":@"Mac OS X Leopard",@"snowleopard":@"Mac OS X Snow Leopard"}[guest];
     NSString *required=build?[NSString stringWithFormat:@"%@ (%@)",supported,build]:supported;
-    NSString *chosen=found.length?(foundBuild.length?[NSString stringWithFormat:@"%@ (%@)",found,foundBuild]:found):@"an unknown version";
+    NSString *chosen=found.length?(foundBuild.length?[NSString stringWithFormat:@"%@ (%@)",found,foundBuild]:found):VIMLocalized(@"installerassembly.an-unknown-version", @"an unknown version");
     // Link the catalog's release page for the supported image, else the
     // catalog's own image URL. No location is built into the app.
     NSURL *download=[entry[@"ReleaseURL"] isKindOfClass:NSString.class]?[NSURL URLWithString:entry[@"ReleaseURL"]]:nil;
     for(NSDictionary *file in entry[@"Files"])if(!download&&[file[@"Role"] isEqual:@"diskimage"])download=[NSURL URLWithString:file[@"URL"]];
-    NSMutableDictionary *info=[@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"This %@ disc isn’t supported",name],
+    NSMutableDictionary *info=[@{NSLocalizedDescriptionKey:[NSString stringWithFormat:VIMLocalized(@"installerassembly.this-disc-isn-t-supported", @"This %@ disc isn’t supported"),name],
         NSLocalizedRecoverySuggestionErrorKey:[NSString stringWithFormat:
-            @"This image is %@ %@. Virtual Intel Mac installs %@ only from the %@ image.\n\nDownload the supported image, or choose %@ without an installer and Virtual Intel Mac downloads it for you.",
+            VIMLocalized(@"installerassembly.this-image-is-virtual-intel-mac-installs-only-from-the", @"This image is %@ %@. Virtual Intel Mac installs %@ only from the %@ image.\n\nDownload the supported image, or choose %@ without an installer and Virtual Intel Mac downloads it for you."),
             name,chosen,name,required,name]} mutableCopy];
     if(download)info[VIMSupportedReleaseURLKey]=download;
     info[@"Guest"]=guest;
@@ -185,7 +186,7 @@ static BOOL LeopardRestoreProfile(NSURL *mount,NSError **error){
         RegularFile([mount URLByAppendingPathComponent:@"System/Library/CoreServices/boot.efi"])&&
         (InstallerPackageImage([mount URLByAppendingPathComponent:@"System/Installation/Packages/OSInstall.mpkg"])||
          RegularFile([mount URLByAppendingPathComponent:@"System/Installation/Packages/OSInstall.mpkg/Contents/Info.plist"]));
-    return matches||AssemblyError(error,@"Choose a complete Intel Leopard installation or restore disc with boot.efi and its installation packages.");
+    return matches||AssemblyError(error,VIMLocalized(@"installerassembly.choose-a-complete-intel-leopard-installation-or-restore-disc-with", @"Choose a complete Intel Leopard installation or restore disc with boot.efi and its installation packages."));
 }
 static NSURL *MountDirectory(NSError **error) {
     // macOS rejected our mount point beneath the external exFAT volume.
@@ -240,8 +241,8 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
            [pattern numberOfMatchesInString:device options:0 range:NSMakeRange(0,device.length)]==1) {
             NSString *raw=[device stringByReplacingCharactersInRange:NSMakeRange(5,0) withString:@"r"];
             copied=VIMCopyHFSInstallerVolume(raw.fileSystemRepresentation,volume.fileSystemRepresentation,HFSExtractionProgress,(__bridge void *)self)==0;
-            if(!copied)AssemblyError(error,self.cancelled?@"Installer preparation was cancelled. Your download is saved.":@"The installer’s HFS volume couldn’t be copied. Its original image was not changed.");
-        }else AssemblyError(error,@"The installer’s HFS partition couldn’t be identified. Its original image was not changed.");
+            if(!copied)AssemblyError(error,self.cancelled?VIMLocalized(@"installerassembly.installer-preparation-was-cancelled-your-download-is-saved", @"Installer preparation was cancelled. Your download is saved."):VIMLocalized(@"installerassembly.the-installer-s-hfs-volume-couldn-t-be-copied-its", @"The installer’s HFS volume couldn’t be copied. Its original image was not changed."));
+        }else AssemblyError(error,VIMLocalized(@"installerassembly.the-installer-s-hfs-partition-couldn-t-be-identified-its", @"The installer’s HFS partition couldn’t be identified. Its original image was not changed."));
     }
     BOOL detached=YES;
     if(attached){NSError *issue=nil;detached=[self run:@"/usr/bin/hdiutil" arguments:@[@"detach",mounted.path] timeout:60 cleanup:YES error:&issue];if(!detached&&error)*error=issue;}
@@ -249,13 +250,13 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     if(!copied||!detached)return NO;
     // Only replace our unmounted generated working image. HFS catalog bytes,
     // UUID, system owners and blessing are preserved by the native block copy.
-    if(rename(volume.fileSystemRepresentation,working.fileSystemRepresentation))return AssemblyError(error,@"The installer’s working volume couldn’t be saved. Its diagnostic files were retained.");
+    if(rename(volume.fileSystemRepresentation,working.fileSystemRepresentation))return AssemblyError(error,VIMLocalized(@"installerassembly.the-installer-s-working-volume-couldn-t-be-saved-its", @"The installer’s working volume couldn’t be saved. Its diagnostic files were retained."));
     return YES;
 }
 - (BOOL)prepareSerialRecoveryAtMount:(NSURL *)mount error:(NSError **)error {
     NSFileManager *fm=NSFileManager.defaultManager;
     NSURL *tool=self.recoveryControlTool?:[NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"Runtime/GuestTools/guest-recovery-agent"];
-    if(!NonemptyFile(tool))return AssemblyError(error,@"This app is missing its installer support. Reinstall the complete app and try again.");
+    if(!NonemptyFile(tool))return AssemblyError(error,VIMLocalized(@"installerassembly.this-app-is-missing-its-installer-support-reinstall-the-complete", @"This app is missing its installer support. Reinstall the complete app and try again."));
     NSURL *rc=[mount URLByAppendingPathComponent:@"private/etc/rc.install"];
     NSString *original=[NSString stringWithContentsOfURL:rc encoding:NSUTF8StringEncoding error:error];
     if(!original)return NO;
@@ -264,7 +265,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     // before Language Chooser. No modification of Apple's startup script/UI.
     NSString *anchor=@"\t/etc/rc.cdrom.local\n";
     if([original componentsSeparatedByString:anchor].count!=2)
-        return AssemblyError(error,@"This installer’s startup files could not be prepared. Its original files have not been changed.");
+        return AssemblyError(error,VIMLocalized(@"installerassembly.this-installer-s-startup-files-could-not-be-prepared-its", @"This installer’s startup files could not be prepared. Its original files have not been changed."));
     NSURL *destination=[mount URLByAppendingPathComponent:@"usr/libexec/guest-recovery-agent"];
     if(![fm copyItemAtURL:tool toURL:destination error:error]||
        ![fm setAttributes:@{NSFilePosixPermissions:@0755} ofItemAtPath:destination.path error:error])return NO;
@@ -347,11 +348,11 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
 + (BOOL)validatePreparedMedia:(NSURL *)URL guest:(NSString *)guest error:(NSError **)error {
     struct stat image,record;
     if(!URL.isFileURL||lstat(URL.fileSystemRepresentation,&image)||!S_ISREG(image.st_mode)||image.st_size<=0)
-        return AssemblyError(error,@"The installer image is unavailable. Reconnect its drive or choose the installer again.");
+        return AssemblyError(error,VIMLocalized(@"installerassembly.the-installer-image-is-unavailable-reconnect-its-drive-or-choose", @"The installer image is unavailable. Reconnect its drive or choose the installer again."));
     NSURL *receipt=[URL.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"Media.plist"];
     if(lstat(receipt.fileSystemRepresentation,&record)) {
         if(errno==ENOENT)return YES; // An ordinary image, not our prepared output.
-        return AssemblyError(error,@"The installer’s preparation record couldn’t be read. Reconnect its drive and try again.");
+        return AssemblyError(error,VIMLocalized(@"installerassembly.the-installer-s-preparation-record-couldn-t-be-read-reconnect", @"The installer’s preparation record couldn’t be read. Reconnect its drive and try again."));
     }
     NSDictionary *info=S_ISREG(record.st_mode)&&record.st_size>0&&record.st_size<=65536?
         [NSDictionary dictionaryWithContentsOfURL:receipt]:nil;
@@ -360,9 +361,9 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
        ![info[@"Size"] isKindOfClass:NSNumber.class]||[info[@"Size"] longLongValue]!=image.st_size||
        ([@[@"tiger",@"leopard",@"snowleopard"] containsObject:guest]&&![info[@"PartitionedInstaller"] isEqual:@YES])||
        ([guest isEqual:@"tiger"]&&(![info[@"TigerRestorePolicyVersion"] isEqual:@1]||![info[@"TigerControlBootstrapVersion"] isEqual:@8]||![info[@"DiscTwoExcluded"] isEqual:@YES]||![info[@"RestoreModelRestrictionRemoved"] isEqual:@YES])))
-        return AssemblyError(error,@"The prepared installer is incomplete or has changed. Prepare it again from the original installer. Your virtual Mac and downloaded installer haven’t been changed.");
+        return AssemblyError(error,VIMLocalized(@"installerassembly.the-prepared-installer-is-incomplete-or-has-changed-prepare-it", @"The prepared installer is incomplete or has changed. Prepare it again from the original installer. Your virtual Mac and downloaded installer haven’t been changed."));
     if(!PreparedImageHasBootBlocks(URL))
-        return AssemblyError(error,@"The prepared installer’s disk header is unreadable. Prepare it again from the original installer. Your virtual Mac and original installer haven’t been changed.");
+        return AssemblyError(error,VIMLocalized(@"installerassembly.the-prepared-installer-s-disk-header-is-unreadable-prepare-it", @"The prepared installer’s disk header is unreadable. Prepare it again from the original installer. Your virtual Mac and original installer haven’t been changed."));
     return YES;
 }
 + (void)retireCompletedDownloads:(NSDictionary<NSString *,NSURL *> *)files {
@@ -445,7 +446,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
                 RegularFile([mount URLByAppendingPathComponent:@"System/Library/CoreServices/boot.efi"])&&
                 (InstallerPackageImage([mount URLByAppendingPathComponent:@"System/Installation/Packages/OSInstall.mpkg"])||
                  RegularFile([mount URLByAppendingPathComponent:@"System/Installation/Packages/OSInstall.mpkg/Contents/Info.plist"])))guest=@"snowleopard";
-            else if(!guest)AssemblyError(error,@"Choose a supported Tiger, Leopard or Snow Leopard restore DVD, or a complete installer app for a newer OS.");
+            else if(!guest)AssemblyError(error,VIMLocalized(@"installerassembly.choose-a-supported-tiger-leopard-or-snow-leopard-restore-dvd", @"Choose a supported Tiger, Leopard or Snow Leopard restore DVD, or a complete installer app for a newer OS."));
             if(guest&&!ClassicReleaseSupported(guest,version,error))guest=nil;
         }
         NSError *detachError=nil;
@@ -459,7 +460,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     NSString *guest=nil;
     if([identifier isKindOfClass:NSString.class])for(NSString *candidate in InstallerIdentifiers())
         if([identifier isEqual:InstallerIdentifiers()[candidate]]){guest=candidate;break;}
-    if(!guest){AssemblyError(error,@"Choose a complete installer app for a supported version from Lion through Big Sur, or a supported Mac OS X restore DVD disk image.");return nil;}
+    if(!guest){AssemblyError(error,VIMLocalized(@"installerassembly.choose-a-complete-installer-app-for-a-supported-version-from", @"Choose a complete installer app for a supported version from Lion through Big Sur, or a supported Mac OS X restore DVD disk image."));return nil;}
     return [self validateInstallerApplication:URL guest:guest error:error]?guest:nil;
 }
 + (BOOL)validateInstallerApplication:(NSURL *)URL guest:(NSString *)guest error:(NSError **)error {
@@ -474,7 +475,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
         // original disc model and a particular container trailer do not.
         BOOL valid=fd>=0&&!fstat(fd,&st)&&S_ISREG(st.st_mode)&&st.st_size>512;
         if(fd>=0)close(fd);
-        return valid||AssemblyError(error,@"Choose the complete Mac OS X restore DVD disk image.");
+        return valid||AssemblyError(error,VIMLocalized(@"installerassembly.choose-the-complete-mac-os-x-restore-dvd-disk-image", @"Choose the complete Mac OS X restore DVD disk image."));
     }
     NSString *identifier=InstallerIdentifiers()[guest];
     NSDictionary *info=[NSDictionary dictionaryWithContentsOfURL:[URL URLByAppendingPathComponent:@"Contents/Info.plist"]];
@@ -493,9 +494,9 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     // Do not reject Apple's complete app merely because InstallInfo is absent.
     BOOL versionMatches=((!splitInstaller||classic)&&![NSFileManager.defaultManager fileExistsAtPath:installURL.path])||InstallerVersionMatches(version,guest);
     BOOL matches=identifier&&URL.isFileURL&&[URL.pathExtension.lowercaseString isEqual:@"app"]&&[info[@"CFBundleIdentifier"] isEqual:identifier]&&versionMatches;
-    if(!matches||!complete)return AssemblyError(error,@"Choose the complete installer app for the selected Mac OS version. This file is a different version or is missing installation files.");
+    if(!matches||!complete)return AssemblyError(error,VIMLocalized(@"installerassembly.choose-the-complete-installer-app-for-the-selected-mac-os", @"Choose the complete installer app for the selected Mac OS version. This file is a different version or is missing installation files."));
     if(!splitInstaller&&!InstallerPackageImage([support URLByAppendingPathComponent:@"SharedSupport.dmg"]))
-        return AssemblyError(error,@"This Big Sur installer is missing Apple’s signed installation package. Choose a complete installer app, or download a new copy using Virtual Intel Mac.");
+        return AssemblyError(error,VIMLocalized(@"installerassembly.this-big-sur-installer-is-missing-apple-s-signed-installation", @"This Big Sur installer is missing Apple’s signed installation package. Choose a complete installer app, or download a new copy using Virtual Intel Mac."));
     return YES;
 }
 - (void)report:(NSString *)stage {
@@ -532,7 +533,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     NSString *text=[NSString stringWithContentsOfURL:distribution encoding:NSUTF8StringEncoding error:error];
     NSXMLDocument *plan=text?[[NSXMLDocument alloc] initWithXMLString:text options:NSXMLNodePreserveAll|NSXMLNodeLoadExternalEntitiesNever error:error]:nil;
     if(![plan.rootElement.name isEqual:@"installer-gui-script"])
-        return AssemblyError(error,@"This disc’s installation plan could not be read. Its original image was retained.");
+        return AssemblyError(error,VIMLocalized(@"installerassembly.this-disc-s-installation-plan-could-not-be-read-its", @"This disc’s installation plan could not be read. Its original image was retained."));
     for(NSXMLElement *check in [plan.rootElement elementsForName:@"installation-check"])
         [check attributeForName:@"script"].stringValue=@"true";
     if([fm fileExistsAtPath:[mount URLByAppendingPathComponent:@"System/Installation/Packages/Rosetta.pkg"].path])
@@ -566,7 +567,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     if(![fm createDirectoryAtURL:verify withIntermediateDirectories:NO attributes:nil error:error]||
        ![self run:@"/usr/bin/xar" arguments:@[@"-xf",output.path,@"-C",verify.path] timeout:180 cleanup:NO error:error]||
        ![[NSString stringWithContentsOfURL:[verify URLByAppendingPathComponent:@"Distribution"] encoding:NSUTF8StringEncoding error:error] isEqual:patched])
-        return AssemblyError(error,@"The Snow Leopard installation packages couldn’t be verified. The original DVD image was retained.");
+        return AssemblyError(error,VIMLocalized(@"installerassembly.the-snow-leopard-installation-packages-couldn-t-be-verified-the", @"The Snow Leopard installation packages couldn’t be verified. The original DVD image was retained."));
     NSData *bytes=[NSData dataWithContentsOfURL:output options:0 error:error];
     NSNumber *mode=[fm attributesOfItemAtPath:package.path error:error][NSFilePosixPermissions];
     if(!bytes.length||bytes.length>8*1024*1024||!mode||
@@ -589,9 +590,9 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     if(status!=errSecSuccess||!details||
        (entitlements&&(![entitlements isKindOfClass:NSDictionary.class]||entitlements.count>1||
         (entitlements.count&&![entitlements[@"com.apple.private.securityd.stash"] isEqual:@YES]))))
-        return AssemblyError(error,@"This OS X installer’s automatic launch policy is not recognized. Its original installer was not changed.");
+        return AssemblyError(error,VIMLocalized(@"installerassembly.this-os-x-installer-s-automatic-launch-policy-is-not", @"This OS X installer’s automatic launch policy is not recognized. Its original installer was not changed."));
     NSFileManager *fm=NSFileManager.defaultManager;
-    if([fm fileExistsAtPath:automatic.path])return AssemblyError(error,@"Automatic installer preparation found an unexpected existing copy.");
+    if([fm fileExistsAtPath:automatic.path])return AssemblyError(error,VIMLocalized(@"installerassembly.automatic-installer-preparation-found-an-unexpected-existing-copy", @"Automatic installer preparation found an unexpected existing copy."));
     NSURL *policy=[self.job URLByAppendingPathComponent:@"AutomaticInstallerEntitlements.plist"];
     NSData *empty=[NSPropertyListSerialization dataWithPropertyList:@{} format:NSPropertyListXMLFormat_v1_0 options:0 error:error];
     if(!empty||![empty writeToURL:policy options:NSDataWritingAtomic error:error])return NO;
@@ -607,11 +608,11 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
 }
 - (BOOL)run:(NSString *)path arguments:(NSArray<NSString *> *)arguments workingDirectory:(NSURL *)workingDirectory
     timeout:(NSTimeInterval)timeout cleanup:(BOOL)cleanup error:(NSError **)error {
-    if(self.cancelled&&!cleanup)return AssemblyError(error,@"Installer preparation was cancelled. Downloads were retained.");
+    if(self.cancelled&&!cleanup)return AssemblyError(error,VIMLocalized(@"installerassembly.installer-preparation-was-cancelled-downloads-were-retained", @"Installer preparation was cancelled. Downloads were retained."));
     NSURL *log=[self.job URLByAppendingPathComponent:[NSString stringWithFormat:@"%02lu-%@.log",++self.step,path.lastPathComponent]];
     self.lastLog=log;
     int fd=open(log.fileSystemRepresentation,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,0600);
-    if(fd<0)return AssemblyError(error,@"Cannot create the installer preparation log.");
+    if(fd<0)return AssemblyError(error,VIMLocalized(@"installerassembly.cannot-create-the-installer-preparation-log", @"Cannot create the installer preparation log."));
     NSFileHandle *output=[[NSFileHandle alloc] initWithFileDescriptor:fd closeOnDealloc:YES];
     NSTask *task=[NSTask new];task.executableURL=[NSURL fileURLWithPath:path];
     if(workingDirectory)task.currentDirectoryURL=workingDirectory;
@@ -670,7 +671,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     }
     [reader closeFile];
     [output closeFile];
-    if(interrupted)return AssemblyError(error,@"Preparing the installer took longer than expected or was cancelled. Your downloads are saved. Try again to resume setup.");
+    if(interrupted)return AssemblyError(error,VIMLocalized(@"installerassembly.preparing-the-installer-took-longer-than-expected-or-was-cancelled", @"Preparing the installer took longer than expected or was cancelled. Your downloads are saved. Try again to resume setup."));
     if(task.terminationStatus==0) {
         if(end>begin) {
             double duration=NSProcessInfo.processInfo.systemUptime-start;
@@ -680,23 +681,23 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
         return YES;
     }
     if(error)*error=[NSError errorWithDomain:@"VirtualIntelMac.InstallerAssembly" code:task.terminationStatus userInfo:@{
-        NSLocalizedDescriptionKey:@"The OS installer couldn’t be prepared.",
-        NSLocalizedRecoverySuggestionErrorKey:@"Your downloads are saved. Try again to resume setup. If it fails again, check that your library’s drive is connected and has enough free space.",
+        NSLocalizedDescriptionKey:VIMLocalized(@"installerassembly.the-os-installer-couldn-t-be-prepared", @"The OS installer couldn’t be prepared."),
+        NSLocalizedRecoverySuggestionErrorKey:VIMLocalized(@"installerassembly.your-downloads-are-saved-try-again-to-resume-setup-if", @"Your downloads are saved. Try again to resume setup. If it fails again, check that your library’s drive is connected and has enough free space."),
         @"PreparationLog":log.path}];
     return NO;
 }
 - (NSURL *)assembleClassicDiskImage:(NSURL *)image guest:(NSString *)guest jobDirectory:(NSURL *)directory error:(NSError **)error {
     NSString *name=@{@"lion":@"Install Mac OS X Lion.app",@"mountainlion":@"Install OS X Mountain Lion.app",@"yosemite":@"Install OS X Yosemite.app",@"elcapitan":@"Install OS X El Capitan.app",@"sierra":@"Install macOS Sierra.app"}[guest];
     NSFileManager *fm=NSFileManager.defaultManager;
-    if(!name||!RegularFile(image)||!directory.isFileURL||[fm fileExistsAtPath:directory.path]){AssemblyError(error,@"Choose a complete Apple download and a new preparation directory.");return nil;}
+    if(!name||!RegularFile(image)||!directory.isFileURL||[fm fileExistsAtPath:directory.path]){AssemblyError(error,VIMLocalized(@"installerassembly.choose-a-complete-apple-download-and-a-new-preparation-directory", @"Choose a complete Apple download and a new preparation directory."));return nil;}
     NSDictionary *space=[fm attributesOfFileSystemForPath:directory.URLByDeletingLastPathComponent.path error:error];
     if(!space)return nil;
-    if([space[NSFileSystemFreeSize] unsignedLongLongValue]<(16ULL<<30)){AssemblyError(error,@"Installer preparation needs at least 16 GB of available space.");return nil;}
+    if([space[NSFileSystemFreeSize] unsignedLongLongValue]<(16ULL<<30)){AssemblyError(error,VIMLocalized(@"installerassembly.installer-preparation-needs-at-least-16-gb-of-available-space", @"Installer preparation needs at least 16 GB of available space."));return nil;}
     if(![fm createDirectoryAtURL:directory withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:error])return nil;
     self.job=directory;self.step=0;self.progressGuest=guest;
     NSString *source=[VIMInstallerCatalog fileForGuest:guest role:@"diskimage"][@"URL"];
-    if(!source){AssemblyError(error,@"This installer has no download record in the installer catalog.");return nil;}
-    [self report:@"Verifying the original Apple download…"];
+    if(!source){AssemblyError(error,VIMLocalized(@"installerassembly.this-installer-has-no-download-record-in-the-installer-catalog", @"This installer has no download record in the installer catalog."));return nil;}
+    [self report:VIMLocalized(@"installerassembly.verifying-the-original-apple-download", @"Verifying the original Apple download…")];
     // Historical packages have expired Apple certificates. Authenticate the
     // exact approved image bytes instead of weakening global signature policy.
     if(![VIMInstallerSource verifyFile:image source:[NSURL URLWithString:source] error:error])return nil;
@@ -705,7 +706,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     BOOL unpacked=NO;NSURL *expanded=[directory URLByAppendingPathComponent:@"Expanded"];
     NSString *package=[guest isEqual:@"sierra"]?@"InstallOS.pkg":@"InstallMacOSX.pkg";
     if(mounted) {
-        [self report:@"Unpacking the original Mac OS X installer…"];[self nextWorkTo:.35 seconds:90];
+        [self report:VIMLocalized(@"installerassembly.unpacking-the-original-mac-os-x-installer", @"Unpacking the original Mac OS X installer…")];[self nextWorkTo:.35 seconds:90];
         unpacked=[self run:@"/usr/sbin/pkgutil" arguments:@[@"--expand-full",[mount URLByAppendingPathComponent:package].path,expanded.path] timeout:1800 cleanup:NO error:error];
     }
     NSError *issue=nil;BOOL detached=[self run:@"/usr/bin/hdiutil" arguments:@[@"detach",mount.path] timeout:60 cleanup:YES error:&issue];
@@ -730,16 +731,16 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
 - (NSURL *)assembleMavericks:(NSURL *)esd jobDirectory:(NSURL *)directory error:(NSError **)error {
     NSFileManager *fm=NSFileManager.defaultManager;
     if(!RegularFile(esd)||!directory.isFileURL||[fm fileExistsAtPath:directory.path]){
-        AssemblyError(error,@"Choose a complete Mavericks download and a new preparation directory.");return nil;
+        AssemblyError(error,VIMLocalized(@"installerassembly.choose-a-complete-mavericks-download-and-a-new-preparation-directory", @"Choose a complete Mavericks download and a new preparation directory."));return nil;
     }
     NSDictionary *space=[fm attributesOfFileSystemForPath:directory.URLByDeletingLastPathComponent.path error:error];
     if(!space)return nil;
-    if([space[NSFileSystemFreeSize] unsignedLongLongValue]<(16ULL<<30)){AssemblyError(error,@"Installer preparation needs at least 16 GB of available space.");return nil;}
+    if([space[NSFileSystemFreeSize] unsignedLongLongValue]<(16ULL<<30)){AssemblyError(error,VIMLocalized(@"installerassembly.installer-preparation-needs-at-least-16-gb-of-available-space", @"Installer preparation needs at least 16 GB of available space."));return nil;}
     if(![fm createDirectoryAtURL:directory withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:error])return nil;
     self.job=directory;self.step=0;self.progressGuest=@"mavericks";
-    [self report:@"Verifying the Mavericks installer…"];
+    [self report:VIMLocalized(@"installerassembly.verifying-the-mavericks-installer", @"Verifying the Mavericks installer…")];
     NSString *location=[VIMInstallerCatalog fileForGuest:@"mavericks" role:@"esd"][@"URL"];
-    if(!location){AssemblyError(error,@"Mavericks has no download record in the installer catalog.");return nil;}
+    if(!location){AssemblyError(error,VIMLocalized(@"installerassembly.mavericks-has-no-download-record-in-the-installer-catalog", @"Mavericks has no download record in the installer catalog."));return nil;}
     NSURL *source=[NSURL URLWithString:location];
     if(![VIMInstallerSource verifyFile:esd source:source error:error])return nil;
     NSURL *outer=MountDirectory(error),*base=nil,*app=nil;
@@ -750,17 +751,17 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
         if(!outerMounted)return nil;
         if(!RegularFile([outer URLByAppendingPathComponent:@"BaseSystem.dmg"])||
            !RegularFile([outer URLByAppendingPathComponent:@"Packages/OSInstall.mpkg"])) {
-            AssemblyError(error,@"The Mavericks download is missing its recovery system or installation packages.");return nil;
+            AssemblyError(error,VIMLocalized(@"installerassembly.the-mavericks-download-is-missing-its-recovery-system-or-installation", @"The Mavericks download is missing its recovery system or installation packages."));return nil;
         }
         base=MountDirectory(error);if(!base)return nil;
         baseMounted=[self run:@"/usr/bin/hdiutil" arguments:@[@"attach",@"-readonly",@"-nobrowse",@"-noautoopen",@"-mountpoint",base.path,[outer URLByAppendingPathComponent:@"BaseSystem.dmg"].path] timeout:180 cleanup:NO error:error];
         if(!baseMounted)return nil;
         NSDictionary *version=[NSDictionary dictionaryWithContentsOfURL:[base URLByAppendingPathComponent:@"System/Library/CoreServices/SystemVersion.plist"]];
         if(!InstallerVersionMatches(version[@"ProductVersion"],@"mavericks")) {
-            AssemblyError(error,@"The downloaded recovery system is not OS X Mavericks.");return nil;
+            AssemblyError(error,VIMLocalized(@"installerassembly.the-downloaded-recovery-system-is-not-os-x-mavericks", @"The downloaded recovery system is not OS X Mavericks."));return nil;
         }
         app=[directory URLByAppendingPathComponent:@"Install OS X Mavericks.app"];
-        [self report:@"Preparing the original Mavericks installer…"];[self nextWorkTo:.2 seconds:10];
+        [self report:VIMLocalized(@"installerassembly.preparing-the-original-mavericks-installer", @"Preparing the original Mavericks installer…")];[self nextWorkTo:.2 seconds:10];
         if(![self run:@"/usr/bin/ditto" arguments:@[@"--norsrc",@"--noextattr",@"--noacl",[base URLByAppendingPathComponent:app.lastPathComponent].path,app.path] timeout:300 cleanup:NO error:error])return nil;
         NSURL *support=[app URLByAppendingPathComponent:@"Contents/SharedSupport"];
         if(![fm createDirectoryAtURL:support withIntermediateDirectories:YES attributes:nil error:error])return nil;
@@ -800,7 +801,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     // has no InstallAssistant to manufacture or extract. Keep the completed
     // original until its generated replacement has been verified.
     if([@[@"tiger",@"leopard",@"snowleopard"] containsObject:guest]) {
-        if(!NonemptyFile(files[@"diskimage"])) {AssemblyError(error,@"Choose the complete Mac OS X restore DVD image.");return nil;}
+        if(!NonemptyFile(files[@"diskimage"])) {AssemblyError(error,VIMLocalized(@"installerassembly.choose-the-complete-mac-os-x-restore-dvd-image", @"Choose the complete Mac OS X restore DVD image."));return nil;}
         return files[@"diskimage"];
     }
     if([guest isEqual:@"mavericks"])return [self assembleMavericks:files[@"esd"] jobDirectory:directory error:error];
@@ -809,21 +810,21 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     NSString *name=names[guest];BOOL splitInstaller=![guest isEqual:@"bigsur"];
     if(!name||!directory.isFileURL||!RegularFile(files[@"assistant"])||
        (splitInstaller&&(!RegularFile(files[@"recovery"])||!RegularFile(files[@"esd"])))) {
-        AssemblyError(error,@"The installer inputs are missing or unsupported.");return nil;
+        AssemblyError(error,VIMLocalized(@"installerassembly.the-installer-inputs-are-missing-or-unsupported", @"The installer inputs are missing or unsupported."));return nil;
     }
     NSFileManager *fm=NSFileManager.defaultManager;
     NSDictionary *space=[fm attributesOfFileSystemForPath:directory.URLByDeletingLastPathComponent.path error:error];
     if(!space)return nil;
     if([space[NSFileSystemFreeSize] unsignedLongLongValue]<16ULL*1024*1024*1024) {
-        AssemblyError(error,@"Installer preparation needs at least 16 GB of available scratch space.");return nil;
+        AssemblyError(error,VIMLocalized(@"installerassembly.installer-preparation-needs-at-least-16-gb-of-available-scratch", @"Installer preparation needs at least 16 GB of available scratch space."));return nil;
     }
     // A fresh directory is the ownership boundary; never reuse or clear user paths.
     if([fm fileExistsAtPath:directory.path]||![fm createDirectoryAtURL:directory withIntermediateDirectories:NO
         attributes:@{NSFilePosixPermissions:@0700} error:error]) {
-        if(error&&!*error)AssemblyError(error,@"Choose a new installer preparation job directory.");return nil;
+        if(error&&!*error)AssemblyError(error,VIMLocalized(@"installerassembly.choose-a-new-installer-preparation-job-directory", @"Choose a new installer preparation job directory."));return nil;
     }
     self.job=directory;self.step=0;self.progressGuest=guest;
-    [self report:@"Checking the Apple installer package…"];
+    [self report:VIMLocalized(@"installerassembly.checking-the-apple-installer-package", @"Checking the Apple installer package…")];
     [self nextWorkTo:.05 seconds:5];
     if(![self run:@"/usr/sbin/pkgutil" arguments:@[@"--check-signature",files[@"assistant"].path] timeout:300 cleanup:NO error:error])return nil;
     // A valid third-party Developer ID is not an Apple OS installer signature.
@@ -832,10 +833,10 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     BOOL apple=NO;
     for(NSString *line in [signature componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet])
         if([[line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet] isEqual:@"Status: signed Apple Software"])apple=YES;
-    if(!apple){AssemblyError(error,@"The package is not identified as signed Apple Software. It was not extracted.");return nil;}
+    if(!apple){AssemblyError(error,VIMLocalized(@"installerassembly.the-package-is-not-identified-as-signed-apple-software-it", @"The package is not identified as signed Apple Software. It was not extracted."));return nil;}
     NSURL *expanded=[directory URLByAppendingPathComponent:@"Expanded"];
     [self completedWork:.05];
-    [self report:@"Unpacking the installer…"];
+    [self report:VIMLocalized(@"installerassembly.unpacking-the-installer", @"Unpacking the installer…")];
     [self nextWorkTo:.30 seconds:splitInstaller?45:180];
     if(![self run:@"/usr/sbin/pkgutil" arguments:@[@"--expand-full",files[@"assistant"].path,expanded.path] timeout:1800 cleanup:NO error:error])return nil;
     // Apple packages may be a single component or a product archive containing components.
@@ -847,7 +848,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
         if(link.boolValue){[enumerator skipDescendants];continue;}
         if([URL.lastPathComponent isEqual:name]){[candidates addObject:URL];[enumerator skipDescendants];}
     }
-    if(candidates.count!=1){AssemblyError(error,@"The package does not contain exactly one expected OS installer.");return nil;}
+    if(candidates.count!=1){AssemblyError(error,VIMLocalized(@"installerassembly.the-package-does-not-contain-exactly-one-expected-os-installer", @"The package does not contain exactly one expected OS installer."));return nil;}
     NSURL *app=[directory URLByAppendingPathComponent:name];
     if(![fm moveItemAtURL:candidates.firstObject toURL:app error:error])return nil;
     NSURL *support=[app URLByAppendingPathComponent:@"Contents/SharedSupport" isDirectory:YES];
@@ -864,14 +865,14 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
         // package scripts or linking it to a download we subsequently retire.
         NSURL *destination=[support URLByAppendingPathComponent:@"SharedSupport.dmg"];
         if([fm fileExistsAtPath:destination.path]&&![fm removeItemAtURL:destination error:error])return nil;
-        [self report:@"Adding Apple’s signed installation package…"];
+        [self report:VIMLocalized(@"installerassembly.adding-apple-s-signed-installation-package", @"Adding Apple’s signed installation package…")];
         [self completedWork:.30];[self nextWorkTo:.43 seconds:120];
         if(![self run:@"/usr/bin/ditto" arguments:@[@"--norsrc",@"--noextattr",@"--noacl",files[@"assistant"].path,destination.path]
             timeout:1800 cleanup:NO error:error])return nil;
     }
     if(splitInstaller) {
         [self completedWork:.30];
-        [self report:@"Adding recovery and installation files…"];
+        [self report:VIMLocalized(@"installerassembly.adding-recovery-and-installation-files", @"Adding recovery and installation files…")];
         [self nextWorkTo:.32 seconds:10];
         NSURL *mount=MountDirectory(error);
         if(!mount)return nil;
@@ -881,7 +882,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
         if(attached) {
             for(NSString *file in @[@"BaseSystem.dmg",@"BaseSystem.chunklist",@"AppleDiagnostics.dmg",@"AppleDiagnostics.chunklist"]) {
                 NSURL *source=[mount URLByAppendingPathComponent:file];
-                if(self.cancelled||!RegularFile(source)){copied=AssemblyError(error,@"Recovery files are missing, or preparation was cancelled.");break;}
+                if(self.cancelled||!RegularFile(source)){copied=AssemblyError(error,VIMLocalized(@"installerassembly.recovery-files-are-missing-or-preparation-was-cancelled", @"Recovery files are missing, or preparation was cancelled."));break;}
                 if(![fm copyItemAtURL:source toURL:[support URLByAppendingPathComponent:file] error:error]){copied=NO;break;}
             }
         }
@@ -891,14 +892,14 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
         if(detached)rmdir(mount.fileSystemRepresentation);
         if(!copied)return nil;
         if(!detached){if(error)*error=detachError;return nil;}
-        if(self.cancelled){AssemblyError(error,@"Installer preparation was cancelled. Downloads were retained.");return nil;}
+        if(self.cancelled){AssemblyError(error,VIMLocalized(@"installerassembly.installer-preparation-was-cancelled-downloads-were-retained", @"Installer preparation was cancelled. Downloads were retained."));return nil;}
         // This multi-GB copy must honor Cancel/Quit, unlike a blocking
         // NSFileManager copy. Use the same bounded child lifecycle as unpacking.
         NSURL *esdDestination=[support URLByAppendingPathComponent:@"InstallESD.dmg"];
         if([fm fileExistsAtPath:esdDestination.path]) {
-            AssemblyError(error,@"The assembled installer already contains an unexpected ESD image.");return nil;
+            AssemblyError(error,VIMLocalized(@"installerassembly.the-assembled-installer-already-contains-an-unexpected-esd-image", @"The assembled installer already contains an unexpected ESD image."));return nil;
         }
-        [self report:@"Copying macOS installation data…"];
+        [self report:VIMLocalized(@"installerassembly.copying-macos-installation-data", @"Copying macOS installation data…")];
         [self completedWork:.36];
         [self nextWorkTo:.43 seconds:75];
         if(![self run:@"/usr/bin/ditto" arguments:@[@"--norsrc",@"--noextattr",@"--noacl",files[@"esd"].path,esdDestination.path]
@@ -912,7 +913,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     NSDictionary *receipt=@{@"FormatVersion":@1,@"Guest":guest,@"Stage":@"assembled",@"Installer":name};
     NSData *data=[NSPropertyListSerialization dataWithPropertyList:receipt format:NSPropertyListXMLFormat_v1_0 options:0 error:error];
     if(!data||![data writeToURL:[directory URLByAppendingPathComponent:@"Assembly.plist"] options:NSDataWritingAtomic error:error])return nil;
-    [self report:@"Installer assembled. Bootable media preparation is next."];
+    [self report:VIMLocalized(@"installerassembly.installer-assembled-bootable-media-preparation-is-next", @"Installer assembled. Bootable media preparation is next.")];
     [self completedWork:.45];
     return app;
 }
@@ -932,15 +933,15 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     NSURL *base=restoreDVD?installer:[installer URLByAppendingPathComponent:@"Contents/SharedSupport/BaseSystem.dmg"];
     NSURL *esd=restoreDVD?installer:[installer URLByAppendingPathComponent:@"Contents/SharedSupport/InstallESD.dmg"];
     if(!name||(!restoreDVD&&![installer.pathExtension.lowercaseString isEqual:@"app"])||!directory.isFileURL||(!classic&&!RegularFile(base))||!RegularFile(esd)) {
-        AssemblyError(error,@"Choose a complete supported installer and a new media job directory.");return nil;
+        AssemblyError(error,VIMLocalized(@"installerassembly.choose-a-complete-supported-installer-and-a-new-media-job", @"Choose a complete supported installer and a new media job directory."));return nil;
     }
     NSFileManager *fm=NSFileManager.defaultManager;
     NSDictionary *space=[fm attributesOfFileSystemForPath:directory.URLByDeletingLastPathComponent.path error:error];
     if(!space)return nil;
     if([space[NSFileSystemFreeSize] unsignedLongLongValue]<24ULL*1024*1024*1024) {
-        AssemblyError(error,@"Media preparation needs at least 24 GB of available scratch space.");return nil;
+        AssemblyError(error,VIMLocalized(@"installerassembly.media-preparation-needs-at-least-24-gb-of-available-scratch", @"Media preparation needs at least 24 GB of available scratch space."));return nil;
     }
-    if([fm fileExistsAtPath:directory.path]){AssemblyError(error,@"Media preparation requires a new job directory.");return nil;}
+    if([fm fileExistsAtPath:directory.path]){AssemblyError(error,VIMLocalized(@"installerassembly.media-preparation-requires-a-new-job-directory", @"Media preparation requires a new job directory."));return nil;}
     if(![fm createDirectoryAtURL:directory withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:error])return nil;
     self.job=directory;self.step=0;self.progressGuest=guest;
     if(classic&&!RegularFile(base)) {
@@ -962,7 +963,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     // UDRW conversion fails with ftruncate(EINVAL) on exFAT. Banded UDSB
     // avoids that host filesystem limitation, preserving the exact HFS catalog.
     NSURL *working=[directory URLByAppendingPathComponent:modernImages?@"Recovery-working.img":@"Recovery-working.sparsebundle"];
-    [self report:@"Reading installer recovery system…"];
+    [self report:VIMLocalized(@"installerassembly.reading-installer-recovery-system", @"Reading installer recovery system…")];
     NSString *imageTool=modernImages?@"/usr/sbin/diskutil":@"/usr/bin/hdiutil";
     NSArray *convert=modernImages?@[@"image",@"create",@"from",@"--format",@"RAW",base.path,working.path]:
         @[@"convert",@"-format",@"UDSB",@"-o",working.path,base.path];
@@ -987,9 +988,9 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
                     // for read-only copying, never unmount a user's disk.
                     NSString *raw=[device stringByReplacingCharactersInRange:NSMakeRange(5,0) withString:@"r"];
                     converted=VIMCopyHFSInstallerVolume(raw.fileSystemRepresentation,working.fileSystemRepresentation,HFSExtractionProgress,(__bridge void *)self)==0;
-                    if(!converted)AssemblyError(error,self.cancelled?@"Installer preparation was cancelled. Your download is saved.":@"The Leopard installation volume couldn’t be copied. Check the library drive and try again; the original DVD is unchanged.");
+                    if(!converted)AssemblyError(error,self.cancelled?VIMLocalized(@"installerassembly.installer-preparation-was-cancelled-your-download-is-saved", @"Installer preparation was cancelled. Your download is saved."):VIMLocalized(@"installerassembly.the-leopard-installation-volume-couldn-t-be-copied-check-the", @"The Leopard installation volume couldn’t be copied. Check the library drive and try again; the original DVD is unchanged."));
                 }else converted=[self run:@"/usr/bin/hdiutil" arguments:@[@"create",@"-srcdevice",device,@"-format",@"UDSB",@"-o",working.path] timeout:600 cleanup:NO error:error];
-            }else AssemblyError(error,@"The Leopard DVD’s installation partition couldn’t be identified safely. Its original image was not changed.");
+            }else AssemblyError(error,VIMLocalized(@"installerassembly.the-leopard-dvd-s-installation-partition-couldn-t-be-identified", @"The Leopard DVD’s installation partition couldn’t be identified safely. Its original image was not changed."));
         }
         if(sourceAttached){NSError *issue=nil;if(![self run:@"/usr/bin/hdiutil" arguments:@[@"detach",original.path] timeout:60 cleanup:YES error:&issue]){converted=NO;if(error)*error=issue;}}
         rmdir(original.fileSystemRepresentation);
@@ -1043,11 +1044,11 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
                     // tree loads the distribution but leaves image paths nil.
                     // Preserve the genuine metadata and images, not a donor
                     // app or an edited/synthetic Apple package distribution.
-                    [self report:@"Adding macOS installation images…"];[self nextWorkTo:.87 seconds:100];
+                    [self report:VIMLocalized(@"installerassembly.adding-macos-installation-images", @"Adding macOS installation images…")];[self nextWorkTo:.87 seconds:100];
                     copied=[self run:@"/usr/bin/ditto" arguments:@[@"--norsrc",@"--noextattr",@"--noacl",
                         [installer URLByAppendingPathComponent:@"Contents/SharedSupport"].path,mount.path] timeout:1800 cleanup:NO error:error];
                 }else if(removed&&sourceAttached) {
-                    [self report:@"Adding OS X installation packages…"];[self nextWorkTo:.87 seconds:100];
+                    [self report:VIMLocalized(@"installerassembly.adding-os-x-installation-packages", @"Adding OS X installation packages…")];[self nextWorkTo:.87 seconds:100];
                     copied=[self run:@"/usr/bin/ditto" arguments:@[@"--norsrc",@"--noextattr",@"--noacl",[sourceMount URLByAppendingPathComponent:@"Packages"].path,packages.path] timeout:1800 cleanup:NO error:error];
                     // Yosemite660's recovery element resolves BaseSystem from
                     // the enclosing distribution volume's ROOT on flat media.
@@ -1086,7 +1087,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
                         NSString *argument=@"\"${LAUNCH}\" \"${TARGET_APP}\"";
                         NSString *package=@"INSTALL_PKG=/System/Installation/Packages/OSInstall.mpkg";
                         if([original componentsSeparatedByString:argument].count!=2||[original componentsSeparatedByString:package].count!=2){
-                            AssemblyError(error,@"This High Sierra installer’s startup interface is not recognized. Its original files were retained.");copied=NO;
+                            AssemblyError(error,VIMLocalized(@"installerassembly.this-high-sierra-installer-s-startup-interface-is-not-recognized", @"This High Sierra installer’s startup interface is not recognized. Its original files were retained."));copied=NO;
                         }else{
                             NSString *patched=[original stringByReplacingOccurrencesOfString:argument withString:@"\"${LAUNCH}\" /System/Installation/Packages/Extras/VirtualIntelMac/opengl-installer-launch \"${TARGET_APP}\""];
                             patched=[patched stringByReplacingOccurrencesOfString:package withString:@"INSTALL_PKG=/InstallInfo.plist"];
@@ -1131,7 +1132,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
                         NSString *original=[NSString stringWithContentsOfURL:rc encoding:NSUTF8StringEncoding error:error];
                         NSString *invocation=@"    \"${OSINSTALLER}\"                                ";
                         NSArray *pieces=[original componentsSeparatedByString:invocation];
-                        if(pieces.count!=2){AssemblyError(error,@"This installer’s automatic launch interface is not recognized. Its original files were retained.");copied=NO;}
+                        if(pieces.count!=2){AssemblyError(error,VIMLocalized(@"installerassembly.this-installer-s-automatic-launch-interface-is-not-recognized-its", @"This installer’s automatic launch interface is not recognized. Its original files were retained."));copied=NO;}
                         else {
                             // Apple's minstall branch bypasses Language
                             // Chooser, which owns the native gray background.
@@ -1165,14 +1166,14 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
             } else {
             NSURL *stub=[mount URLByAppendingPathComponent:name];
             BOOL removed=![fm fileExistsAtPath:stub.path]||[fm removeItemAtURL:stub error:error];
-            [self report:@"Adding the complete OS installer…"];
+            [self report:VIMLocalized(@"installerassembly.adding-the-complete-os-installer", @"Adding the complete OS installer…")];
             [self completedWork:.65];
             [self nextWorkTo:.87 seconds:100];
             if(removed)copied=[self run:@"/usr/bin/ditto" arguments:@[@"--norsrc",@"--noextattr",@"--noacl",installer.path,stub.path] timeout:1800 cleanup:NO error:error];
             if(copied&&SerialRecovery(guest))copied=[self prepareSerialRecoveryAtMount:mount error:error];
             }
         }
-        else AssemblyError(error,@"Recovery system version or boot files do not match the selected macOS.");
+        else AssemblyError(error,VIMLocalized(@"installerassembly.recovery-system-version-or-boot-files-do-not-match-the", @"Recovery system version or boot files do not match the selected macOS."));
     }
     NSError *detachError=nil;
     [self nextWorkTo:.90 seconds:12];
@@ -1182,7 +1183,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     if(!detached){if(error)*error=detachError;return nil;}
     NSURL *image=[directory URLByAppendingPathComponent:@"Installer.iso"];
     NSURL *volumeImage=partitionedInstaller?[directory URLByAppendingPathComponent:@"Installer-volume.raw"]:image;
-    [self report:@"Creating the bootable installer image…"];
+    [self report:VIMLocalized(@"installerassembly.creating-the-bootable-installer-image", @"Creating the bootable installer image…")];
     [self completedWork:.9];
     [self nextWorkTo:partitionedInstaller?.96:.99 seconds:80];
     // Preserve BaseSystem's filesystem catalog, including root ownership,
@@ -1205,16 +1206,16 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
         // HFS partition Content Hint. A naked HFS volume boots in EFI but the
         // kernel waits forever for boot-uuid-media. Add real GPT metadata;
         // preserve all volume bytes/UUID and use the existing disk boot path.
-        [self report:@"Preparing the installation disk…"];
+        [self report:VIMLocalized(@"installerassembly.preparing-the-installation-disk", @"Preparing the installation disk…")];
         if(VIMWrapHFSInstallerDisk(volumeImage.fileSystemRepresentation,image.fileSystemRepresentation,
             HFSInstallerProgress,(__bridge void *)self)) {
-            AssemblyError(error,errno==ECANCELED?@"Installer preparation was cancelled. Your download is saved.":
-                @"The Mac OS X installation disk couldn’t be prepared. Check available storage and try again; your download is saved.");return nil;
+            AssemblyError(error,errno==ECANCELED?VIMLocalized(@"installerassembly.installer-preparation-was-cancelled-your-download-is-saved", @"Installer preparation was cancelled. Your download is saved."):
+                VIMLocalized(@"installerassembly.the-mac-os-x-installation-disk-couldn-t-be-prepared", @"The Mac OS X installation disk couldn’t be prepared. Check available storage and try again; your download is saved."));return nil;
         }
     }
     NSNumber *imageSize=FlushGeneratedImage(image,error);if(!imageSize)return nil;
     if(!PreparedImageHasBootBlocks(image)) {
-        AssemblyError(error,@"The installer image couldn’t be saved as a readable disk. Its working files were retained. Check that the library drive is connected, then try preparing it again.");return nil;
+        AssemblyError(error,VIMLocalized(@"installerassembly.the-installer-image-couldn-t-be-saved-as-a-readable", @"The installer image couldn’t be saved as a readable disk. Its working files were retained. Check that the library drive is connected, then try preparing it again."));return nil;
     }
     // A successful conversion/expected length is not proof of usable media.
     // Re-open the final blocks before deleting our working copy. In particular,
@@ -1253,7 +1254,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     }
     rmdir(readback.fileSystemRepresentation);
     if(!readbackMounted)return nil;
-    if(!readbackValid){AssemblyError(error,@"The prepared installer could not be verified. Its working files were retained; try preparing it again.");return nil;}
+    if(!readbackValid){AssemblyError(error,VIMLocalized(@"installerassembly.the-prepared-installer-could-not-be-verified-its-working-files", @"The prepared installer could not be verified. Its working files were retained; try preparing it again."));return nil;}
     if(partitionedInstaller&&![fm removeItemAtURL:volumeImage error:error])return nil;
     // Only a verified final image can retire the generated working copy.
     if(!modernImages)[fm removeItemAtURL:working error:nil];
@@ -1276,30 +1277,30 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     NSFileManager *fm=NSFileManager.defaultManager;
     NSURL *support=[installer URLByAppendingPathComponent:@"Contents/SharedSupport/SharedSupport.dmg"];
     if(!directory.isFileURL||![installer.pathExtension.lowercaseString isEqual:@"app"]||!RegularFile(support)) {
-        AssemblyError(error,@"Choose an assembled Big Sur installer and a new media job directory.");return nil;
+        AssemblyError(error,VIMLocalized(@"installerassembly.choose-an-assembled-big-sur-installer-and-a-new-media", @"Choose an assembled Big Sur installer and a new media job directory."));return nil;
     }
     NSDictionary *space=[fm attributesOfFileSystemForPath:directory.URLByDeletingLastPathComponent.path error:error];
     if(!space)return nil;
     if([space[NSFileSystemFreeSize] unsignedLongLongValue]<32ULL*1024*1024*1024) {
-        AssemblyError(error,@"Media preparation needs at least 32 GB of available scratch space.");return nil;
+        AssemblyError(error,VIMLocalized(@"installerassembly.media-preparation-needs-at-least-32-gb-of-available-scratch", @"Media preparation needs at least 32 GB of available scratch space."));return nil;
     }
-    if([fm fileExistsAtPath:directory.path]){AssemblyError(error,@"Media preparation requires a new job directory.");return nil;}
+    if([fm fileExistsAtPath:directory.path]){AssemblyError(error,VIMLocalized(@"installerassembly.media-preparation-requires-a-new-job-directory", @"Media preparation requires a new job directory."));return nil;}
     if(![fm createDirectoryAtURL:directory withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:error])return nil;
     self.job=directory;self.step=0;self.progressGuest=@"bigsur";
-    [self report:@"Checking Apple’s signed installation package…"];
+    [self report:VIMLocalized(@"installerassembly.checking-apple-s-signed-installation-package", @"Checking Apple’s signed installation package…")];
     if(![self run:@"/usr/sbin/pkgutil" arguments:@[@"--check-signature",support.path] timeout:300 cleanup:NO error:error])return nil;
     NSString *signature=[NSString stringWithContentsOfURL:self.lastLog encoding:NSUTF8StringEncoding error:error];
     BOOL apple=NO;
     for(NSString *line in [signature componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet])
         if([[line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet] isEqual:@"Status: signed Apple Software"])apple=YES;
-    if(!apple){AssemblyError(error,@"The Big Sur installation package is not identified as signed Apple Software. Choose a complete installer or download it again.");return nil;}
+    if(!apple){AssemblyError(error,VIMLocalized(@"installerassembly.the-big-sur-installation-package-is-not-identified-as-signed", @"The Big Sur installation package is not identified as signed Apple Software. Choose a complete installer or download it again."));return nil;}
     NSURL *mount=MountDirectory(error);
     if(!mount)return nil;
     NSURL *extracted=[directory URLByAppendingPathComponent:@"BootAssets"];
     NSURL *stage=[directory URLByAppendingPathComponent:@"MediaRoot"];
     for(NSURL *URL in @[extracted,stage])
         if(![fm createDirectoryAtURL:URL withIntermediateDirectories:NO attributes:nil error:error])return nil;
-    [self report:@"Reading Big Sur installer boot files…"];
+    [self report:VIMLocalized(@"installerassembly.reading-big-sur-installer-boot-files", @"Reading Big Sur installer boot files…")];
     [self completedWork:.45];[self nextWorkTo:.48 seconds:12];
     BOOL attached=[self run:@"/usr/bin/hdiutil" arguments:@[@"attach",@"-readonly",@"-nobrowse",@"-noautoopen",@"-mountpoint",mount.path,support.path]
         timeout:180 cleanup:NO error:error];
@@ -1326,7 +1327,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
             [arguments addObjectsFromArray:members];[arguments addObjectsFromArray:@[@"-d",extracted.path]];
             [self nextWorkTo:.60 seconds:50];
             extractedOK=[self run:@"/usr/bin/unzip" arguments:arguments timeout:600 cleanup:NO error:error];
-        } else AssemblyError(error,@"The Big Sur update archive or version metadata is ambiguous or missing.");
+        } else AssemblyError(error,VIMLocalized(@"installerassembly.the-big-sur-update-archive-or-version-metadata-is-ambiguous", @"The Big Sur update archive or version metadata is ambiguous or missing."));
     }
     NSError *detachError=nil;
     BOOL detached=[self run:@"/usr/bin/hdiutil" arguments:@[@"detach",mount.path] timeout:60 cleanup:YES error:&detachError];
@@ -1343,10 +1344,10 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
         @"AssetData/boot/PlatformSupport.plist":@"System/Library/CoreServices/PlatformSupport.plist",
         @"AssetData/boot/SystemVersion.plist":@"System/Library/CoreServices/SystemVersion.plist"};
     for(NSString *sourcePath in mapping) {
-        if(self.cancelled){AssemblyError(error,@"Media preparation was cancelled. Downloads were retained.");return nil;}
+        if(self.cancelled){AssemblyError(error,VIMLocalized(@"installerassembly.media-preparation-was-cancelled-downloads-were-retained", @"Media preparation was cancelled. Downloads were retained."));return nil;}
         NSURL *source=[extracted URLByAppendingPathComponent:sourcePath];
         NSURL *target=[stage URLByAppendingPathComponent:mapping[sourcePath]];
-        if(!RegularFile(source)){AssemblyError(error,@"A required Big Sur boot file is missing.");return nil;}
+        if(!RegularFile(source)){AssemblyError(error,VIMLocalized(@"installerassembly.a-required-big-sur-boot-file-is-missing", @"A required Big Sur boot file is missing."));return nil;}
         if(![fm createDirectoryAtURL:target.URLByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:error]||
            ![fm moveItemAtURL:source toURL:target error:error])return nil;
     }
@@ -1360,13 +1361,13 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
         NSData *plist=[NSPropertyListSerialization dataWithPropertyList:entry[0] format:NSPropertyListXMLFormat_v1_0 options:0 error:error];
         if(!plist||![plist writeToURL:entry[1] options:NSDataWritingAtomic error:error])return nil;
     }
-    [self report:@"Copying macOS installation files into the media…"];
+    [self report:VIMLocalized(@"installerassembly.copying-macos-installation-files-into-the-media", @"Copying macOS installation files into the media…")];
     [self completedWork:.65];
     [self nextWorkTo:.90 seconds:120];
     if(![self run:@"/usr/bin/ditto" arguments:@[@"--norsrc",@"--noextattr",@"--noacl",installer.path,[stage URLByAppendingPathComponent:installer.lastPathComponent].path]
         timeout:1800 cleanup:NO error:error])return nil;
     if(![fm removeItemAtURL:extracted error:error])return nil;
-    [self report:@"Creating the bootable installer image…"];
+    [self report:VIMLocalized(@"installerassembly.creating-the-bootable-installer-image", @"Creating the bootable installer image…")];
     [self completedWork:.9];
     NSURL *image=[directory URLByAppendingPathComponent:@"Installer.iso"];
     [self nextWorkTo:.99 seconds:120];
@@ -1375,7 +1376,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
         timeout:1800 cleanup:NO error:error])return nil;
     NSNumber *imageSize=FlushGeneratedImage(image,error);if(!imageSize)return nil;
     if(!PreparedImageHasBootBlocks(image)) {
-        AssemblyError(error,@"The installer image couldn’t be saved as a readable disk. Its working files were retained. Check that the library drive is connected, then try preparing it again.");return nil;
+        AssemblyError(error,VIMLocalized(@"installerassembly.the-installer-image-couldn-t-be-saved-as-a-readable", @"The installer image couldn’t be saved as a readable disk. Its working files were retained. Check that the library drive is connected, then try preparing it again."));return nil;
     }
     // Staged files are now inside the image and are never reused.
     if(![fm removeItemAtURL:stage error:error])return nil;

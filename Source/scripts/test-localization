@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""Check localization resources and real bundle lookup without driving the UI."""
+import collections
+import argparse
+import json
+from pathlib import Path
+import plistlib
+import re
+import shutil
+import subprocess
+import tempfile
+import xml.etree.ElementTree as ET
+
+source = Path(__file__).resolve().parents[1]
+app_source = source / 'VirtualIntelMac'
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--derived-data', type=Path, help='also check the built app and its production objects')
+parser.add_argument('--configuration', default='Debug', choices=('Debug', 'Release'))
+options = parser.parse_args()
+catalog = app_source / 'Localizable.xcstrings'
+assert catalog.is_file(), 'The application has no localization catalog'
+
+format_specifier = re.compile(r'%(?:(\d+)\$)?[-+ #0]*(?:\d+|\*)?(?:\.(?:\d+|\*))?(?:hh|ll|[hljztL])?([@diuoxXfFeEgGaAcCsSp%])')
+
+
+def arguments(text):
+    result = collections.Counter()
+    index = 0
+    for match in format_specifier.finditer(text):
+        if match[2] == '%':
+            continue
+        index += 1
+        # Keep the length modifier: %lu and %u have different argument types.
+        spec = re.sub(r'^%\d+\$', '%', match[0])
+        result[(int(match[1]) if match[1] else index, spec)] += 1
+    return result
+
+
+with tempfile.TemporaryDirectory(prefix='vim-localization-') as work:
+    contents = Path(work) / 'LocalizationTests.app' / 'Contents'
+    resources = contents / 'Resources'
+    executable = contents / 'MacOS' / 'LocalizationTests'
+    executable.parent.mkdir(parents=True)
+    resources.mkdir()
+    (contents / 'Info.plist').write_bytes(plistlib.dumps({
+        'CFBundleExecutable': executable.name,
+        'CFBundleIdentifier': 'com.virtualintelmac.localization-tests',
+        'CFBundlePackageType': 'APPL',
+        'CFBundleDevelopmentRegion': 'en',
+    }))
+    for name in ('Localizable', 'InfoPlist'):
+        path = app_source / (name + '.xcstrings')
+        document = json.loads(path.read_text())
+        assert document['sourceLanguage'] == 'en'
+        for key, entry in document['strings'].items():
+            if entry.get('shouldTranslate') is False:
+                continue
+            english = entry['localizations']['en']['stringUnit']['value']
+            chinese = entry['localizations']['zh-Hans']['stringUnit']['value']
+            assert english and chinese, f'{name}: empty translation for {key}'
+            assert arguments(english) == arguments(chinese), f'{name}: incompatible format arguments for {key}'
+        subprocess.run(['xcrun', 'xcstringstool', 'compile', str(path),
+                        '--output-directory', str(resources)], check=True)
+    entries = json.loads(catalog.read_text())['strings']
+    for path in app_source.glob('*.[mh]'):
+        code = '\n'.join(line for line in path.read_text().splitlines() if not line.startswith('#define VIMLocalized'))
+        calls = re.findall(r'VIMLocalized\(@"([^"\n]+)",\s*@"((?:[^"\\]|\\.)*)"\)', code)
+        assert len(calls) == len(re.findall(r'\bVIMLocalized\(', code)), f'{path.name}: localization needs literal keys and fallbacks'
+        assert not re.search(r'[\w)\]]\[\s*VIMLocalized\(', code), f'{path.name}: localized dictionary subscript'
+        assert not re.search(r'(?:@\{|,)\s*VIMLocalized\(@"[^"\n]+",\s*@"(?:[^"\\]|\\.)*"\)\s*:', code), f'{path.name}: localized dictionary key'
+        for key, fallback in calls:
+            assert key in entries, f'{path.name}: missing key {key}'
+            assert json.loads('"' + fallback + '"') == entries[key]['localizations']['en']['stringUnit']['value'], f'{path.name}: fallback differs for {key}'
+    session_code = (app_source / 'VIMSession.m').read_text()
+    assert not re.search(r'(?:isEqual(?:ToString)?|containsString|containsObject|hasPrefix|hasSuffix|rangeOfString):\s*VIMLocalized\(', session_code), 'Session protocol parsing depends on translated display text'
+    # Every visible Base menu title needs a Chinese translation, including
+    # AppKit-provided submenus retained by the application.
+    base = ET.parse(app_source / 'Base.lproj' / 'MainMenu.xib')
+    translated_menu = app_source / 'zh-Hans.lproj' / 'MainMenu.strings'
+    menu_values = plistlib.loads(subprocess.check_output(['plutil', '-convert', 'xml1', '-o', '-', str(translated_menu)]))
+    for element in base.iter():
+        if element.tag in ('menu', 'menuItem') and element.get('title'):
+            assert element.get('id') + '.title' in menu_values, f'Missing XIB menu: {element.get("title")}'
+    if options.derived_data:
+        product = options.derived_data / 'Build/Products' / options.configuration / 'Virtual Intel Mac.app'
+        info = plistlib.loads((product / 'Contents/Info.plist').read_bytes())
+        assert info['CFBundleDevelopmentRegion'] == 'en'
+        assert info['NSMicrophoneUsageDescription'] and info['NSRemovableVolumesUsageDescription']
+        for language in ('en', 'zh-Hans'):
+            localized = product / 'Contents/Resources' / (language + '.lproj')
+            assert (localized / 'Localizable.strings').is_file(), f'Missing packaged {language} strings'
+            assert (localized / 'InfoPlist.strings').is_file(), f'Missing packaged {language} permissions'
+        for directory in (product / 'Contents/Resources').glob('*.lproj'):
+            shutil.copytree(directory, resources / directory.name, dirs_exist_ok=True)
+    subprocess.run(['xcrun', 'clang', '-fobjc-arc', '-fmodules', '-framework', 'Cocoa',
+                    '-I', str(app_source), str(source / 'probes/localization-tests.m'),
+                    '-o', str(executable)], check=True)
+    for language in ('en', 'zh-Hans', 'fr'):
+        subprocess.run([str(executable), '-AppleLanguages', f'({language})', language], check=True)
+    if options.derived_data:
+        import platform
+        objects = options.derived_data / 'Build/Intermediates.noindex/VirtualIntelMac.build' / options.configuration / 'Virtual Intel Mac.build/Objects-normal' / platform.machine()
+        inputs = sorted(str(path) for path in objects.glob('*.o') if path.name != 'main.o')
+        assert inputs, 'Missing production objects; build the app first'
+        integration = executable.with_name('LocalizationIntegrationTests')
+        subprocess.run(['xcrun', 'clang', '-fobjc-arc', '-fmodules', '-framework', 'Cocoa', '-lbsm',
+                        '-I', str(app_source), str(source / 'probes/localization-integration-tests.m'),
+                        *inputs, '-o', str(integration)], check=True)
+        for language in ('en', 'zh-Hans'):
+            subprocess.run([str(integration), '-AppleLanguages', f'({language})', work, language], check=True)
+print('Localization checks passed: translations, formats, XIB coverage, language selection and stable identifiers.')

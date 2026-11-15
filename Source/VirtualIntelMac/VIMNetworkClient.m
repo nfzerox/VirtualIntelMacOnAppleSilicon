@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMNetworkClient.h"
 #import "../NetworkHelper/VIMNetworkProtocol.h"
 #import <ServiceManagement/ServiceManagement.h>
@@ -22,7 +23,7 @@ static void InstallNetworkHelper(BOOL terminal,void (^completion)(NSError *)) {
         if(!status)blessed=SMJobBless(kSMDomainSystemLaunchd,(__bridge CFStringRef)VIM_NETWORK_SERVICE,authorization,&error);
         if(authorization)AuthorizationFree(authorization,kAuthorizationFlagDestroyRights);
         NSError *failure=CFBridgingRelease(error);
-        if(status||!blessed)failure=failure?:VIMNetworkError(status==errAuthorizationCanceled?@"Network setup was cancelled.":@"Approve administrator access to enable host-only and bridged networking. Your virtual Macs do not run as administrator.");
+        if(status||!blessed)failure=failure?:VIMNetworkError(status==errAuthorizationCanceled?VIMLocalized(@"networkclient.network-setup-was-cancelled", @"Network setup was cancelled."):VIMLocalized(@"networkclient.approve-administrator-access-to-enable-host-only-and-bridged-networking", @"Approve administrator access to enable host-only and bridged networking. Your virtual Macs do not run as administrator."));
         dispatch_async(dispatch_get_main_queue(),^{completion(failure);});
     });
 }
@@ -34,7 +35,7 @@ static void InstallNetworkHelper(BOOL terminal,void (^completion)(NSError *)) {
 @end
 @implementation VIMNetworkClient
 + (void)authorizeUsingTerminalWithCompletion:(void (^)(NSError *))completion {
-    if(!NSBundle.mainBundle.infoDictionary[@"VIMNetworkHelperSourceHash"]){completion(VIMNetworkError(@"Build the complete app with its networking helper before authorizing it."));return;}
+    if(!NSBundle.mainBundle.infoDictionary[@"VIMNetworkHelperSourceHash"]){completion(VIMNetworkError(VIMLocalized(@"networkclient.build-the-complete-app-with-its-networking-helper-before-authorizing", @"Build the complete app with its networking helper before authorizing it.")));return;}
     InstallNetworkHelper(YES,completion);
 }
 - (void)connect {
@@ -46,14 +47,14 @@ static void InstallNetworkHelper(BOOL terminal,void (^completion)(NSError *)) {
     [self.connection resume];
 }
 - (void)startMode:(NSString *)mode bridge:(NSString *)bridge completion:(void (^)(NSError *))completion {
-    if(!NSBundle.mainBundle.infoDictionary[@"VIMNetworkHelperSourceHash"]){completion(VIMNetworkError(@"This app is missing its networking helper. Open the complete Virtual Intel Mac app."));return;}
+    if(!NSBundle.mainBundle.infoDictionary[@"VIMNetworkHelperSourceHash"]){completion(VIMNetworkError(VIMLocalized(@"networkclient.this-app-is-missing-its-networking-helper-open-the-complete", @"This app is missing its networking helper. Open the complete Virtual Intel Mac app.")));return;}
     [self connect];[self check:^(BOOL ready){
-        if(self.stopped){completion(VIMNetworkError(@"Network setup was cancelled."));return;}
+        if(self.stopped){completion(VIMNetworkError(VIMLocalized(@"networkclient.network-setup-was-cancelled", @"Network setup was cancelled.")));return;}
         if(ready){[self beginMode:mode bridge:bridge completion:completion];return;}
         InstallNetworkHelper(NO,^(NSError *error){
-            if(error||self.stopped){completion(error?:VIMNetworkError(@"Network setup was cancelled."));return;}
+            if(error||self.stopped){completion(error?:VIMNetworkError(VIMLocalized(@"networkclient.network-setup-was-cancelled", @"Network setup was cancelled.")));return;}
             [self connect];[self check:^(BOOL valid){
-                if(!valid){completion(VIMNetworkError(@"The networking helper did not become available. Try starting this Mac again."));return;}
+                if(!valid){completion(VIMNetworkError(VIMLocalized(@"networkclient.the-networking-helper-did-not-become-available-try-starting-this", @"The networking helper did not become available. Try starting this Mac again.")));return;}
                 [self beginMode:mode bridge:bridge completion:completion];
             }];
         });
@@ -73,12 +74,12 @@ static void InstallNetworkHelper(BOOL terminal,void (^completion)(NSError *)) {
     [proxy startMode:mode bridge:bridge reply:^(NSFileHandle *socket,NSDictionary *details,NSError *error){
         int fd=socket?dup(socket.fileDescriptor):-1;
         dispatch_async(dispatch_get_main_queue(),^{
-            if(answered||self.stopped){if(fd>=0)close(fd);if(!answered)finish(VIMNetworkError(@"Network setup was cancelled."));return;}
-            if(error||fd<0){finish(error?:VIMNetworkError(@"The network connection could not be opened."));return;}
+            if(answered||self.stopped){if(fd>=0)close(fd);if(!answered)finish(VIMNetworkError(VIMLocalized(@"networkclient.network-setup-was-cancelled", @"Network setup was cancelled.")));return;}
+            if(error||fd<0){finish(error?:VIMNetworkError(VIMLocalized(@"networkclient.the-network-connection-could-not-be-opened", @"The network connection could not be opened.")));return;}
             fcntl(fd,F_SETFD,FD_CLOEXEC);self.socket=[[NSFileHandle alloc] initWithFileDescriptor:fd closeOnDealloc:YES];self.details=details;finish(nil);
         });
     }];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,30*NSEC_PER_SEC),dispatch_get_main_queue(),^{if(!answered)finish(VIMNetworkError(@"macOS did not finish creating this network. Try starting this Mac again."));});
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,30*NSEC_PER_SEC),dispatch_get_main_queue(),^{if(!answered)finish(VIMNetworkError(VIMLocalized(@"networkclient.macos-did-not-finish-creating-this-network-try-starting-this", @"macOS did not finish creating this network. Try starting this Mac again.")));});
 }
 - (void)stop {self.stopped=YES;[self.socket closeAndReturnError:NULL];self.socket=nil;[self.connection invalidate];self.connection=nil;}
 - (void)dealloc {[_connection invalidate];}

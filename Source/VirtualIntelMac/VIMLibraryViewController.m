@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMLibraryViewController.h"
 #import "VIMLibraryLocation.h"
 #import "VIMMachine.h"
@@ -55,8 +56,8 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
     NSNumberFormatter *number=[NSNumberFormatter new];number.numberStyle=NSNumberFormatterDecimalStyle;number.maximumFractionDigits=2;
     NSString *memory=[number stringFromNumber:@([configuration[@"MemoryMiB"] doubleValue]/1024)];
     uint64_t capacity=machine.diskCapacityBytes;
-    NSString *storage=capacity?[NSString stringWithFormat:@"%@ GB",[number stringFromNumber:@(capacity/(double)(1ULL<<30))]]:@"Storage unavailable";
-    return [NSString stringWithFormat:@"%@ CPU · %@ GB RAM · %@",configuration[@"CPUCount"],memory,storage];
+    NSString *storage=capacity?[NSString stringWithFormat:@"%@ GB",[number stringFromNumber:@(capacity/(double)(1ULL<<30))]]:VIMLocalized(@"library.storage-unavailable", @"Storage unavailable");
+    return [NSString stringWithFormat:VIMLocalized(@"library.cpu-gb-ram", @"%@ CPU · %@ GB RAM · %@"),configuration[@"CPUCount"],memory,storage];
 }
 
 @interface VIMLibraryRow : NSTableRowView
@@ -180,7 +181,7 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
     self.scroll=scroll;scroll.hasVerticalScroller=YES;scroll.autohidesScrollers=YES;scroll.borderType=NSNoBorder;
     scroll.contentInsets=NSEdgeInsetsMake(0,0,0,0);scroll.automaticallyAdjustsContentInsets=NO;
     self.table=[VIMLibraryTable new];self.table.headerView=nil;self.table.style=NSTableViewStylePlain;
-    self.table.accessibilityLabel=@"Virtual Macs";
+    self.table.accessibilityLabel=VIMLocalized(@"library.virtual-macs", @"Virtual Macs");
     [self.table registerForDraggedTypes:@[VIMLibraryDragType,NSPasteboardTypeFileURL]];
     [self.table setDraggingSourceOperationMask:NSDragOperationMove forLocal:YES];
     self.table.rowHeight=self.compact?63:126;self.table.intercellSpacing=NSZeroSize;
@@ -196,17 +197,17 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
     self.notice.textColor=NSColor.secondaryLabelColor;self.notice.translatesAutoresizingMaskIntoConstraints=NO;
     self.notice.hidden=YES;
     [self.view addSubview:self.notice];
-    self.pendingSetup=[NSButton buttonWithTitle:@"Show Setup" target:self action:@selector(newMac:)];
+    self.pendingSetup=[NSButton buttonWithTitle:VIMLocalized(@"library.show-setup", @"Show Setup") target:self action:@selector(newMac:)];
     self.pendingSetup.translatesAutoresizingMaskIntoConstraints=NO;self.pendingSetup.hidden=YES;[self.view addSubview:self.pendingSetup];
-    self.emptyTitle=[NSTextField labelWithString:@"Create your first Mac"];
+    self.emptyTitle=[NSTextField labelWithString:VIMLocalized(@"library.create-your-first-mac", @"Create your first Mac")];
     self.emptyTitle.font=[NSFont systemFontOfSize:22 weight:NSFontWeightSemibold];
-    self.emptyDetail=[NSTextField wrappingLabelWithString:@"Run macOS Mojave, Catalina, or Big Sur in its own window."];
+    self.emptyDetail=[NSTextField wrappingLabelWithString:VIMLocalized(@"library.run-macos-mojave-catalina-or-big-sur-in-its-own", @"Run macOS Mojave, Catalina, or Big Sur in its own window.")];
     self.emptyDetail.alignment=NSTextAlignmentCenter;self.emptyDetail.textColor=NSColor.secondaryLabelColor;
     NSImageView *icon=[NSImageView imageViewWithImage:[NSImage imageWithSystemSymbolName:@"desktopcomputer" accessibilityDescription:nil]];
     [icon.heightAnchor constraintEqualToConstant:48].active=YES;
     self.emptyState=[NSStackView stackViewWithViews:@[icon,self.emptyTitle,self.emptyDetail,
-        [NSButton buttonWithTitle:@"New Mac…" target:self action:@selector(newMac:)],
-        [NSButton buttonWithTitle:@"Open Existing Mac…" target:self action:@selector(openExistingMac:)]]];
+        [NSButton buttonWithTitle:VIMLocalized(@"library.new-mac", @"New Mac…") target:self action:@selector(newMac:)],
+        [NSButton buttonWithTitle:VIMLocalized(@"library.open-existing-mac", @"Open Existing Mac…") target:self action:@selector(openExistingMac:)]]];
     self.emptyState.orientation=NSUserInterfaceLayoutOrientationVertical;
     self.emptyState.alignment=NSLayoutAttributeCenterX;self.emptyState.spacing=16;
     self.emptyState.translatesAutoresizingMaskIntoConstraints=NO;[self.view addSubview:self.emptyState];
@@ -235,7 +236,7 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
     if(self.view.window.toolbar)return;
     NSToolbar *toolbar=[[NSToolbar alloc] initWithIdentifier:@"VIMLibraryToolbar"];
     toolbar.delegate=self;toolbar.displayMode=NSToolbarDisplayModeIconOnly;
-    self.view.window.title=@"Virtual Intel Mac Library";self.view.window.titleVisibility=NSWindowTitleVisible;
+    self.view.window.title=VIMLocalized(@"app.virtual-intel-mac-library", @"Virtual Intel Mac Library");self.view.window.titleVisibility=NSWindowTitleVisible;
     self.view.window.toolbar=toolbar;self.view.window.toolbarStyle=NSWindowToolbarStyleUnifiedCompact;
     self.view.window.tabbingMode=NSWindowTabbingModeDisallowed;
     [self sizeLibraryWindow];
@@ -248,21 +249,21 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
 - (NSToolbarItem *)toolbar:(NSToolbar *)toolbar itemForItemIdentifier:(NSString *)identifier willBeInsertedIntoToolbar:(BOOL)insert {
     NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];
     if([identifier isEqual:@"new"]) {
-        item.label=@"New Mac";item.toolTip=@"New Mac";
-        item.image=[NSImage imageWithSystemSymbolName:@"plus" accessibilityDescription:@"New Mac"];
+        item.label=VIMLocalized(@"library.new-mac-2", @"New Mac");item.toolTip=VIMLocalized(@"library.new-mac-2", @"New Mac");
+        item.image=[NSImage imageWithSystemSymbolName:@"plus" accessibilityDescription:VIMLocalized(@"library.new-mac-2", @"New Mac")];
         item.target=self;item.action=@selector(newMac:);
     } else if([identifier isEqual:@"density"]) {
         NSSegmentedControl *density=[NSSegmentedControl segmentedControlWithImages:@[
-            [NSImage imageWithSystemSymbolName:@"rectangle.grid.1x2" accessibilityDescription:@"Large thumbnails"],
-            [NSImage imageWithSystemSymbolName:@"list.bullet" accessibilityDescription:@"Compact list"]]
+            [NSImage imageWithSystemSymbolName:@"rectangle.grid.1x2" accessibilityDescription:VIMLocalized(@"library.large-thumbnails", @"Large thumbnails")],
+            [NSImage imageWithSystemSymbolName:@"list.bullet" accessibilityDescription:VIMLocalized(@"library.compact-list", @"Compact list")]]
             trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(changeDensity:)];
         density.selectedSegment=self.compact?1:0;
-        [density setToolTip:@"Large thumbnails" forSegment:0];[density setToolTip:@"Compact list" forSegment:1];
-        item.label=@"View";item.view=density;
+        [density setToolTip:VIMLocalized(@"library.large-thumbnails", @"Large thumbnails") forSegment:0];[density setToolTip:VIMLocalized(@"library.compact-list", @"Compact list") forSegment:1];
+        item.label=VIMLocalized(@"library.view", @"View");item.view=density;
     } else {
         self.search=[[NSSearchField alloc] initWithFrame:NSMakeRect(0,0,150,24)];
-        self.search.placeholderString=@"Search Macs";self.search.delegate=self;
-        item.label=@"Search";item.view=self.search;
+        self.search.placeholderString=VIMLocalized(@"library.search-macs", @"Search Macs");self.search.delegate=self;
+        item.label=VIMLocalized(@"ui.search", @"Search");item.view=self.search;
     }
     return item;
 }
@@ -327,8 +328,8 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
 }
 - (void)openExistingMac:(id)sender {
     NSOpenPanel *panel=[NSOpenPanel openPanel];panel.canChooseDirectories=YES;panel.canChooseFiles=YES;panel.allowsMultipleSelection=YES;
-    panel.allowedContentTypes=@[[UTType typeWithFilenameExtension:@"vintelmac"]];panel.prompt=@"Add to Library";
-    panel.message=@"Choose existing Mac packages. Their disks stay in their current locations.";
+    panel.allowedContentTypes=@[[UTType typeWithFilenameExtension:@"vintelmac"]];panel.prompt=VIMLocalized(@"library.add-to-library", @"Add to Library");
+    panel.message=VIMLocalized(@"library.choose-existing-mac-packages-their-disks-stay-in-their-current", @"Choose existing Mac packages. Their disks stay in their current locations.");
     [panel beginSheetModalForWindow:self.view.window completionHandler:^(NSModalResponse response){
         if(response==NSModalResponseOK)for(NSURL *URL in panel.URLs)[self registerPackageURL:URL];
     }];
@@ -402,7 +403,7 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
                 updated[machine.URL.path]=@{@"Name":machine.name,@"Guest":machine.guest,@"Identifier":identifier};
             } else {
                 VIMUnavailableMac *row=[VIMUnavailableMac new];row.missingURL=URL;row.savedName=known[path][@"Name"]?:URL.lastPathComponent.stringByDeletingPathExtension;
-                row.savedGuest=known[path][@"Guest"]?:@"";row.reason=@"Mac Unavailable";[missing addObject:row];
+                row.savedGuest=known[path][@"Guest"]?:@"";row.reason=VIMLocalized(@"library.mac-unavailable", @"Mac Unavailable");[missing addObject:row];
             }
         }
         for(VIMUnavailableMac *row in missing) {
@@ -419,14 +420,14 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
             if(generation!=self.scanGeneration)return;
             // Retain known rows while the external library is disconnected.
             self.libraryLoaded=YES;self.machines=machines;[NSUserDefaults.standardUserDefaults setObject:updated forKey:catalogKey];[self applyFilter];
-            self.notice.stringValue=error?@"Library unavailable. Connect its drive, or choose a library in Settings.":
-                (unavailable?[NSString stringWithFormat:@"%lu Mac packages need attention. Check their files in Finder.",(unsigned long)unavailable]:@"");
+            self.notice.stringValue=error?VIMLocalized(@"library.library-unavailable-connect-its-drive-or-choose-a-library-in", @"Library unavailable. Connect its drive, or choose a library in Settings."):
+                (unavailable?[NSString stringWithFormat:VIMLocalized(@"library.lu-mac-packages-need-attention-check-their-files-in-finder", @"%lu Mac packages need attention. Check their files in Finder."),(unsigned long)unavailable]:@"");
             NSDictionary *job=[NSUserDefaults.standardUserDefaults dictionaryForKey:@"VIMCreationJob"];
             self.pendingSetup.hidden=YES;
-            if(job&&!error)self.notice.stringValue=[NSString stringWithFormat:@"Setup in progress: %@",job[@"Name"]?:@"New Mac"];
+            if(job&&!error)self.notice.stringValue=[NSString stringWithFormat:VIMLocalized(@"library.setup-in-progress", @"Setup in progress: %@"),job[@"Name"]?:VIMLocalized(@"library.new-mac-2", @"New Mac")];
             if(error&&!self.machines.count) {
-                self.emptyTitle.stringValue=@"Your library is unavailable";
-                self.emptyDetail.stringValue=@"Reconnect its drive to see your Macs. Your library location is saved in Settings.";
+                self.emptyTitle.stringValue=VIMLocalized(@"library.your-library-is-unavailable", @"Your library is unavailable");
+                self.emptyDetail.stringValue=VIMLocalized(@"library.reconnect-its-drive-to-see-your-macs-your-library-location", @"Reconnect its drive to see your Macs. Your library location is saved in Settings.");
             }
         });
     });
@@ -460,8 +461,8 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
     NSUInteger index=[self.visibleMachines indexOfObjectPassingTest:^BOOL(VIMMachine *machine,NSUInteger idx,BOOL *stop){return [machine.URL isEqual:selection];}];
     if(index!=NSNotFound)[self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:index] byExtendingSelection:NO];
     self.emptyState.hidden=self.visibleMachines.count!=0;
-    self.emptyTitle.stringValue=query.length?@"No matching Macs":@"Create your first Mac";
-    self.emptyDetail.stringValue=query.length?@"Try a different name.":@"Run macOS Mojave, Catalina, or Big Sur in its own window.";
+    self.emptyTitle.stringValue=query.length?VIMLocalized(@"library.no-matching-macs", @"No matching Macs"):VIMLocalized(@"library.create-your-first-mac", @"Create your first Mac");
+    self.emptyDetail.stringValue=query.length?VIMLocalized(@"library.try-a-different-name", @"Try a different name."):VIMLocalized(@"library.run-macos-mojave-catalina-or-big-sur-in-its-own", @"Run macOS Mojave, Catalina, or Big Sur in its own window.");
     self.emptyState.hidden=YES;[self sizeLibraryWindow];
     [self.view layoutSubtreeIfNeeded];
     CGFloat maxTop=MAX(0,self.visibleMachines.count*self.table.rowHeight-NSHeight(self.scroll.contentView.bounds));
@@ -516,18 +517,18 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
     NSTextField *title=[VIMLibraryLabel labelWithString:machine.name];title.font=[NSFont systemFontOfSize:self.compact?17:22 weight:NSFontWeightLight];
     title.lineBreakMode=NSLineBreakByTruncatingTail;
     NSString *resources=unavailable?((VIMUnavailableMac *)machine).reason:VIMLibraryResources(machine);
-    NSTextField *specifications=[VIMLibraryLabel labelWithString:resources?:@"Unavailable"];
+    NSTextField *specifications=[VIMLibraryLabel labelWithString:resources?:VIMLocalized(@"library.unavailable", @"Unavailable")];
     specifications.font=[NSFont systemFontOfSize:self.compact?11:12];specifications.textColor=NSColor.secondaryLabelColor;
     specifications.lineBreakMode=NSLineBreakByTruncatingTail;specifications.toolTip=resources;cell.specifications=specifications;
     // OpenGL desktops keep the SVGA display adapter after setup. Adapter
     // selection is not evidence that those installed Macs still need setup.
     BOOL continuingSetup=!unavailable&&(machine.preMetalGuest?
         ![machine.configuration[@"InstallState"]?:@"installed" isEqual:@"installed"]:machine.requiresInstallerDisplay);
-    NSString *action=unavailable?@"Locate":(running?@"Show":(continuingSetup?@"Continue Setup":@"Start"));
+    NSString *action=unavailable?VIMLocalized(@"ui.locate", @"Locate"):(running?VIMLocalized(@"ui.show", @"Show"):(continuingSetup?VIMLocalized(@"library.continue-setup", @"Continue Setup"):VIMLocalized(@"library.start", @"Start")));
     VIMPlayButton *start=[VIMPlayButton new];start.target=self;start.action=@selector(rowStart:);start.controlDiameter=self.compact?40:58;start.glyphScale=1.35;start.tag=row;start.contentTintColor=NSColor.labelColor;
     start.accessibilityLabel=[NSString stringWithFormat:@"%@ %@",action,machine.name];start.toolTip=start.accessibilityLabel;cell.primary=start;
     NSButton *configure=[NSButton buttonWithImage:VIMLibrarySymbol(@"gearshape",20) target:self action:@selector(rowConfigure:)];
-    configure.bordered=NO;configure.contentTintColor=NSColor.secondaryLabelColor;configure.toolTip=[NSString stringWithFormat:@"Configure %@",machine.name];configure.tag=row;cell.configure=configure;
+    configure.bordered=NO;configure.contentTintColor=NSColor.secondaryLabelColor;configure.toolTip=[NSString stringWithFormat:VIMLocalized(@"ui.configure", @"Configure %@"),machine.name];configure.tag=row;cell.configure=configure;
     configure.enabled=!unavailable;configure.accessibilityLabel=configure.toolTip;
     NSButton *power=[NSButton buttonWithImage:VIMLibrarySymbol(running?@"arrow.up.forward.square":(unavailable?@"folder.badge.questionmark":@"power"),20) target:self action:@selector(rowStart:)];power.bordered=NO;power.contentTintColor=NSColor.secondaryLabelColor;power.tag=row;power.accessibilityLabel=start.accessibilityLabel;power.toolTip=power.accessibilityLabel;
     NSBox *separator=[NSBox new];separator.boxType=NSBoxSeparator;separator.translatesAutoresizingMaskIntoConstraints=NO;
@@ -554,7 +555,7 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
             [separator.centerYAnchor constraintEqualToAnchor:power.centerYAnchor],[separator.heightAnchor constraintEqualToConstant:15],[separator.widthAnchor constraintEqualToConstant:1],
             [configure.leadingAnchor constraintEqualToAnchor:separator.trailingAnchor constant:16],[configure.centerYAnchor constraintEqualToAnchor:power.centerYAnchor]]];
     }
-    cell.hovered=NO;cell.toolTip=[NSString stringWithFormat:@"%@\n%@\n%@",machine.name,resources,unavailable?@"Unavailable. Locate this Mac’s package.":[VIMSession statusForMachine:machine]];
+    cell.hovered=NO;cell.toolTip=[NSString stringWithFormat:@"%@\n%@\n%@",machine.name,resources,unavailable?VIMLocalized(@"library.unavailable-locate-this-mac-s-package", @"Unavailable. Locate this Mac’s package."):[VIMSession statusForMachine:machine]];
     cell.textField=title;return cell;
 }
 - (VIMMachine *)selected {
@@ -571,19 +572,19 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
     if(row>=0)[self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
     if(!self.selected)return;
     if([self.selected isKindOfClass:VIMUnavailableMac.class]) {
-        [menu addItemWithTitle:@"Locate Mac…" action:@selector(startMachine:) keyEquivalent:@""].target=self;
-        [menu addItemWithTitle:@"Show in Finder" action:@selector(revealMachine:) keyEquivalent:@""].target=self;
+        [menu addItemWithTitle:VIMLocalized(@"library.locate-mac", @"Locate Mac…") action:@selector(startMachine:) keyEquivalent:@""].target=self;
+        [menu addItemWithTitle:VIMLocalized(@"app.show-in-finder", @"Show in Finder") action:@selector(revealMachine:) keyEquivalent:@""].target=self;
         [menu addItem:NSMenuItem.separatorItem];
-        [menu addItemWithTitle:@"Remove from Library…" action:@selector(removeSelectedMachine:) keyEquivalent:@""].target=self;return;
+        [menu addItemWithTitle:VIMLocalized(@"library.remove-from-library", @"Remove from Library…") action:@selector(removeSelectedMachine:) keyEquivalent:@""].target=self;return;
     }
-    [menu addItemWithTitle:[VIMSession isRunningMachine:self.selected]?@"Show":@"Start" action:@selector(startMachine:) keyEquivalent:@""].target=self;
-    [menu addItemWithTitle:@"Open Window" action:@selector(openMachineWindow:) keyEquivalent:@""].target=self;
-    [menu addItemWithTitle:@"Configure…" action:@selector(machineSettings:) keyEquivalent:@""].target=self;
+    [menu addItemWithTitle:[VIMSession isRunningMachine:self.selected]?VIMLocalized(@"ui.show", @"Show"):VIMLocalized(@"library.start", @"Start") action:@selector(startMachine:) keyEquivalent:@""].target=self;
+    [menu addItemWithTitle:VIMLocalized(@"library.open-window", @"Open Window") action:@selector(openMachineWindow:) keyEquivalent:@""].target=self;
+    [menu addItemWithTitle:VIMLocalized(@"library.configure", @"Configure…") action:@selector(machineSettings:) keyEquivalent:@""].target=self;
     [menu addItem:NSMenuItem.separatorItem];
-    [menu addItemWithTitle:@"Rename…" action:@selector(renameMachine:) keyEquivalent:@""].target=self;
-    [menu addItemWithTitle:@"Show in Finder" action:@selector(revealMachine:) keyEquivalent:@""].target=self;
+    [menu addItemWithTitle:VIMLocalized(@"library.rename", @"Rename…") action:@selector(renameMachine:) keyEquivalent:@""].target=self;
+    [menu addItemWithTitle:VIMLocalized(@"app.show-in-finder", @"Show in Finder") action:@selector(revealMachine:) keyEquivalent:@""].target=self;
     [menu addItem:NSMenuItem.separatorItem];
-    [menu addItemWithTitle:@"Delete…" action:@selector(removeSelectedMachine:) keyEquivalent:@""].target=self;
+    [menu addItemWithTitle:VIMLocalized(@"library.delete", @"Delete…") action:@selector(removeSelectedMachine:) keyEquivalent:@""].target=self;
 }
 - (void)revealMachine:(id)sender {if(self.selected)[NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[self.selected.URL]];}
 - (void)openMachineWindow:(id)sender {
@@ -600,9 +601,9 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
     if(self.selected&&![self.selected isKindOfClass:VIMUnavailableMac.class])[VIMMachineSettings showForMachine:self.selected window:self.view.window completion:^{[self reloadLibrary];}];
 }
 - (void)locateUnavailable:(VIMUnavailableMac *)machine {
-    NSAlert *alert=[NSAlert new];alert.messageText=[NSString stringWithFormat:@"Locate %@",machine.name];alert.informativeText=[NSString stringWithFormat:@"%@\n\n%@\n\nReconnect its drive, or choose its current package location. No disks will be copied.",machine.reason,machine.URL.path];
+    NSAlert *alert=[NSAlert new];alert.messageText=[NSString stringWithFormat:VIMLocalized(@"ui.locate.named", @"Locate %@"),machine.name];alert.informativeText=[NSString stringWithFormat:VIMLocalized(@"library.reconnect-its-drive-or-choose-its-current-package-location-no", @"%@\n\n%@\n\nReconnect its drive, or choose its current package location. No disks will be copied."),machine.reason,machine.URL.path];
     VIMSetAppAlertIcon(alert);
-    [alert addButtonWithTitle:@"Locate…"];[alert addButtonWithTitle:@"Try Again"];[alert addButtonWithTitle:@"Cancel"];
+    [alert addButtonWithTitle:VIMLocalized(@"library.locate", @"Locate…")];[alert addButtonWithTitle:VIMLocalized(@"library.try-again", @"Try Again")];[alert addButtonWithTitle:VIMLocalized(@"common.cancel", @"Cancel")];
     [alert beginSheetModalForWindow:self.view.window completionHandler:^(NSModalResponse response){
         if(response==NSAlertSecondButtonReturn){[self reloadLibrary];return;}if(response!=NSAlertFirstButtonReturn)return;
         NSOpenPanel *panel=[NSOpenPanel openPanel];panel.canChooseDirectories=YES;panel.allowedContentTypes=@[[UTType typeWithFilenameExtension:@"vintelmac"]];
@@ -619,10 +620,10 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
 }
 - (void)renameMachine:(id)sender {
     VIMMachine *machine=self.selected;if(!machine)return;
-    NSAlert *alert=[NSAlert new];alert.messageText=@"Rename Mac";
+    NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"library.rename-mac", @"Rename Mac");
     VIMSetAppAlertIcon(alert);
     NSTextField *name=[[NSTextField alloc] initWithFrame:NSMakeRect(0,0,300,24)];name.stringValue=machine.name;
-    alert.accessoryView=name;[alert addButtonWithTitle:@"Rename"];[alert addButtonWithTitle:@"Cancel"];
+    alert.accessoryView=name;[alert addButtonWithTitle:VIMLocalized(@"ui.rename", @"Rename")];[alert addButtonWithTitle:VIMLocalized(@"common.cancel", @"Cancel")];
     [alert beginSheetModalForWindow:self.view.window completionHandler:^(NSModalResponse response){
         if(response!=NSAlertFirstButtonReturn)return;NSError *error=nil;
         if(![machine rename:name.stringValue error:&error])VIMPresentError(error,self.view.window);[self reloadLibrary];
@@ -632,9 +633,9 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
     VIMMachine *machine=self.selected;if(!machine)return;
     if([VIMSession isRunningMachine:machine])return;
     BOOL missing=[machine isKindOfClass:VIMUnavailableMac.class];
-    NSAlert *alert=[NSAlert new];alert.messageText=[NSString stringWithFormat:missing?@"Remove “%@” from the library?":@"Move “%@” to Trash?",machine.name];
-    alert.informativeText=missing?@"The missing Mac will be removed from this library. No files will be deleted.":@"This virtual Mac and its disk will be moved to Trash. You can restore the package from Trash later.";
-    [alert addButtonWithTitle:@"Cancel"];[alert addButtonWithTitle:missing?@"Remove":@"Move to Trash"];
+    NSAlert *alert=[NSAlert new];alert.messageText=[NSString stringWithFormat:missing?VIMLocalized(@"library.remove-from-the-library", @"Remove “%@” from the library?"):VIMLocalized(@"library.move-to-trash", @"Move “%@” to Trash?"),machine.name];
+    alert.informativeText=missing?VIMLocalized(@"library.the-missing-mac-will-be-removed-from-this-library-no", @"The missing Mac will be removed from this library. No files will be deleted."):VIMLocalized(@"library.this-virtual-mac-and-its-disk-will-be-moved-to", @"This virtual Mac and its disk will be moved to Trash. You can restore the package from Trash later.");
+    [alert addButtonWithTitle:VIMLocalized(@"common.cancel", @"Cancel")];[alert addButtonWithTitle:missing?VIMLocalized(@"ui.remove", @"Remove"):VIMLocalized(@"library.move-to-trash-2", @"Move to Trash")];
     VIMPresentAlert(alert,self.view.window,^(NSModalResponse response){
         if(response!=NSAlertSecondButtonReturn)return;
         void (^forget)(void)=^{
@@ -650,9 +651,9 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
         int lock=open(lockURL.fileSystemRepresentation,O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC,0600);struct stat info;
         if(lock<0||fstat(lock,&info)||!S_ISREG(info.st_mode)||info.st_nlink!=1||flock(lock,LOCK_EX|LOCK_NB)) {
             if(lock>=0)close(lock);
-            NSAlert *busy=[NSAlert new];busy.messageText=@"This Mac can’t be deleted right now";
-            busy.informativeText=@"Shut down the virtual Mac and close any other Virtual Intel Mac session using it, then try again.";
-            [busy addButtonWithTitle:@"OK"];VIMPresentAlert(busy,self.view.window,nil);return;
+            NSAlert *busy=[NSAlert new];busy.messageText=VIMLocalized(@"library.this-mac-can-t-be-deleted-right-now", @"This Mac can’t be deleted right now");
+            busy.informativeText=VIMLocalized(@"library.shut-down-the-virtual-mac-and-close-any-other-virtual", @"Shut down the virtual Mac and close any other Virtual Intel Mac session using it, then try again.");
+            [busy addButtonWithTitle:VIMLocalized(@"common.ok", @"OK")];VIMPresentAlert(busy,self.view.window,nil);return;
         }
         VIMMachine *current=[VIMMachine loadURL:machine.URL error:nil];
         if(![current.configuration[@"Identifier"] isEqual:machine.configuration[@"Identifier"]]){close(lock);[self reloadLibrary];return;}

@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMDiskMaintenance.h"
 #include <sys/file.h>
 #include <sys/stat.h>
@@ -36,9 +37,9 @@ static uint64_t Allocated(struct stat info) {return (uint64_t)info.st_blocks*512
     compressed:(BOOL)compressed progress:(void (^)(NSString *,double))progress
     completion:(void (^)(NSDictionary *,NSError *))completion error:(NSError **)error {
     NSAssert(NSThread.isMainThread,@"Disk maintenance lifecycle is main-thread owned");
-    if(!URL.isFileURL||!qemuImage.isFileURL||![[NSUUID alloc] initWithUUIDString:identifier])return Fail(error,@"This Mac’s disk maintenance request is invalid.");
+    if(!URL.isFileURL||!qemuImage.isFileURL||![[NSUUID alloc] initWithUUIDString:identifier])return Fail(error,VIMLocalized(@"diskmaintenance.this-mac-s-disk-maintenance-request-is-invalid", @"This Mac’s disk maintenance request is invalid."));
     @synchronized(self) {
-        if(activePackage)return Fail(error,@"Wait for the current disk operation to finish, then try again.");
+        if(activePackage)return Fail(error,VIMLocalized(@"diskmaintenance.wait-for-the-current-disk-operation-to-finish-then-try-again", @"Wait for the current disk operation to finish, then try again."));
         activePackage=URL.URLByResolvingSymlinksInPath;
     }
     VIMDiskMaintenance *operation=[self new];operation.package=URL.URLByResolvingSymlinksInPath;
@@ -91,24 +92,24 @@ static uint64_t Allocated(struct stat info) {return (uint64_t)info.st_blocks*512
     if(task.terminationReason!=NSTaskTerminationReasonExit||task.terminationStatus!=0) {
         NSString *details=[[NSString alloc] initWithData:output encoding:NSUTF8StringEncoding]?:@"";
         if(details.length>2048)details=[details substringFromIndex:details.length-2048];
-        Fail(error,[NSString stringWithFormat:@"The disk tool could not finish %@. %@",arguments.firstObject,details]);return nil;
+        Fail(error,[NSString stringWithFormat:VIMLocalized(@"diskmaintenance.the-disk-tool-could-not-finish", @"The disk tool could not finish %@. %@"),arguments.firstObject,details]);return nil;
     }return output;
 }
 - (NSDictionary *)JSON:(NSArray *)arguments error:(NSError **)error {
     NSData *output=[self run:arguments phase:nil error:error];if(!output)return nil;
     id value=[NSJSONSerialization JSONObjectWithData:output options:0 error:error];
-    if(![value isKindOfClass:NSDictionary.class]){Fail(error,@"The disk tool returned an invalid result.");return nil;}return value;
+    if(![value isKindOfClass:NSDictionary.class]){Fail(error,VIMLocalized(@"diskmaintenance.the-disk-tool-returned-an-invalid-result", @"The disk tool returned an invalid result."));return nil;}return value;
 }
 - (BOOL)plainImage:(NSDictionary *)info error:(NSError **)error {
     NSDictionary *specific=info[@"format-specific"],*data=[specific isKindOfClass:NSDictionary.class]?specific[@"data"]:nil;
     if(![info[@"format"] isEqual:@"qcow2"]||![info[@"virtual-size"] isKindOfClass:NSNumber.class]||
-       [info[@"virtual-size"] longLongValue]<=0||![data isKindOfClass:NSDictionary.class])return Fail(error,@"Choose a valid QCOW2 system disk.");
-    if([info[@"dirty-flag"] boolValue]||[data[@"corrupt"] boolValue])return Fail(error,@"This disk was not closed cleanly. Start and shut down the virtual Mac normally before trying again.");
+       [info[@"virtual-size"] longLongValue]<=0||![data isKindOfClass:NSDictionary.class])return Fail(error,VIMLocalized(@"diskmaintenance.choose-a-valid-qcow2-system-disk", @"Choose a valid QCOW2 system disk."));
+    if([info[@"dirty-flag"] boolValue]||[data[@"corrupt"] boolValue])return Fail(error,VIMLocalized(@"diskmaintenance.this-disk-was-not-closed-cleanly-start-and-shut-down-the-virtual", @"This disk was not closed cleanly. Start and shut down the virtual Mac normally before trying again."));
     if(info[@"backing-filename"]||info[@"full-backing-filename"]||data[@"data-file"]||[info[@"encrypted"] boolValue]||data[@"encrypt"])
-        return Fail(error,@"Disk maintenance requires an unencrypted, independent QCOW2 disk without backing or external data files.");
+        return Fail(error,VIMLocalized(@"diskmaintenance.disk-maintenance-requires-an-unencrypted-independent-qcow2-disk-without-backing-or-external", @"Disk maintenance requires an unencrypted, independent QCOW2 disk without backing or external data files."));
     for(NSString *key in @[@"snapshots",@"bitmaps"]) {
         id value=[key isEqual:@"snapshots"]?info[key]:data[key];
-        if(value&&(![value isKindOfClass:NSArray.class]||[value count]))return Fail(error,@"This disk contains snapshots or persistent bitmaps. Disk maintenance would discard them.");
+        if(value&&(![value isKindOfClass:NSArray.class]||[value count]))return Fail(error,VIMLocalized(@"diskmaintenance.this-disk-contains-snapshots-or-persistent-bitmaps-disk-maintenance-would-discard-them", @"This disk contains snapshots or persistent bitmaps. Disk maintenance would discard them."));
     }return YES;
 }
 - (BOOL)removeInterruptedStages:(NSURL *)directory disk:(NSString *)relative error:(NSError **)error {
@@ -138,33 +139,33 @@ static uint64_t Allocated(struct stat info) {return (uint64_t)info.st_blocks*512
     NSFileManager *fm=NSFileManager.defaultManager;
     NSURL *state=[self.package URLByAppendingPathComponent:@"State"],*configuration=[self.package URLByAppendingPathComponent:@"Machine.plist"];
     struct stat info;
-    if(lstat(state.fileSystemRepresentation,&info)||!S_ISDIR(info.st_mode)){Fail(error,@"This Mac’s State folder is unavailable.");return nil;}
+    if(lstat(state.fileSystemRepresentation,&info)||!S_ISDIR(info.st_mode)){Fail(error,VIMLocalized(@"diskmaintenance.this-mac-s-state-folder-is-unavailable", @"This Mac’s State folder is unavailable."));return nil;}
     NSURL *lockURL=[state URLByAppendingPathComponent:@"Session.lock"];
     int lock=open(lockURL.fileSystemRepresentation,O_CREAT|O_RDWR|O_NOFOLLOW|O_CLOEXEC,0600);
     if(lock<0||fstat(lock,&info)||!S_ISREG(info.st_mode)||info.st_nlink!=1||flock(lock,LOCK_EX|LOCK_NB)) {
-        if(lock>=0)close(lock);Fail(error,@"Shut down this Mac and wait for its other disk or session operations to finish, then try again.");return nil;
+        if(lock>=0)close(lock);Fail(error,VIMLocalized(@"diskmaintenance.shut-down-this-mac-and-wait-for-its-other-disk-or-session", @"Shut down this Mac and wait for its other disk or session operations to finish, then try again."));return nil;
     }
     self.sessionLock=lock;
     int source=-1,parent=-1;NSURL *stage=nil;
     @try {
-        [self report:@"Checking disk…" fraction:-1];
+        [self report:VIMLocalized(@"diskmaintenance.checking-disk", @"Checking disk…") fraction:-1];
         NSDictionary *config=[NSDictionary dictionaryWithContentsOfURL:configuration];
         NSString *relative=config[@"Disk"];
         if(![config[@"Identifier"] isEqual:self.identifier]||![relative isKindOfClass:NSString.class]||!relative.length||relative.isAbsolutePath||
             [relative.pathComponents containsObject:@".."]||![relative isEqual:relative.stringByStandardizingPath]) {
-            Fail(error,@"This Mac’s disk configuration changed. Close its settings and try again.");return nil;
+            Fail(error,VIMLocalized(@"diskmaintenance.this-mac-s-disk-configuration-changed-close-its-settings-and-try-again", @"This Mac’s disk configuration changed. Close its settings and try again."));return nil;
         }
         NSURL *disk=[self.package URLByAppendingPathComponent:relative],*directory=disk.URLByDeletingLastPathComponent;
         if(![disk.URLByResolvingSymlinksInPath.path isEqual:disk.path]||![disk.path hasPrefix:[self.package.path stringByAppendingString:@"/"]]) {
-            Fail(error,@"Disk maintenance cannot follow links or operate outside this Mac’s package.");return nil;
+            Fail(error,VIMLocalized(@"diskmaintenance.disk-maintenance-cannot-follow-links-or-operate-outside-this-mac-s-package", @"Disk maintenance cannot follow links or operate outside this Mac’s package."));return nil;
         }
         source=open(disk.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
         struct stat original;
         if(source<0||fstat(source,&original)||!S_ISREG(original.st_mode)||original.st_nlink!=1||original.st_uid!=geteuid()) {
-            Fail(error,@"The system disk is unavailable, shared through a hard link, or owned by another user.");return nil;
+            Fail(error,VIMLocalized(@"diskmaintenance.the-system-disk-is-unavailable-shared-through-a-hard-link-or-owned", @"The system disk is unavailable, shared through a hard link, or owned by another user."));return nil;
         }
         parent=open(directory.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
-        if(parent<0||fsync(parent)){Fail(error,@"This drive cannot safely publish a replacement disk image.");return nil;}
+        if(parent<0||fsync(parent)){Fail(error,VIMLocalized(@"diskmaintenance.this-drive-cannot-safely-publish-a-replacement-disk-image", @"This drive cannot safely publish a replacement disk image."));return nil;}
         if(![self removeInterruptedStages:directory disk:relative error:error])return nil;
         NSDictionary *metadata=[self JSON:@[@"info",@"--output=json",@"-f",@"qcow2",disk.path] error:error];
         if(!metadata||![self plainImage:metadata error:error])return nil;
@@ -175,31 +176,31 @@ static uint64_t Allocated(struct stat info) {return (uint64_t)info.st_blocks*512
         NSDictionary *space=[fm attributesOfFileSystemForPath:directory.path error:error];
         uint64_t available=[space[NSFileSystemFreeSize] unsignedLongLongValue],needed=required.unsignedLongLongValue;
         if(![required isKindOfClass:NSNumber.class]||required.longLongValue<=0||!space||available<needed||available-needed<(1ULL<<30)) {
-            Fail(error,@"This drive needs more free space for a temporary disk image and 1 GB of working space. The original disk has not been replaced.");return nil;
+            Fail(error,VIMLocalized(@"diskmaintenance.this-drive-needs-more-free-space-for-a-temporary-disk-image-and", @"This drive needs more free space for a temporary disk image and 1 GB of working space. The original disk has not been replaced."));return nil;
         }
         stage=[directory URLByAppendingPathComponent:[@".DiskMaintenance-" stringByAppendingString:NSUUID.UUID.UUIDString]];
         if(![fm createDirectoryAtURL:stage withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:error]){stage=nil;return nil;}
         NSURL *record=[stage URLByAppendingPathComponent:@"Operation.plist"];
         if(![@{@"FormatVersion":@1,@"Identifier":self.identifier,@"Disk":relative} writeToURL:record error:error])return nil;
         NSURL *target=[stage URLByAppendingPathComponent:@"Image.qcow2"];
-        NSString *phase=self.compressed?@"Compressing disk…":@"Reclaiming disk space…";[self report:phase fraction:0];
+        NSString *phase=self.compressed?VIMLocalized(@"diskmaintenance.compressing-disk", @"Compressing disk…"):VIMLocalized(@"diskmaintenance.reclaiming-disk-space", @"Reclaiming disk space…");[self report:phase fraction:0];
         NSMutableArray *arguments=[@[@"convert",@"-p",@"-f",@"qcow2",@"-O",@"qcow2",@"-S",@"4k"] mutableCopy];
         if(self.compressed)[arguments addObjectsFromArray:@[@"-c",@"-o",@"compression_type=zlib"]];
         [arguments addObjectsFromArray:@[disk.path,target.path]];
         if(![self run:arguments phase:phase error:error])return nil;
-        [self report:@"Verifying disk…" fraction:-1];
+        [self report:VIMLocalized(@"diskmaintenance.verifying-disk", @"Verifying disk…") fraction:-1];
         NSDictionary *converted=[self JSON:@[@"info",@"--output=json",@"-f",@"qcow2",target.path] error:error];
         if(!converted||![self plainImage:converted error:error])return nil;
-        if(![converted[@"virtual-size"] isEqual:metadata[@"virtual-size"]]){Fail(error,@"The converted disk has a different capacity. The original disk has been kept.");return nil;}
+        if(![converted[@"virtual-size"] isEqual:metadata[@"virtual-size"]]){Fail(error,VIMLocalized(@"diskmaintenance.the-converted-disk-has-a-different-capacity-the-original-disk-has-been", @"The converted disk has a different capacity. The original disk has been kept."));return nil;}
         if(![self run:@[@"check",@"-f",@"qcow2",target.path] phase:nil error:error]||
-           ![self run:@[@"compare",@"-p",@"-f",@"qcow2",@"-F",@"qcow2",disk.path,target.path] phase:@"Verifying disk…" error:error])return nil;
+           ![self run:@[@"compare",@"-p",@"-f",@"qcow2",@"-F",@"qcow2",disk.path,target.path] phase:VIMLocalized(@"diskmaintenance.verifying-disk", @"Verifying disk…") error:error])return nil;
         NSDictionary *latest=[NSDictionary dictionaryWithContentsOfURL:configuration];
         if(![latest[@"Identifier"] isEqual:self.identifier]||![latest[@"Disk"] isEqual:relative]) {
-            Fail(error,@"This Mac’s disk configuration changed during maintenance. The original disk has been kept.");return nil;
+            Fail(error,VIMLocalized(@"diskmaintenance.this-mac-s-disk-configuration-changed-during-maintenance-the-original-disk-has", @"This Mac’s disk configuration changed during maintenance. The original disk has been kept."));return nil;
         }
         struct stat current,replacement;
         if(lstat(disk.fileSystemRepresentation,&current)||!SameFile(original,current)||lstat(target.fileSystemRepresentation,&replacement)||!S_ISREG(replacement.st_mode)||replacement.st_nlink!=1) {
-            Fail(error,@"The disk changed during maintenance. The original disk has not been replaced.");return nil;
+            Fail(error,VIMLocalized(@"diskmaintenance.the-disk-changed-during-maintenance-the-original-disk-has-not-been-replaced", @"The disk changed during maintenance. The original disk has not been replaced."));return nil;
         }
         uint64_t before=Allocated(original),after=Allocated(replacement);
         if(after>=before)return @{@"BeforeBytes":@(before),@"AfterBytes":@(before),@"Changed":@NO};
@@ -207,19 +208,19 @@ static uint64_t Allocated(struct stat info) {return (uint64_t)info.st_blocks*512
         // Keep ACLs, extended attributes, ownership and mode, not only bytes.
         BOOL flushed=output>=0&&fcopyfile(source,output,NULL,COPYFILE_METADATA)==0&&fstat(output,&replacement)==0&&fsync(output)==0&&fcntl(output,F_FULLFSYNC)==0;
         if(output>=0)close(output);
-        if(!flushed){Fail(error,@"The new disk could not be saved safely. The original disk has been kept.");return nil;}
+        if(!flushed){Fail(error,VIMLocalized(@"diskmaintenance.the-new-disk-could-not-be-saved-safely-the-original-disk-has", @"The new disk could not be saved safely. The original disk has been kept."));return nil;}
         after=Allocated(replacement);
         if(after>=before)return @{@"BeforeBytes":@(before),@"AfterBytes":@(before),@"Changed":@NO};
         if(lstat(disk.fileSystemRepresentation,&current)||!SameFile(original,current)) {
-            Fail(error,@"The disk changed before publication. The original disk has not been replaced.");return nil;
+            Fail(error,VIMLocalized(@"diskmaintenance.the-disk-changed-before-publication-the-original-disk-has-not-been-replaced", @"The disk changed before publication. The original disk has not been replaced."));return nil;
         }
         // One same-volume rename is the only publication step. After an
         // interruption, the configured path still names a complete disk.
-        [self report:@"Finishing…" fraction:-1];
+        [self report:VIMLocalized(@"diskmaintenance.finishing", @"Finishing…") fraction:-1];
         if(rename(target.fileSystemRepresentation,disk.fileSystemRepresentation)) {
-            Fail(error,@"The new disk could not replace the original. The original disk has been kept.");return nil;
+            Fail(error,VIMLocalized(@"diskmaintenance.the-new-disk-could-not-replace-the-original-the-original-disk-has", @"The new disk could not replace the original. The original disk has been kept."));return nil;
         }
-        if(fsync(parent)){Fail(error,@"The verified disk was replaced, but this drive could not confirm that the replacement was saved. Keep the drive connected.");return nil;}
+        if(fsync(parent)){Fail(error,VIMLocalized(@"diskmaintenance.the-verified-disk-was-replaced-but-this-drive-could-not-confirm-that", @"The verified disk was replaced, but this drive could not confirm that the replacement was saved. Keep the drive connected."));return nil;}
         return @{@"BeforeBytes":@(before),@"AfterBytes":@(after),@"Changed":@YES};
     } @finally {
         if(stage)[fm removeItemAtURL:stage error:nil];

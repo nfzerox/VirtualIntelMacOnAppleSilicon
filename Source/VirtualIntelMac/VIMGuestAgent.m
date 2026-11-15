@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMGuestAgent.h"
 #import "VIMQMPConnection.h"
 #include <limits.h>
@@ -38,7 +39,7 @@ static NSString *Output(NSDictionary *result) {
 }
 - (void)connectWithCompletion:(void (^)(NSError *))completion {
     NSAssert(NSThread.isMainThread,@"Guest controller is main-thread owned");
-    if(self.closed){completion(GuestError(@"The guest controller is closed."));return;}
+    if(self.closed){completion(GuestError(VIMLocalized(@"guestagent.the-guest-controller-is-closed", @"The guest controller is closed.")));return;}
     if(!self.connectCompletions)self.connectCompletions=[NSMutableArray new];
     [self.connectCompletions addObject:[completion copy]];
     if(self.connecting)return;
@@ -68,7 +69,7 @@ static NSString *Output(NSDictionary *result) {
               timeout:(NSTimeInterval)timeout completion:(void (^)(NSDictionary *,NSError *))completion {
     NSAssert(NSThread.isMainThread,@"Guest controller is main-thread owned");
     if(self.closed || !path.isAbsolutePath || !isfinite(timeout) || timeout<0 || timeout>1200 || input.length>16384) {
-        completion(nil,GuestError(@"The guest command cannot be started."));return;
+        completion(nil,GuestError(VIMLocalized(@"guestagent.the-guest-command-cannot-be-started", @"The guest command cannot be started.")));return;
     }
     double deadline=timeout>0?NSProcessInfo.processInfo.systemUptime+timeout:0;
     NSMutableDictionary *request=[@{@"path":path,@"arg":[arguments copy],@"capture-output":@YES} mutableCopy];
@@ -77,18 +78,18 @@ static NSString *Output(NSDictionary *result) {
         completion:^(id result,NSError *error) {
         NSNumber *pid=[result isKindOfClass:NSDictionary.class]?result[@"pid"]:nil;
         if(error || ![pid isKindOfClass:NSNumber.class] || pid.longLongValue<=0) {
-            completion(nil,error?:GuestError(@"The guest did not return a process identifier."));return;
+            completion(nil,error?:GuestError(VIMLocalized(@"guestagent.the-guest-did-not-return-a-process-identifier", @"The guest did not return a process identifier.")));return;
         }
         [self pollProcess:pid deadline:deadline completion:completion];
     }];
 }
 - (void)pollProcess:(NSNumber *)pid deadline:(double)deadline completion:(void (^)(NSDictionary *,NSError *))completion {
     if(self.closed || (deadline>0 && NSProcessInfo.processInfo.systemUptime>=deadline)) {
-        completion(nil,GuestError(@"The guest command was interrupted or timed out. It may still be running."));return;
+        completion(nil,GuestError(VIMLocalized(@"guestagent.the-guest-command-was-interrupted-or-timed-out-it-may", @"The guest command was interrupted or timed out. It may still be running.")));return;
     }
     [self.connection execute:@"guest-exec-status" arguments:@{@"pid":pid} completion:^(id reply,NSError *error) {
         if(error || ![reply isKindOfClass:NSDictionary.class] || ![reply[@"exited"] isKindOfClass:NSNumber.class]) {
-            completion(nil,error?:GuestError(@"The guest returned an invalid process status."));return;
+            completion(nil,error?:GuestError(VIMLocalized(@"guestagent.the-guest-returned-an-invalid-process-status", @"The guest returned an invalid process status.")));return;
         }
         if([reply[@"exited"] boolValue]) {
             NSMutableDictionary *result=[reply mutableCopy];
@@ -97,14 +98,14 @@ static NSString *Output(NSDictionary *result) {
                 id truncated=reply[[stream stringByAppendingString:@"-truncated"]];
                 if((truncated && (![truncated isKindOfClass:NSNumber.class] || [truncated boolValue])) ||
                    (encoded && ![encoded isKindOfClass:NSString.class])) {
-                    completion(nil,GuestError(@"The guest command output was incomplete."));return;
+                    completion(nil,GuestError(VIMLocalized(@"guestagent.the-guest-command-output-was-incomplete", @"The guest command output was incomplete.")));return;
                 }
                 NSData *data=encoded?[[NSData alloc] initWithBase64EncodedString:encoded options:0]:NSData.data;
-                if(!data){completion(nil,GuestError(@"The guest command output was invalid."));return;}
+                if(!data){completion(nil,GuestError(VIMLocalized(@"guestagent.the-guest-command-output-was-invalid", @"The guest command output was invalid.")));return;}
                 result[[stream isEqual:@"out"]?@"stdout":@"stderr"]=data;
             }
             if(![reply[@"exitcode"] isKindOfClass:NSNumber.class] && ![reply[@"signal"] isKindOfClass:NSNumber.class]) {
-                completion(nil,GuestError(@"The guest command did not report its exit status."));return;
+                completion(nil,GuestError(VIMLocalized(@"guestagent.the-guest-command-did-not-report-its-exit-status", @"The guest command did not report its exit status.")));return;
             }
             completion(result,nil);return;
         }
@@ -123,7 +124,7 @@ static NSString *Output(NSDictionary *result) {
 }
 - (void)requestPowerOperation:(NSString *)operation completion:(void (^)(NSError *))completion {
     NSAssert(NSThread.isMainThread,@"Guest controller is main-thread owned");
-    if(self.closed){completion(GuestError(@"The virtual Mac’s guest tools are not connected."));return;}
+    if(self.closed){completion(GuestError(VIMLocalized(@"guestagent.the-virtual-mac-s-guest-tools-are-not-connected", @"The virtual Mac’s guest tools are not connected.")));return;}
     // Apple's agent supports guest-exec; its guest-shutdown implementation is
     // not assumed to match upstream QGA. A virtual ACPI power button may sleep
     // macOS instead. Use the same native command as the setup restart handoff,
@@ -132,7 +133,7 @@ static NSString *Output(NSDictionary *result) {
         @"arg":@[operation,@"now"],@"capture-output":@NO} completion:^(id reply,NSError *error){
         NSNumber *pid=[reply isKindOfClass:NSDictionary.class]?reply[@"pid"]:nil;
         completion(error?:(![pid isKindOfClass:NSNumber.class]||pid.longLongValue<=0?
-            GuestError(@"The virtual Mac did not acknowledge shutdown. It may already be shutting down; the request was not repeated."):nil));
+            GuestError(VIMLocalized(@"guestagent.the-virtual-mac-did-not-acknowledge-shutdown-it-may-already", @"The virtual Mac did not acknowledge shutdown. It may already be shutting down; the request was not repeated.")):nil));
     }];
 }
 - (void)writeData:(NSData *)data path:(NSString *)path completion:(void (^)(NSError *))completion {
@@ -142,7 +143,7 @@ static NSString *Output(NSDictionary *result) {
           progress:(void (^)(NSUInteger))progress completion:(void (^)(NSError *))completion {
     [self.connection execute:@"guest-file-open" arguments:@{@"path":path,@"mode":@"wb"} completion:^(id handle,NSError *error) {
         if(error || ![handle isKindOfClass:NSNumber.class]) {
-            completion(error?:GuestError(@"The guest could not open the staging file."));return;
+            completion(error?:GuestError(VIMLocalized(@"guestagent.the-guest-could-not-open-the-staging-file", @"The guest could not open the staging file.")));return;
         }
         [self writeChunks:data handle:handle offset:0 deadline:deadline progress:progress completion:^(NSError *writeError) {
             [self.connection execute:@"guest-file-close" arguments:@{@"handle":handle} completion:^(id ignored,NSError *closeError) {
@@ -153,7 +154,7 @@ static NSString *Output(NSDictionary *result) {
 }
 - (void)writeChunks:(NSData *)data handle:(NSNumber *)handle offset:(NSUInteger)offset deadline:(double)deadline
            progress:(void (^)(NSUInteger))progress completion:(void (^)(NSError *))completion {
-    if(self.closed||(deadline>0&&NSProcessInfo.processInfo.systemUptime>=deadline)){completion(GuestError(@"Guest transfer was interrupted or timed out. Partial staging was retained."));return;}
+    if(self.closed||(deadline>0&&NSProcessInfo.processInfo.systemUptime>=deadline)){completion(GuestError(VIMLocalized(@"guestagent.guest-transfer-was-interrupted-or-timed-out-partial-staging-was", @"Guest transfer was interrupted or timed out. Partial staging was retained.")));return;}
     if(offset==data.length){completion(nil);return;}
     // 384 KiB produces a 512 KiB base64 request, comfortably below QGA's
     // 64 MiB JSON limit. The former 48 KiB blocks required eight times as many
@@ -169,7 +170,7 @@ static NSString *Output(NSDictionary *result) {
     [self.connection execute:@"guest-file-write" arguments:@{@"handle":handle,@"buf-b64":chunk} completion:^(id reply,NSError *error) {
         NSNumber *written=[reply isKindOfClass:NSDictionary.class]?reply[@"count"]:nil;
         if(error || ![written isKindOfClass:NSNumber.class] || written.unsignedIntegerValue!=count) {
-            completion(error?:GuestError(@"The guest staging file was not completely written."));return;
+            completion(error?:GuestError(VIMLocalized(@"guestagent.the-guest-staging-file-was-not-completely-written", @"The guest staging file was not completely written.")));return;
         }
         if(progress)progress(offset+count);
         [self writeChunks:data handle:handle offset:offset+count deadline:deadline progress:progress completion:completion];
@@ -178,7 +179,7 @@ static NSString *Output(NSDictionary *result) {
 - (void)collectStatusWithTool:(NSData *)tool completion:(void (^)(NSDictionary *,NSError *))completion {
     NSAssert(NSThread.isMainThread,@"Guest controller is main-thread owned");
     if(self.closed || self.collecting || self.staging || self.openingPreferences || !tool.length || tool.length>1024*1024) {
-        completion(nil,GuestError(@"The guest status probe is unavailable or already running."));return;
+        completion(nil,GuestError(VIMLocalized(@"guestagent.the-guest-status-probe-is-unavailable-or-already-running", @"The guest status probe is unavailable or already running.")));return;
     }
     self.collecting=YES;
     NSData *payload=[tool copy];
@@ -226,26 +227,26 @@ static NSString *Output(NSDictionary *result) {
     // Do not resolve arbitrary names or pass untrusted URL options to open.
     struct in_addr address;BOOL numeric=inet_pton(AF_INET,URL.host.UTF8String,&address)==1;
     BOOL allowed=[@[@"ssh",@"smb"] containsObject:URL.scheme.lowercaseString]&&numeric&&!URL.password&&!URL.query&&!URL.fragment&&(!URL.port||[URL.port isEqual:@22]);
-    if(!allowed){completion(GuestError(@"Choose a supported connection to this Mac."));return;}
+    if(!allowed){completion(GuestError(VIMLocalized(@"guestagent.choose-a-supported-connection-to-this-mac", @"Choose a supported connection to this Mac.")));return;}
     if(self.preMetalGuest&&[URL.scheme.lowercaseString isEqual:@"ssh"]){
-        if(self.closed||self.collecting||self.staging||self.openingPreferences){completion(GuestError(@"Wait for this virtual Mac’s current operation to finish, then try again."));return;}
+        if(self.closed||self.collecting||self.staging||self.openingPreferences){completion(GuestError(VIMLocalized(@"guestagent.wait-for-this-virtual-mac-s-current-operation-to-finish", @"Wait for this virtual Mac’s current operation to finish, then try again.")));return;}
         self.openingPreferences=YES;
         [self runConsoleExecutable:@"/Library/Application Support/Virtual Intel Mac/GuestTools/guest-host-connection"
             arguments:@[@"--ssh",URL.host,URL.user?:NSUserName()] timeout:30 completion:^(NSDictionary *opened,NSError *error){
                 self.openingPreferences=NO;
-                completion(error?:(!Successful(opened)?GuestError(@"Terminal couldn’t open the modern SSH client inside this virtual Mac. Make sure its guest support is up to date and sign in to its desktop, then try again."):nil));
+                completion(error?:(!Successful(opened)?GuestError(VIMLocalized(@"guestagent.terminal-couldn-t-open-the-modern-ssh-client-inside-this", @"Terminal couldn’t open the modern SSH client inside this virtual Mac. Make sure its guest support is up to date and sign in to its desktop, then try again.")):nil));
             }];return;
     }
     [self openGUIURL:URL.absoluteString completion:completion];
 }
 - (void)openGUIURL:(NSString *)url completion:(void (^)(NSError *))completion {
     if(!url||self.closed||self.collecting||self.staging||self.openingPreferences) {
-        completion(GuestError(@"Start the virtual Mac, sign in and wait for setup to finish, then try again. You can also open System Preferences inside the virtual Mac."));return;
+        completion(GuestError(VIMLocalized(@"guestagent.start-the-virtual-mac-sign-in-and-wait-for-setup", @"Start the virtual Mac, sign in and wait for setup to finish, then try again. You can also open System Preferences inside the virtual Mac.")));return;
     }
     self.openingPreferences=YES;
     void (^finish)(NSError *)=^(NSError *error){self.openingPreferences=NO;completion(error);};
     [self runConsoleExecutable:@"/usr/bin/open" arguments:@[url] timeout:30 completion:^(NSDictionary *opened,NSError *error){
-        finish(error?:(!Successful(opened)?GuestError(@"The connection could not open inside the virtual Mac. Sign in to its desktop and try again."):nil));
+        finish(error?:(!Successful(opened)?GuestError(VIMLocalized(@"guestagent.the-connection-could-not-open-inside-the-virtual-mac-sign", @"The connection could not open inside the virtual Mac. Sign in to its desktop and try again.")):nil));
     }];
 }
 - (void)runConsoleExecutable:(NSString *)path arguments:(NSArray<NSString *> *)arguments timeout:(NSTimeInterval)timeout completion:(void (^)(NSDictionary *,NSError *))completion {
@@ -258,7 +259,7 @@ static NSString *Output(NSDictionary *result) {
         NSString *text=[Output(result) stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
         NSScanner *scanner=text?[NSScanner scannerWithString:text]:nil;unsigned long long uid=0;
         if(error||!Successful(result)||![scanner scanUnsignedLongLong:&uid]||!scanner.isAtEnd||uid<501||uid>INT_MAX) {
-            completion(nil,error?:GuestError(@"Sign in to the virtual Mac’s desktop before opening its settings."));return;
+            completion(nil,error?:GuestError(VIMLocalized(@"guestagent.sign-in-to-the-virtual-mac-s-desktop-before-opening", @"Sign in to the virtual Mac’s desktop before opening its settings.")));return;
         }
         NSString *account=[@(uid) stringValue];
         // Enter the real Aqua session, then drop root before Launch Services.
@@ -281,7 +282,7 @@ static NSString *Output(NSDictionary *result) {
                    [[line substringFromIndex:scan.scanLocation] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet].length&&
                    [[[line substringFromIndex:scan.scanLocation] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet] isEqual:@"/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder"]){pid=@(process).stringValue;break;}
             }
-            if(failure||!Successful(processes)||!pid){completion(nil,failure?:GuestError(@"Sign in to the virtual Mac’s desktop before opening its settings."));return;}
+            if(failure||!Successful(processes)||!pid){completion(nil,failure?:GuestError(VIMLocalized(@"guestagent.sign-in-to-the-virtual-mac-s-desktop-before-opening", @"Sign in to the virtual Mac’s desktop before opening its settings.")));return;}
             [self runExecutable:@"/bin/launchctl" arguments:[@[@"bsexec",pid] arrayByAddingObjectsFromArray:child] timeout:timeout completion:completion];
         }];
     }];
@@ -292,7 +293,7 @@ static NSString *Output(NSDictionary *result) {
         NSError *failure=error;
         id report=Successful(result)?[NSJSONSerialization JSONObjectWithData:result[@"stdout"] options:0 error:&failure]:nil;
         if(![report isKindOfClass:NSDictionary.class] || ![report[@"ProtocolVersion"] isEqual:@1] || ![report[@"Ready"] isEqual:@NO]) {
-            completion(nil,failure?:GuestError(@"The guest returned an invalid installation report."));return;
+            completion(nil,failure?:GuestError(VIMLocalized(@"guestagent.the-guest-returned-an-invalid-installation-report", @"The guest returned an invalid installation report.")));return;
         }
         completion(report,failure);
     }];
@@ -310,7 +311,7 @@ static NSString *Output(NSDictionary *result) {
     // optional executable and disrupting an otherwise healthy agent stream.
     [self runExecutable:@"/bin/sh" arguments:@[@"-c",@"test \"${EUID-}\" = 0 && printf '0\\n'"] timeout:15 completion:^(NSDictionary *identity,NSError *error) {
         completion(error?:((Successful(identity)&&[Output(identity) isEqual:@"0\n"])?nil:
-            GuestError(@"Automatic guest setup requires the built-in privileged guest agent.")));
+            GuestError(VIMLocalized(@"guestagent.automatic-guest-setup-requires-the-built-in-privileged-guest-agent", @"Automatic guest setup requires the built-in privileged guest agent."))));
     }];
 }
 - (void)stageStatusTool:(NSData *)payload completion:(void (^)(NSDictionary *,NSError *))finish {
@@ -321,22 +322,22 @@ static NSString *Output(NSDictionary *result) {
             NSString *directory=[Output(created) stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
             NSRegularExpression *pattern=[NSRegularExpression regularExpressionWithPattern:@"^/private/var/run/VirtualIntelMacStatus\\.[A-Za-z0-9]{6}$" options:0 error:NULL];
             if(createError || !Successful(created) || !directory || [pattern numberOfMatchesInString:directory options:0 range:NSMakeRange(0,directory.length)]!=1) {
-                finish(nil,createError?:GuestError(@"The guest could not create a private staging directory."));return;
+                finish(nil,createError?:GuestError(VIMLocalized(@"guestagent.the-guest-could-not-create-a-private-staging-directory", @"The guest could not create a private staging directory.")));return;
             }
             NSString *path=[directory stringByAppendingPathComponent:@"guest-status"];
             void (^cleanup)(NSDictionary *,NSError *)=^(NSDictionary *report,NSError *originalError) {
                 [self runExecutable:@"/bin/rm" arguments:@[@"-f",path] timeout:15 completion:^(NSDictionary *removed,NSError *removeError) {
                     NSError *failure=originalError?:removeError;
-                    if(!failure&&!Successful(removed))failure=GuestError(@"Could not remove the temporary guest probe.");
+                    if(!failure&&!Successful(removed))failure=GuestError(VIMLocalized(@"guestagent.could-not-remove-the-temporary-guest-probe", @"Could not remove the temporary guest probe."));
                     [self runExecutable:@"/bin/rmdir" arguments:@[directory] timeout:15 completion:^(NSDictionary *removedDirectory,NSError *directoryError) {
-                        finish(report,failure?:directoryError?:(!Successful(removedDirectory)?GuestError(@"Could not remove the temporary guest directory."):nil));
+                        finish(report,failure?:directoryError?:(!Successful(removedDirectory)?GuestError(VIMLocalized(@"guestagent.could-not-remove-the-temporary-guest-directory", @"Could not remove the temporary guest directory.")):nil));
                     }];
                 }];
             };
             [self writeData:payload path:path completion:^(NSError *writeError) {
                 if(writeError){cleanup(nil,writeError);return;}
                 [self runExecutable:@"/bin/chmod" arguments:@[@"0700",path] timeout:15 completion:^(NSDictionary *mode,NSError *modeError) {
-                    if(modeError || !Successful(mode)){cleanup(nil,modeError?:GuestError(@"Could not prepare the guest probe."));return;}
+                    if(modeError || !Successful(mode)){cleanup(nil,modeError?:GuestError(VIMLocalized(@"guestagent.could-not-prepare-the-guest-probe", @"Could not prepare the guest probe.")));return;}
                     self.statusDirectory=directory;self.statusPayload=payload;
                     [self readStatusAtPath:path completion:finish];
                 }];
@@ -356,7 +357,7 @@ static NSString *Output(NSDictionary *result) {
         completion:(void (^)(NSDictionary *,NSError *))completion {
     NSAssert(NSThread.isMainThread,@"Guest controller is main-thread owned");
     if(self.closed||self.staging||self.collecting||self.openingPreferences||!files.count||files.count>16) {
-        completion(nil,GuestError(@"Guest setup transfer is unavailable or another operation is active."));return;
+        completion(nil,GuestError(VIMLocalized(@"guestagent.guest-setup-transfer-is-unavailable-or-another-operation-is-active", @"Guest setup transfer is unavailable or another operation is active.")));return;
     }
     self.staging=YES;NSDictionary *inputs=[files copy];
     void (^finish)(NSDictionary *,NSError *)=^(NSDictionary *receipt,NSError *error){self.staging=NO;completion(receipt,error);};
@@ -367,18 +368,18 @@ static NSString *Output(NSDictionary *result) {
         for(NSString *name in names) {
             NSURL *url=inputs[name];
             if(!name.length||[name hasPrefix:@"."]||name.length>128||[name rangeOfCharacterFromSet:invalid].location!=NSNotFound||!url.isFileURL) {
-                failure=GuestError(@"Invalid guest setup file name or source.");break;
+                failure=GuestError(VIMLocalized(@"guestagent.invalid-guest-setup-file-name-or-source", @"Invalid guest setup file name or source."));break;
             }
             NSNumber *regular=nil;[url getResourceValue:&regular forKey:NSURLIsRegularFileKey error:&failure];
-            if(failure||!regular.boolValue){failure=failure?:GuestError(@"Guest setup input is not a regular file.");break;}
+            if(failure||!regular.boolValue){failure=failure?:GuestError(VIMLocalized(@"guestagent.guest-setup-input-is-not-a-regular-file", @"Guest setup input is not a regular file."));break;}
             NSData *data=[NSData dataWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:&failure];
             if(!data||data.length>512ULL*1024*1024||total+data.length>1024ULL*1024*1024) {
-                failure=failure?:GuestError(@"Guest setup files exceed the transfer limit.");break;
+                failure=failure?:GuestError(VIMLocalized(@"guestagent.guest-setup-files-exceed-the-transfer-limit", @"Guest setup files exceed the transfer limit."));break;
             }
             [entries addObject:@{@"Name":name,@"Data":data}];total+=data.length;
         }
         dispatch_async(dispatch_get_main_queue(),^{
-            if(failure||self.closed){finish(nil,failure?:GuestError(@"Guest transfer was cancelled."));return;}
+            if(failure||self.closed){finish(nil,failure?:GuestError(VIMLocalized(@"guestagent.guest-transfer-was-cancelled", @"Guest transfer was cancelled.")));return;}
             [self confirmPrivilegedAgent:^(NSError *error) {
                 if(error){finish(nil,error);return;}
                 NSString *base=persistent?@"/private/var/db":@"/private/var/tmp";
@@ -387,7 +388,7 @@ static NSString *Output(NSDictionary *result) {
                     NSString *expression=[NSString stringWithFormat:@"^%@/VirtualIntelMac\\.[A-Za-z0-9]{6}$",[NSRegularExpression escapedPatternForString:base]];
                     NSRegularExpression *pattern=[NSRegularExpression regularExpressionWithPattern:expression options:0 error:NULL];
                     if(createError||!Successful(created)||!directory||[pattern numberOfMatchesInString:directory options:0 range:NSMakeRange(0,directory.length)]!=1) {
-                        finish(nil,createError?:GuestError(@"The guest could not create a private transfer directory."));return;
+                        finish(nil,createError?:GuestError(VIMLocalized(@"guestagent.the-guest-could-not-create-a-private-transfer-directory", @"The guest could not create a private transfer directory.")));return;
                     }
                     if(progress)progress(0,total);
                     [self stageEntries:entries index:0 directory:directory completed:0 total:total
@@ -415,7 +416,7 @@ static NSString *Output(NSDictionary *result) {
         completion:^(NSError *writeError) {
         if(writeError){completion(writeError);return;}
         [self runExecutable:@"/bin/chmod" arguments:@[[entry[@"Name"] isEqual:@"guest-macho"]?@"0700":@"0600",path] timeout:15 completion:^(NSDictionary *mode,NSError *modeError) {
-            if(modeError||!Successful(mode)){completion(modeError?:GuestError(@"Could not secure a guest staging file."));return;}
+            if(modeError||!Successful(mode)){completion(modeError?:GuestError(VIMLocalized(@"guestagent.could-not-secure-a-guest-staging-file", @"Could not secure a guest staging file.")));return;}
             [self stageEntries:entries index:index+1 directory:directory completed:completed+data.length total:total
                 deadline:deadline progress:progress completion:completion];
         }];

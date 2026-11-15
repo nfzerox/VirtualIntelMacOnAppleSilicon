@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMHostUSB.h"
 #import "VIMLibraryLocation.h"
 #import "VIMUSBClient.h"
@@ -36,14 +37,14 @@ void VIMStartHostUSBNotifications(void) {
 @end
 static void DiskReleased(DADiskRef disk,DADissenterRef dissenter,void *context) {
     VIMUSBRelease *operation=CFBridgingRelease(context);
-    if(dissenter){operation.completion(USBReleaseError(@"This Mac is still using the device. Close apps that use it, or choose Force Eject if you’re sure it has no unsaved work."));return;}
+    if(dissenter){operation.completion(USBReleaseError(VIMLocalized(@"hostusb.this-mac-is-still-using-the-device-close-apps-that", @"This Mac is still using the device. Close apps that use it, or choose Force Eject if you’re sure it has no unsaved work.")));return;}
     [operation next];
 }
 @implementation VIMUSBRelease
 - (void)next {
     if(self.index==self.disks.count){self.completion(nil);return;}
     DADiskRef disk=DADiskCreateFromBSDName(NULL,self.session,self.disks[self.index++].UTF8String);
-    if(!disk){self.completion(USBReleaseError(@"The device changed or was disconnected. Reconnect it and try again."));return;}
+    if(!disk){self.completion(USBReleaseError(VIMLocalized(@"hostusb.the-device-changed-or-was-disconnected-reconnect-it-and-try", @"The device changed or was disconnected. Reconnect it and try again.")));return;}
     DADiskUnmount(disk,kDADiskUnmountOptionWhole|(self.force?kDADiskUnmountOptionForce:0),DiskReleased,(void *)CFBridgingRetain(self));CFRelease(disk);
 }
 - (void)dealloc {if(_session){DASessionSetDispatchQueue(_session,NULL);CFRelease(_session);}}
@@ -60,7 +61,7 @@ NSDictionary *VIMHostUSBStorageInfo(NSDictionary *device,NSArray<NSURL *> *prote
             if([location unsignedIntValue]==[device[@"LocationID"] unsignedIntValue]&&[vendor isEqual:device[@"VendorID"]]&&[product isEqual:device[@"ProductID"]]){selected=service;IOObjectRetain(selected);}
         }IOObjectRelease(devices);
     }
-    if(!selected){if(error)*error=USBReleaseError(@"The device is no longer connected. Reconnect it and try again.");return nil;}
+    if(!selected){if(error)*error=USBReleaseError(VIMLocalized(@"hostusb.the-device-is-no-longer-connected-reconnect-it-and-try", @"The device is no longer connected. Reconnect it and try again."));return nil;}
     NSMutableArray *names=[NSMutableArray array];NSMutableSet *allMedia=[NSMutableSet new];io_iterator_t descendants=0;BOOL storageInterface=NO;
     if(IORegistryEntryCreateIterator(selected,kIOServicePlane,kIORegistryIterateRecursively,&descendants)==KERN_SUCCESS) {
         for(io_registry_entry_t media;(media=IOIteratorNext(descendants));IOObjectRelease(media)) {
@@ -77,10 +78,10 @@ NSDictionary *VIMHostUSBStorageInfo(NSDictionary *device,NSArray<NSURL *> *prote
         }IOObjectRelease(descendants);
     } else {
         IOObjectRelease(selected);
-        if(error)*error=USBReleaseError(@"This Mac couldn’t check the USB device. Reconnect it and try again.");return nil;
+        if(error)*error=USBReleaseError(VIMLocalized(@"hostusb.this-mac-couldn-t-check-the-usb-device-reconnect-it", @"This Mac couldn’t check the USB device. Reconnect it and try again."));return nil;
     }IOObjectRelease(selected);
     struct statfs *mounts=NULL;int count=getmntinfo(&mounts,MNT_NOWAIT);
-    if(count<=0){if(error)*error=USBReleaseError(@"This Mac’s mounted disks could not be checked. Try again shortly.");return nil;}
+    if(count<=0){if(error)*error=USBReleaseError(VIMLocalized(@"hostusb.this-mac-s-mounted-disks-could-not-be-checked-try", @"This Mac’s mounted disks could not be checked. Try again shortly."));return nil;}
     NSMutableArray *mounted=[NSMutableArray new];BOOL protected=NO;
     for(int i=0;i<count;i++)if([allMedia containsObject:@(mounts[i].f_mntfromname)]) {
         NSString *path=@(mounts[i].f_mntonname);[mounted addObject:path];
@@ -101,7 +102,7 @@ void VIMHostRequestUSBStorageAccess(NSDictionary *device,NSArray<NSURL *> *prote
         NSMutableArray *protected=[NSMutableArray arrayWithObjects:NSBundle.mainBundle.bundleURL,VIMLibraryLocation.rootURL,nil];
         [protected addObjectsFromArray:protectedURLs];
         NSError *failure=nil;NSDictionary *info=VIMHostUSBStorageInfo(device,protected,&failure);
-        if(info&&[info[@"Protected"] boolValue])failure=USBReleaseError(@"This device contains Virtual Intel Mac or its library and cannot be connected. Move those files to another drive first.");
+        if(info&&[info[@"Protected"] boolValue])failure=USBReleaseError(VIMLocalized(@"hostusb.this-device-contains-virtual-intel-mac-or-its-library-and", @"This device contains Virtual Intel Mac or its library and cannot be connected. Move those files to another drive first."));
         dispatch_async(dispatch_get_main_queue(),^{
             // A blank, unmounted or recently reset USB drive may have an
             // interface but no IOMedia yet. Consent must not depend on disks.
@@ -117,21 +118,21 @@ void VIMHostRequestUSBStorageAccess(NSDictionary *device,NSArray<NSURL *> *prote
             [access checkStorageInterface:identity inUserSession:YES completion:^(NSDictionary *result,NSError *error){
                 (void)access; // own the XPC client through the bounded reply
                 if(error){completion(error);return;}
-                if(![result[@"Found"] boolValue]){completion(USBReleaseError(@"The USB drive was disconnected. Reconnect it and try again."));return;}
+                if(![result[@"Found"] boolValue]){completion(USBReleaseError(VIMLocalized(@"hostusb.the-usb-drive-was-disconnected-reconnect-it-and-try-again", @"The USB drive was disconnected. Reconnect it and try again.")));return;}
                 if(![result[@"AuditAvailable"] boolValue]||[result[@"AuditUID"] unsignedIntValue]!=getuid()||
                    [result[@"EffectiveUID"] unsignedIntValue]!=0||![result[@"UserSessionRequested"] boolValue]) {
-                    completion(USBReleaseError(@"USB access could not be checked in your signed-in session. Sign in to this Mac and try again."));return;
+                    completion(USBReleaseError(VIMLocalized(@"hostusb.usb-access-could-not-be-checked-in-your-signed-in", @"USB access could not be checked in your signed-in session. Sign in to this Mac and try again.")));return;
                 }
                 NSArray *interfaces=[result[@"StorageInterfaces"] isKindOfClass:NSArray.class]?result[@"StorageInterfaces"]:nil;
                 if(!interfaces.count||[result[@"WorkerExitStatus"] integerValue]!=0) {
-                    completion(USBReleaseError(@"The USB drive changed while checking access. Reconnect it and try again."));return;
+                    completion(USBReleaseError(VIMLocalized(@"hostusb.the-usb-drive-changed-while-checking-access-reconnect-it-and", @"The USB drive changed while checking access. Reconnect it and try again.")));return;
                 }
                 for(NSDictionary *interface in interfaces)if(![interface isKindOfClass:NSDictionary.class]||![interface[@"PluginCreated"] boolValue]) {
                     uint32_t status=[interface[@"IOReturn"] unsignedIntValue];
                     BOOL denied=status==kIOReturnNotPermitted||status==kIOReturnNotPrivileged;
                     completion([NSError errorWithDomain:@"VirtualIntelMac.USB" code:status userInfo:@{
-                        NSLocalizedDescriptionKey:denied?@"Allow access to this USB drive":@"This Mac couldn’t open the USB interface",
-                        NSLocalizedRecoverySuggestionErrorKey:denied?@"Allow Removable Volumes for Virtual Intel Mac USB Helper in System Settings → Privacy & Security → Files and Folders, then try again.":@"Disconnect it from other virtual machines and close apps using it. If that doesn’t help, unplug the device, reconnect it, and try again. macOS did not report a denied privacy permission."}]);return;
+                        NSLocalizedDescriptionKey:denied?VIMLocalized(@"hostusb.allow-access-to-this-usb-drive", @"Allow access to this USB drive"):VIMLocalized(@"hostusb.this-mac-couldn-t-open-the-usb-interface", @"This Mac couldn’t open the USB interface"),
+                        NSLocalizedRecoverySuggestionErrorKey:denied?VIMLocalized(@"hostusb.allow-removable-volumes-for-virtual-intel-mac-usb-helper-in", @"Allow Removable Volumes for Virtual Intel Mac USB Helper in System Settings → Privacy & Security → Files and Folders, then try again."):VIMLocalized(@"hostusb.disconnect-it-from-other-virtual-machines-and-close-apps-using", @"Disconnect it from other virtual machines and close apps using it. If that doesn’t help, unplug the device, reconnect it, and try again. macOS did not report a denied privacy permission.")}]);return;
                 }
                 completion(nil);
             }];
@@ -144,10 +145,10 @@ void VIMHostReleaseUSBDisks(NSDictionary *device,NSArray<NSURL *> *protectedURLs
     NSMutableArray *protected=[NSMutableArray arrayWithObject:NSBundle.mainBundle.bundleURL];
     [protected addObject:VIMLibraryLocation.rootURL];[protected addObjectsFromArray:protectedURLs];
     NSError *error=nil;NSDictionary *info=VIMHostUSBStorageInfo(device,protected,&error);
-    if(!info||[info[@"Protected"] boolValue]){completion(error?:USBReleaseError(@"This device contains Virtual Intel Mac or its library and cannot be unmounted. Move the app and library to another drive first."));return;}
+    if(!info||[info[@"Protected"] boolValue]){completion(error?:USBReleaseError(VIMLocalized(@"hostusb.this-device-contains-virtual-intel-mac-or-its-library-and-2", @"This device contains Virtual Intel Mac or its library and cannot be unmounted. Move the app and library to another drive first.")));return;}
     NSArray *names=info[@"Disks"];
     if(!names.count){completion(nil);return;}
     VIMUSBRelease *operation=[VIMUSBRelease new];operation.disks=names;operation.force=force;operation.completion=completion;operation.session=DASessionCreate(NULL);
-    if(!operation.session){completion(USBReleaseError(@"This Mac’s disk service is unavailable. Try again shortly."));return;}
+    if(!operation.session){completion(USBReleaseError(VIMLocalized(@"hostusb.this-mac-s-disk-service-is-unavailable-try-again-shortly", @"This Mac’s disk service is unavailable. Try again shortly.")));return;}
     DASessionSetDispatchQueue(operation.session,dispatch_get_main_queue());[operation next];
 }

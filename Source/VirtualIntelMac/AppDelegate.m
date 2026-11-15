@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "AppDelegate.h"
 #import "VIMUpdateChecker.h"
 #import "VIMLibraryLocation.h"
@@ -105,8 +106,8 @@
     NSString *hostNotice=VIMHostUpdateNotice(NSProcessInfo.processInfo.operatingSystemVersion);
     if(hostNotice) {
         NSAlert *alert=[NSAlert new];alert.messageText=hostNotice;
-        alert.informativeText=@"Check the Virtual Intel Mac releases page for a version compatible with this Mac.";
-        [alert addButtonWithTitle:@"Check for Updates"];[alert addButtonWithTitle:@"Quit"];
+        alert.informativeText=VIMLocalized(@"app.check-the-virtual-intel-mac-releases-page-for-a-version", @"Check the Virtual Intel Mac releases page for a version compatible with this Mac.");
+        [alert addButtonWithTitle:VIMLocalized(@"app.check-for-updates", @"Check for Updates")];[alert addButtonWithTitle:VIMLocalized(@"ui.quit", @"Quit")];
         VIMPresentAlert(alert,nil,^(NSModalResponse response){
             if(response==NSAlertFirstButtonReturn)[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"https://github.com/nfzerox/VirtualIntelMacOnAppleSilicon/releases"]];
             [NSApp terminate:nil];
@@ -124,13 +125,13 @@
         backing:NSBackingStoreBuffered defer:NO];
     self.window.releasedWhenClosed = NO;
     self.libraryController = [VIMLibraryViewController new];
-    self.window.title = @"Virtual Intel Mac Library";
+    self.window.title = VIMLocalized(@"app.virtual-intel-mac-library", @"Virtual Intel Mac Library");
     self.window.excludedFromWindowsMenu=YES;
     self.window.collectionBehavior=(self.window.collectionBehavior&~(NSWindowCollectionBehaviorFullScreenPrimary|NSWindowCollectionBehaviorFullScreenAuxiliary))|NSWindowCollectionBehaviorFullScreenNone;
     self.window.contentViewController = self.libraryController;
     [self.window setContentSize:NSMakeSize(540, 378)];
     [self.window center];
-    NSMenuItem *format=[NSApp.mainMenu itemWithTitle:@"Format"];
+    NSMenuItem *format=VIMMenuItem(NSApp.mainMenu, @"vim.format");
     if(format)[NSApp.mainMenu removeItem:format];
     NSMenu *appMenu = NSApp.mainMenu.itemArray.firstObject.submenu;
     for(NSMenuItem *item in appMenu.itemArray)if(item.action==@selector(orderFrontStandardAboutPanel:)) {
@@ -138,15 +139,15 @@
     }
     for(NSMenuItem *item in appMenu.itemArray.copy)
         if([item.keyEquivalent isEqual:@","])[appMenu removeItem:item];
-    NSMenuItem *settings=[[NSMenuItem alloc] initWithTitle:@"Settings…" action:@selector(showSettings:) keyEquivalent:@","];
+    NSMenuItem *settings=[[NSMenuItem alloc] initWithTitle:VIMLocalized(@"app.settings", @"Settings…") action:@selector(showSettings:) keyEquivalent:@","];
     settings.target=self;[appMenu insertItem:settings atIndex:MIN(2,appMenu.numberOfItems)];
-    NSMenuItem *check = [[NSMenuItem alloc] initWithTitle:@"Check for Updates…"
+    NSMenuItem *check = [[NSMenuItem alloc] initWithTitle:VIMLocalized(@"app.check-for-updates-2", @"Check for Updates…")
         action:@selector(checkForUpdates:) keyEquivalent:@""];
     check.target = self; [appMenu insertItem:check atIndex:MIN(2, appMenu.numberOfItems)];
-    NSMenu *help = [[NSMenu alloc] initWithTitle:@"Help"];
-    [help addItemWithTitle:@"Virtual Intel Mac Project" action:@selector(visitProject:) keyEquivalent:@""].target = self;
-    [help addItemWithTitle:@"Get Help from Community" action:@selector(reportIssue:) keyEquivalent:@""].target = self;
-    [help addItemWithTitle:@"Report an Issue…" action:@selector(reportIssue:) keyEquivalent:@""].target = self;
+    NSMenu *help = [[NSMenu alloc] initWithTitle:VIMLocalized(@"app.help", @"Help")];
+    [help addItemWithTitle:VIMLocalized(@"app.virtual-intel-mac-project", @"Virtual Intel Mac Project") action:@selector(visitProject:) keyEquivalent:@""].target = self;
+    [help addItemWithTitle:VIMLocalized(@"app.get-help-from-community", @"Get Help from Community") action:@selector(reportIssue:) keyEquivalent:@""].target = self;
+    [help addItemWithTitle:VIMLocalized(@"app.report-an-issue", @"Report an Issue…") action:@selector(reportIssue:) keyEquivalent:@""].target = self;
     NSMenuItem *helpItem = nil;
     for (NSMenuItem *item in NSApp.mainMenu.itemArray) if (item.submenu == NSApp.helpMenu) helpItem = item;
     if (!helpItem) { helpItem = [NSMenuItem new]; [NSApp.mainMenu addItem:helpItem]; }
@@ -236,9 +237,9 @@
     }
     int translated=0;size_t translatedSize=sizeof(translated);
     if(sysctlbyname("sysctl.proc_translated",&translated,&translatedSize,NULL,0)==0&&translated) {
-        NSAlert *alert=[NSAlert new];alert.messageText=@"Turn off Rosetta for Virtual Intel Mac";
-        alert.informativeText=@"Virtual Intel Mac needs to run natively on this Apple silicon Mac. Quit the app, select it in Finder, and choose File → Get Info. Turn off “Open using Rosetta”, then open the app again.";
-        [alert addButtonWithTitle:@"Show in Finder"];[alert addButtonWithTitle:@"Not Now"];
+        NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"app.turn-off-rosetta-for-virtual-intel-mac", @"Turn off Rosetta for Virtual Intel Mac");
+        alert.informativeText=VIMLocalized(@"app.virtual-intel-mac-needs-to-run-natively-on-this-apple", @"Virtual Intel Mac needs to run natively on this Apple silicon Mac. Quit the app, select it in Finder, and choose File → Get Info. Turn off “Open using Rosetta”, then open the app again.");
+        [alert addButtonWithTitle:VIMLocalized(@"app.show-in-finder", @"Show in Finder")];[alert addButtonWithTitle:VIMLocalized(@"app.not-now", @"Not Now")];
         VIMPresentAlert(alert,NSApp.mainWindow,^(NSModalResponse response){if(response==NSAlertFirstButtonReturn)[NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[NSBundle.mainBundle.bundleURL]];});
     }
     VIMCheckRosetta(^(BOOL missing,NSError *error){
@@ -253,14 +254,14 @@
     if(self.quitConfirmationPending)return NSTerminateCancel;
     if(VIMNewMachineWindow.isCreating) {
         self.quitApproved=NO;
-        NSAlert *alert=[NSAlert new];alert.messageText=@"A Mac is being created";
-        alert.informativeText=@"Wait for the new disk to finish being created before quitting. Your existing Macs are unchanged.";
-        [alert addButtonWithTitle:@"OK"];VIMPresentAlert(alert,nil,nil);return NSTerminateCancel;
+        NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"app.a-mac-is-being-created", @"A Mac is being created");
+        alert.informativeText=VIMLocalized(@"app.wait-for-the-new-disk-to-finish-being-created-before", @"Wait for the new disk to finish being created before quitting. Your existing Macs are unchanged.");
+        [alert addButtonWithTitle:VIMLocalized(@"common.ok", @"OK")];VIMPresentAlert(alert,nil,nil);return NSTerminateCancel;
     }
     if(VIMSession.hasRunningMachines&&!self.quitApproved) {
-        NSAlert *alert=[NSAlert new];alert.messageText=@"Shut down your Macs and quit?";
-        alert.informativeText=[NSString stringWithFormat:@"Running: %@\n\nSave your work in each virtual Mac before shutting down. Force Stop stops immediately without letting macOS finish.",[[VIMSession runningMachineNames] componentsJoinedByString:@", "]];
-        [alert addButtonWithTitle:@"Shut Down and Quit"];[alert addButtonWithTitle:@"Cancel"];[alert addButtonWithTitle:@"Force Stop and Quit"];
+        NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"app.shut-down-your-macs-and-quit", @"Shut down your Macs and quit?");
+        alert.informativeText=[NSString stringWithFormat:VIMLocalized(@"app.running-save-your-work-in-each-virtual-mac-before-shutting", @"Running: %@\n\nSave your work in each virtual Mac before shutting down. Force Stop stops immediately without letting macOS finish."),[[VIMSession runningMachineNames] componentsJoinedByString:@", "]];
+        [alert addButtonWithTitle:VIMLocalized(@"app.shut-down-and-quit", @"Shut Down and Quit")];[alert addButtonWithTitle:VIMLocalized(@"common.cancel", @"Cancel")];[alert addButtonWithTitle:VIMLocalized(@"app.force-stop-and-quit", @"Force Stop and Quit")];
         self.quitConfirmationPending=YES;
         VIMPresentAlert(alert,nil,^(NSModalResponse response){
             self.quitConfirmationPending=NO;
@@ -284,9 +285,9 @@
         if(!VIMSession.hasRunningMachines){[timer invalidate];weakSelf.quitTimer=nil;[NSApp terminate:nil];return;}
         if(deadline.timeIntervalSinceNow>0)return;
         [timer invalidate];weakSelf.quitTimer=nil;
-        NSAlert *alert=[NSAlert new];alert.messageText=@"Your virtual Mac is still shutting down";
-        alert.informativeText=@"The app will stay open so you can check the virtual Mac’s window. If guest tools are unavailable, choose Shut Down from its Apple menu. Use Force Stop only if it is unresponsive.";
-        [alert addButtonWithTitle:@"Keep App Open"];VIMPresentAlert(alert,nil,nil);
+        NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"app.your-virtual-mac-is-still-shutting-down", @"Your virtual Mac is still shutting down");
+        alert.informativeText=VIMLocalized(@"app.the-app-will-stay-open-so-you-can-check-the", @"The app will stay open so you can check the virtual Mac’s window. If guest tools are unavailable, choose Shut Down from its Apple menu. Use Force Stop only if it is unresponsive.");
+        [alert addButtonWithTitle:VIMLocalized(@"app.keep-app-open", @"Keep App Open")];VIMPresentAlert(alert,nil,nil);
     }];
     [NSRunLoop.mainRunLoop addTimer:self.quitTimer forMode:NSRunLoopCommonModes];
 }
@@ -299,7 +300,7 @@
     for(NSURL *URL in URLs) {
         NSError *error=nil;
         if(!URL.isFileURL||![URL.pathExtension.lowercaseString isEqual:@"vintelmac"]) {
-            error=[NSError errorWithDomain:@"VirtualIntelMac.Documents" code:1 userInfo:@{NSLocalizedDescriptionKey:@"Choose a Virtual Intel Mac package (.vintelmac)."}];
+            error=[NSError errorWithDomain:@"VirtualIntelMac.Documents" code:1 userInfo:@{NSLocalizedDescriptionKey:VIMLocalized(@"app.choose-a-virtual-intel-mac-package-vintelmac", @"Choose a Virtual Intel Mac package (.vintelmac).")}];
         } else {
             [self.libraryController registerPackageURL:URL];
             VIMMachine *machine=[VIMMachine loadURL:URL error:&error];
@@ -332,18 +333,18 @@
 }
 - (void)refreshLibraryLocationPopup {
     NSPopUpButton *popup=self.libraryLocationPopup;[popup removeAllItems];
-    [popup addItemWithTitle:@"Folders:"];popup.lastItem.enabled=NO;
+    [popup addItemWithTitle:VIMLocalized(@"app.folders", @"Folders:")];popup.lastItem.enabled=NO;
     NSString *folderPath=VIMLibraryLocation.rootURL.path;
     [popup addItemWithTitle:folderPath];popup.lastItem.tag=0;
     NSImage *folderIcon=VIMLibraryLocation.folderIcon;
     folderIcon.size=NSMakeSize(16,16);popup.lastItem.image=folderIcon;
     [popup.menu addItem:NSMenuItem.separatorItem];
     if(![VIMLibraryLocation.rootURL.URLByResolvingSymlinksInPath.path isEqual:VIMLibraryLocation.defaultURL.URLByResolvingSymlinksInPath.path]) {
-        [popup addItemWithTitle:@"Default"];popup.lastItem.tag=2;
+        [popup addItemWithTitle:VIMLocalized(@"app.default", @"Default")];popup.lastItem.tag=2;
         NSImage *defaultIcon=[NSWorkspace.sharedWorkspace iconForFile:VIMLibraryLocation.defaultURL.path].copy;
         defaultIcon.size=NSMakeSize(16,16);popup.lastItem.image=defaultIcon;
     }
-    [popup addItemWithTitle:@"Other…"];popup.lastItem.tag=1;[popup selectItemAtIndex:1];
+    [popup addItemWithTitle:VIMLocalized(@"app.other", @"Other…")];popup.lastItem.tag=1;[popup selectItemAtIndex:1];
 }
 - (void)libraryLocationChanged:(NSPopUpButton *)sender {
     if(sender.selectedItem.tag==2) {
@@ -360,27 +361,27 @@
     if(!self.settingsWindow) {
         self.settingsWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,640,330)
             styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
-        self.settingsWindow.releasedWhenClosed=NO;self.settingsWindow.title=@"Settings";
+        self.settingsWindow.releasedWhenClosed=NO;self.settingsWindow.title=VIMLocalized(@"app.settings-2", @"Settings");
         self.settingsWindow.collectionBehavior=NSWindowCollectionBehaviorFullScreenNone;
         VIMSettingsTabs *tabs=[VIMSettingsTabs new];tabs.tabStyle=NSTabViewControllerTabStyleToolbar;
         NSViewController *general=[NSViewController new];general.view=[[VIMSettingsPage alloc] initWithFrame:NSMakeRect(0,0,640,330)];
         self.libraryLocationPopup=[NSPopUpButton new];self.libraryLocationPopup.target=self;
         self.libraryLocationPopup.action=@selector(libraryLocationChanged:);self.libraryLocationPopup.autoenablesItems=NO;
-        self.libraryLocationPopup.accessibilityLabel=@"Virtual Macs folder";
+        self.libraryLocationPopup.accessibilityLabel=VIMLocalized(@"app.virtual-macs-folder", @"Virtual Macs folder");
         [self.libraryLocationPopup.widthAnchor constraintEqualToConstant:400].active=YES;
         self.libraryLocationPopup.cell.lineBreakMode=NSLineBreakByTruncatingMiddle;[self refreshLibraryLocationPopup];
-        NSButton *updates=[NSButton checkboxWithTitle:@"Automatically check for updates" target:self action:@selector(toggleAutomaticUpdates:)];
+        NSButton *updates=[NSButton checkboxWithTitle:VIMLocalized(@"app.automatically-check-for-updates", @"Automatically check for updates") target:self action:@selector(toggleAutomaticUpdates:)];
         self.updatesCheckbox=updates;
         updates.state=[NSUserDefaults.standardUserDefaults boolForKey:@"VIMAutomaticUpdateChecks"];
-        NSButton *showLibrary=[NSButton buttonWithTitle:@"Show in Finder" target:self action:@selector(revealLibrary:)];
-        NSTextField *explanation=[NSTextField wrappingLabelWithString:@"Changing libraries does not move existing Macs. Setups already in progress keep their original location."];explanation.textColor=NSColor.secondaryLabelColor;
-        NSButton *downloads=[NSButton buttonWithTitle:@"Show Downloads in Finder" target:self action:@selector(revealDownloads:)];
+        NSButton *showLibrary=[NSButton buttonWithTitle:VIMLocalized(@"app.show-in-finder", @"Show in Finder") target:self action:@selector(revealLibrary:)];
+        NSTextField *explanation=[NSTextField wrappingLabelWithString:VIMLocalized(@"app.changing-libraries-does-not-move-existing-macs-setups-already-in", @"Changing libraries does not move existing Macs. Setups already in progress keep their original location.")];explanation.textColor=NSColor.secondaryLabelColor;
+        NSButton *downloads=[NSButton buttonWithTitle:VIMLocalized(@"app.show-downloads-in-finder", @"Show Downloads in Finder") target:self action:@selector(revealDownloads:)];
         NSStackView *libraryActions=[NSStackView stackViewWithViews:@[showLibrary,downloads]];libraryActions.spacing=12;
-        NSButton *check=[NSButton buttonWithTitle:@"Check Now" target:self action:@selector(checkForUpdates:)];
-        NSButton *diagnostics=[NSButton buttonWithTitle:@"Export Diagnostics…" target:self action:@selector(exportDiagnostics:)];
+        NSButton *check=[NSButton buttonWithTitle:VIMLocalized(@"app.check-now", @"Check Now") target:self action:@selector(checkForUpdates:)];
+        NSButton *diagnostics=[NSButton buttonWithTitle:VIMLocalized(@"app.export-diagnostics", @"Export Diagnostics…") target:self action:@selector(exportDiagnostics:)];
         NSStackView *library=[NSStackView stackViewWithViews:@[self.libraryLocationPopup,libraryActions,explanation]];library.orientation=NSUserInterfaceLayoutOrientationVertical;library.alignment=NSLayoutAttributeLeading;library.spacing=8;
         NSStackView *updateGroup=[NSStackView stackViewWithViews:@[updates,check]];updateGroup.orientation=NSUserInterfaceLayoutOrientationVertical;updateGroup.alignment=NSLayoutAttributeLeading;updateGroup.spacing=10;
-        NSGridView *grid=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:@"Virtual Macs folder:"],library],@[[NSTextField labelWithString:@"Updates:"],updateGroup],@[[NSTextField labelWithString:@"Support:"],diagnostics]]];
+        NSGridView *grid=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:VIMLocalized(@"app.virtual-macs-folder-2", @"Virtual Macs folder:")],library],@[[NSTextField labelWithString:VIMLocalized(@"app.updates", @"Updates:")],updateGroup],@[[NSTextField labelWithString:VIMLocalized(@"app.support", @"Support:")],diagnostics]]];
         grid.columnSpacing=14;grid.rowSpacing=24;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;[grid columnAtIndex:0].width=150;[grid columnAtIndex:1].xPlacement=NSGridCellPlacementLeading;
         for(NSInteger row=0;row<3;row++)[grid rowAtIndex:row].yPlacement=NSGridCellPlacementTop;
         [grid rowAtIndex:2].yPlacement=NSGridCellPlacementCenter;
@@ -388,17 +389,17 @@
         [NSLayoutConstraint activateConstraints:@[[grid.leadingAnchor constraintEqualToAnchor:general.view.leadingAnchor constant:24],[grid.trailingAnchor constraintEqualToAnchor:general.view.trailingAnchor constant:-24],[grid.topAnchor constraintEqualToAnchor:general.view.topAnchor constant:28],
             [grid.bottomAnchor constraintEqualToAnchor:general.view.bottomAnchor constant:-22],
             [general.view.widthAnchor constraintEqualToConstant:640],[library.widthAnchor constraintEqualToConstant:400]]];
-        NSTabViewItem *item=[NSTabViewItem tabViewItemWithViewController:general];item.label=@"General";
-        item.image=[NSImage imageWithSystemSymbolName:@"gearshape" accessibilityDescription:@"General"];
+        NSTabViewItem *item=[NSTabViewItem tabViewItemWithViewController:general];item.label=VIMLocalized(@"app.general", @"General");
+        item.image=[NSImage imageWithSystemSymbolName:@"gearshape" accessibilityDescription:VIMLocalized(@"app.general", @"General")];
         [tabs addTabViewItem:item];
         NSViewController *advanced=[NSViewController new];advanced.view=[[VIMSettingsPage alloc] initWithFrame:NSMakeRect(0,0,640,330)];
-        NSButton *keep=[NSButton checkboxWithTitle:@"Keep downloaded files and installers" target:self action:@selector(changeInstallerRetention:)];
+        NSButton *keep=[NSButton checkboxWithTitle:VIMLocalized(@"app.keep-downloaded-files-and-installers", @"Keep downloaded files and installers") target:self action:@selector(changeInstallerRetention:)];
         keep.state=[NSUserDefaults.standardUserDefaults boolForKey:@"VIMKeepInstallers"]?NSControlStateValueOn:NSControlStateValueOff;
-        NSTextField *retention=[NSTextField wrappingLabelWithString:@"Keep the finished installer app and disk image for another virtual Mac. Temporary preparation files are always removed. Otherwise, the installer image is removed after the operating system is installed and graphics support is verified."];
+        NSTextField *retention=[NSTextField wrappingLabelWithString:VIMLocalized(@"app.keep-the-finished-installer-app-and-disk-image-for-another", @"Keep the finished installer app and disk image for another virtual Mac. Temporary preparation files are always removed. Otherwise, the installer image is removed after the operating system is installed and graphics support is verified.")];
         retention.textColor=NSColor.secondaryLabelColor;
         NSStackView *options=[NSStackView stackViewWithViews:@[keep,retention]];options.orientation=NSUserInterfaceLayoutOrientationVertical;options.alignment=NSLayoutAttributeLeading;options.spacing=8;options.translatesAutoresizingMaskIntoConstraints=NO;[advanced.view addSubview:options];
         [NSLayoutConstraint activateConstraints:@[[options.leadingAnchor constraintEqualToAnchor:advanced.view.leadingAnchor constant:32],[options.trailingAnchor constraintEqualToAnchor:advanced.view.trailingAnchor constant:-32],[options.topAnchor constraintEqualToAnchor:advanced.view.topAnchor constant:28],[options.bottomAnchor constraintEqualToAnchor:advanced.view.bottomAnchor constant:-24],[advanced.view.widthAnchor constraintEqualToConstant:640]]];
-        NSTabViewItem *advancedItem=[NSTabViewItem tabViewItemWithViewController:advanced];advancedItem.label=@"Advanced";advancedItem.image=[NSImage imageWithSystemSymbolName:@"gearshape.2" accessibilityDescription:@"Advanced"];[tabs addTabViewItem:advancedItem];
+        NSTabViewItem *advancedItem=[NSTabViewItem tabViewItemWithViewController:advanced];advancedItem.label=VIMLocalized(@"app.advanced", @"Advanced");advancedItem.image=[NSImage imageWithSystemSymbolName:@"gearshape.2" accessibilityDescription:VIMLocalized(@"app.advanced", @"Advanced")];[tabs addTabViewItem:advancedItem];
         self.settingsWindow.contentViewController=tabs;
         [general.view layoutSubtreeIfNeeded];
         NSSize fitting=NSMakeSize(640,ceil(general.view.fittingSize.height));
@@ -415,10 +416,10 @@
 - (void)exportDiagnostics:(id)sender {[VIMDiagnostics exportFromWindow:self.settingsWindow];}
 - (void)showAbout:(id)sender {
     NSMutableParagraphStyle *paragraph=[NSMutableParagraphStyle new];paragraph.alignment=NSTextAlignmentCenter;paragraph.paragraphSpacing=5;
-    NSMutableAttributedString *credits=[[NSMutableAttributedString alloc] initWithString:@"Created by nfzerox\nProject on GitHub"
+    NSMutableAttributedString *credits=[[NSMutableAttributedString alloc] initWithString:[NSString stringWithFormat:VIMLocalized(@"ui.created-by-nfzerox", @"Created by nfzerox\n%@"),VIMLocalized(@"app.project-on-github", @"Project on GitHub")]
         attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:12],NSForegroundColorAttributeName:NSColor.labelColor,NSParagraphStyleAttributeName:paragraph}];
     [credits addAttribute:NSLinkAttributeName value:[NSURL URLWithString:@"https://github.com/nfzerox"] range:[credits.string rangeOfString:@"nfzerox"]];
-    [credits addAttribute:NSLinkAttributeName value:[NSURL URLWithString:@"https://github.com/nfzerox/VirtualIntelMacOnAppleSilicon"] range:[credits.string rangeOfString:@"Project on GitHub"]];
+    [credits addAttribute:NSLinkAttributeName value:[NSURL URLWithString:@"https://github.com/nfzerox/VirtualIntelMacOnAppleSilicon"] range:[credits.string rangeOfString:VIMLocalized(@"app.project-on-github", @"Project on GitHub")]];
     [NSApp orderFrontStandardAboutPanelWithOptions:@{NSAboutPanelOptionApplicationName:@"Virtual Intel Mac",NSAboutPanelOptionCredits:credits}];
 }
 - (void)updateResultChanged:(NSNotification *)notification {
@@ -428,7 +429,7 @@
 - (void)revealDownloads:(id)sender {
     NSURL *URL=VIMLibraryLocation.downloadsURL;
     if(![NSFileManager.defaultManager fileExistsAtPath:URL.path]) {
-        NSAlert *alert=[NSAlert new];alert.messageText=@"No downloads yet";alert.informativeText=@"Downloads will appear here when you create a Mac.";VIMPresentAlert(alert,self.settingsWindow,nil);return;
+        NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"app.no-downloads-yet", @"No downloads yet");alert.informativeText=VIMLocalized(@"app.downloads-will-appear-here-when-you-create-a-mac", @"Downloads will appear here when you create a Mac.");VIMPresentAlert(alert,self.settingsWindow,nil);return;
     }
     [NSWorkspace.sharedWorkspace openURL:URL];
 }

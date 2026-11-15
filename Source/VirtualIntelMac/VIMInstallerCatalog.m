@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMInstallerCatalog.h"
 #import "VIMInstallerSource.h"
 /* Catalog-supplied service URLs: HTTPS on the expected host, no credentials,
@@ -31,7 +32,7 @@ static NSError *CatalogError(NSString *text) {
     return candidate&&(!baseline||candidate.revision>baseline.revision)?candidate:baseline;
 }
 + (instancetype)catalogWithData:(NSData *)data error:(NSError **)error {
-    if(!data.length||data.length>262144) { if(error)*error=CatalogError(@"The installer catalog is empty or too large.");return nil; }
+    if(!data.length||data.length>262144) { if(error)*error=CatalogError(VIMLocalized(@"installercatalog.the-installer-catalog-is-empty-or-too-large", @"The installer catalog is empty or too large."));return nil; }
     id object=[NSPropertyListSerialization propertyListWithData:data options:0 format:nil error:error];
     BOOL valid=[object isKindOfClass:NSDictionary.class] && [object[@"FormatVersion"] isEqual:@1] &&
         [object[@"Revision"] isKindOfClass:NSNumber.class] &&
@@ -79,10 +80,10 @@ static NSError *CatalogError(NSString *text) {
         [guests addObject:guest];
         [supported addObject:entry];
     }
-    if(!valid || supported.count!=13) { if(error)*error=CatalogError(@"The installer catalog is invalid or incompatible.");return nil; }
+    if(!valid || supported.count!=13) { if(error)*error=CatalogError(VIMLocalized(@"installercatalog.the-installer-catalog-is-invalid-or-incompatible", @"The installer catalog is invalid or incompatible."));return nil; }
     NSURL *update=nil;
     if(object[@"UpdateURL"]&&!(update=CatalogServiceURL(object[@"UpdateURL"],@"raw.githubusercontent.com"))) {
-        if(error)*error=CatalogError(@"The installer catalog is invalid or incompatible.");return nil;
+        if(error)*error=CatalogError(VIMLocalized(@"installercatalog.the-installer-catalog-is-invalid-or-incompatible", @"The installer catalog is invalid or incompatible."));return nil;
     }
     VIMInstallerCatalog *catalog=[self new];catalog->_revision=[object[@"Revision"] unsignedIntegerValue];catalog->_updateURL=update;
     catalog->_supportedInstallers=[supported copy];return catalog;
@@ -94,7 +95,7 @@ static NSError *CatalogError(NSString *text) {
     VIMInstallerCatalog *cached=cache?[self catalogWithData:cache error:nil]:nil;
     VIMInstallerCatalog *result=[self preferCatalog:cached over:fallback];
     if(result&&error)*error=nil;
-    if(!result && error)*error=CatalogError(@"No valid installer catalog is available.");
+    if(!result && error)*error=CatalogError(VIMLocalized(@"installercatalog.no-valid-installer-catalog-is-available", @"No valid installer catalog is available."));
     return result;
 }
 + (NSDictionary *)fileForGuest:(NSString *)guest role:(NSString *)role {
@@ -124,7 +125,7 @@ static NSError *CatalogError(NSString *text) {
     NSURL *url=[self currentCatalogWithError:NULL].updateURL;
     if(!url) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            completion([self currentCatalogWithError:NULL],CatalogError(@"The installer catalog has no update location. The bundled catalog is still available."));
+            completion([self currentCatalogWithError:NULL],CatalogError(VIMLocalized(@"installercatalog.the-installer-catalog-has-no-update-location-the-bundled-catalog", @"The installer catalog has no update location. The bundled catalog is still available.")));
         });
         return;
     }
@@ -133,7 +134,7 @@ static NSError *CatalogError(NSString *text) {
     [[NSURLSession.sharedSession dataTaskWithRequest:request completionHandler:^(NSData *data,NSURLResponse *response,NSError *error){
         VIMInstallerCatalog *catalog=nil;
         if(!error && (![response isKindOfClass:NSHTTPURLResponse.class] || [(NSHTTPURLResponse *)response statusCode]!=200))
-            error=CatalogError(@"The installer catalog could not be updated. The bundled catalog is still available.");
+            error=CatalogError(VIMLocalized(@"installercatalog.the-installer-catalog-could-not-be-updated-the-bundled-catalog", @"The installer catalog could not be updated. The bundled catalog is still available."));
         if(!error)catalog=[self catalogWithData:data error:&error];
         // Compare again at publication time, not when starting the request:
         // concurrent refreshes may finish out of order. Never replace a newer

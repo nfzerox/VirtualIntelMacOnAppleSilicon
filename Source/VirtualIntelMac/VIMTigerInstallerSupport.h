@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #pragma once
 #import "VIMTigerRestoreProfile.h"
 #include <string.h>
@@ -38,7 +39,7 @@ static inline NSDictionary<NSString *,NSData *> *VIMTigerControlPayload(NSURL *s
        ![record[@"FormatVersion"] isEqual:@1]||![record[@"MinimumOS"] isEqual:@"10.4"]||
        ![record[@"Architecture"] isEqual:@"i386"]||![record[@"Files"] isKindOfClass:NSDictionary.class]||
        ![[NSSet setWithArray:[record[@"Files"] allKeys]] isEqual:names]) {
-        VIMTigerProfileError(error,@"This app’s Tiger support is incomplete. Reinstall the complete app, then prepare the installer again.");return nil;
+        VIMTigerProfileError(error,VIMLocalized(@"tiger.this-app-s-tiger-support-is-incomplete-reinstall-the-complete-app-then-prepare", @"This app’s Tiger support is incomplete. Reinstall the complete app, then prepare the installer again."));return nil;
     }
     NSMutableDictionary *payload=[NSMutableDictionary new];
     for(NSString *name in names) {
@@ -57,7 +58,7 @@ static inline NSDictionary<NSString *,NSData *> *VIMTigerControlPayload(NSURL *s
             valid=header[0]==0xfeedface&&header[1]==7&&header[3]==kind;
         }
         if(!valid) {
-            VIMTigerProfileError(error,@"A matching native Tiger setup tool is missing or changed. Reinstall the complete app, then try again.");return nil;
+            VIMTigerProfileError(error,VIMLocalized(@"tiger.a-matching-native-tiger-setup-tool-is-missing-or-changed-reinstall-the-complete", @"A matching native Tiger setup tool is missing or changed. Reinstall the complete app, then try again."));return nil;
         }
         payload[name]=data;
     }
@@ -80,7 +81,7 @@ static inline NSDictionary<NSString *,NSData *> *VIMTigerInstallerGraphics(NSURL
        ![record[@"NativeDispatchCounts"] isEqual:@[@686,@759]]||
        ![record[@"NativePrebootInstallVersion"] isEqual:@1]||
        ![record[@"NativeEngineSHA256"] isKindOfClass:NSString.class]||[record[@"NativeEngineSHA256"] length]!=64) {
-        VIMTigerProfileError(error,@"This app’s native Tiger graphics support is incomplete. Reinstall the complete app, then prepare the installer again.");return nil;
+        VIMTigerProfileError(error,VIMLocalized(@"tiger.this-app-s-native-tiger-graphics-support-is-incomplete-reinstall-the-complete-app", @"This app’s native Tiger graphics support is incomplete. Reinstall the complete app, then prepare the installer again."));return nil;
     }
     NSMutableDictionary *payload=[NSMutableDictionary new];payload[@"Graphics/BuildReceipt.plist"]=recordData;
     for(NSString *name in names){
@@ -90,7 +91,7 @@ static inline NSDictionary<NSString *,NSData *> *VIMTigerInstallerGraphics(NSURL
         BOOL metadata=[name hasSuffix:@".plist"];
         uint32_t type=[name isEqual:@"opengl-tiger-graphics"]?2:[name hasSuffix:@".dylib"]?6:8;
         if(!data||(!metadata&&(header[0]!=0xfeedface||header[1]!=7||header[3]!=type))){
-            VIMTigerProfileError(error,@"A matching native Tiger graphics file is missing or changed. Reinstall the complete app, then try again.");return nil;
+            VIMTigerProfileError(error,VIMLocalized(@"tiger.a-matching-native-tiger-graphics-file-is-missing-or-changed-reinstall-the-complete", @"A matching native Tiger graphics file is missing or changed. Reinstall the complete app, then try again."));return nil;
         }
         payload[relative]=data;
     }
@@ -104,7 +105,7 @@ static inline NSDictionary<NSString *,NSData *> *VIMTigerInstallerAudio(NSURL *s
     if(![outer[@"HasNativeAudioPayload"] isEqual:@YES]||![record[@"AudioOnly"] isEqual:@YES]||
        ![record[@"SDKVersion"] isEqual:@"10.4"]||![record[@"KernelArchitecture"] isEqual:@"i386"]||
        ![record[@"Files"] isKindOfClass:NSDictionary.class]||![[NSSet setWithArray:[record[@"Files"] allKeys]] isEqual:names]){
-        VIMTigerProfileError(error,@"This app’s native Tiger sound support is incomplete. Reinstall the complete app, then prepare the installer again.");return nil;
+        VIMTigerProfileError(error,VIMLocalized(@"tiger.this-app-s-native-tiger-sound-support-is-incomplete-reinstall-the-complete-app", @"This app’s native Tiger sound support is incomplete. Reinstall the complete app, then prepare the installer again."));return nil;
     }
     NSMutableDictionary *payload=[NSMutableDictionary new];payload[@"Audio/BuildReceipt.plist"]=data;
     for(NSString *name in names){
@@ -112,7 +113,7 @@ static inline NSDictionary<NSString *,NSData *> *VIMTigerInstallerAudio(NSURL *s
         uint32_t header[4]={0};if(file.length>=sizeof(header))memcpy(header,file.bytes,sizeof(header));
         if(!file||
            (![name hasSuffix:@".plist"]&&(header[0]!=0xfeedface||header[1]!=7||header[3]!=1))){
-            VIMTigerProfileError(error,@"A matching native Tiger sound file is missing or changed. Reinstall the complete app, then try again.");return nil;
+            VIMTigerProfileError(error,VIMLocalized(@"tiger.a-matching-native-tiger-sound-file-is-missing-or-changed-reinstall-the-complete", @"A matching native Tiger sound file is missing or changed. Reinstall the complete app, then try again."));return nil;
         }
         payload[relative]=file;
     }
@@ -122,7 +123,7 @@ static inline NSData *VIMTigerNativePostflight(NSData *original,NSError **error)
     NSString *text=original?[[NSString alloc] initWithData:original encoding:NSUTF8StringEncoding]:nil;
     if(![VIMTigerControlSHA256(original) isEqual:@"47cf5b22dc946b896e6f6f5290ece2173106bc61bd4fa9ccbb1831b260d8a96b"]||
        ![text hasSuffix:@"\nexit 0\n"]) {
-        VIMTigerProfileError(error,@"This Tiger disc uses a different installation handoff. Its original files weren’t changed.");return nil;
+        VIMTigerProfileError(error,VIMLocalized(@"tiger.this-tiger-disc-uses-a-different-installation-handoff-its-original-files-weren-t", @"This Tiger disc uses a different installation handoff. Its original files weren’t changed."));return nil;
     }
     NSString *completion=@"\n/System/Installation/Packages/Extras/VirtualIntelMac/opengl-tiger-install-config --finish-install \"$3\" || exit $?\nexit 0\n";
     return [[[text substringToIndex:text.length-[@"\nexit 0\n" length]] stringByAppendingString:completion] dataUsingEncoding:NSUTF8StringEncoding];
@@ -139,34 +140,34 @@ static inline BOOL VIMTigerVerifyInstallerControls(NSURL *mount,NSURL *support,N
        ![[NSSet setWithArray:[receipt[@"TigerGraphicsFiles"] allKeys]] isEqual:[NSSet setWithArray:graphics.allKeys]]||
        ![receipt[@"TigerAudioFiles"] isKindOfClass:NSDictionary.class]||
        ![[NSSet setWithArray:[receipt[@"TigerAudioFiles"] allKeys]] isEqual:[NSSet setWithArray:audio.allKeys]])
-        return VIMTigerProfileError(error,@"The prepared Tiger support record is incomplete. Prepare this installer again.");
+        return VIMTigerProfileError(error,VIMLocalized(@"tiger.the-prepared-tiger-support-record-is-incomplete-prepare-this-installer-again", @"The prepared Tiger support record is incomplete. Prepare this installer again."));
     for(NSString *name in links)
         if(![[fm destinationOfSymbolicLinkAtPath:[mount URLByAppendingPathComponent:name].path error:nil] isEqual:links[name]])
-            return VIMTigerProfileError(error,@"The prepared Tiger startup handoff couldn’t be verified. Its working files were retained.");
+            return VIMTigerProfileError(error,VIMLocalized(@"tiger.the-prepared-tiger-startup-handoff-couldn-t-be-verified-its-working-files-were", @"The prepared Tiger startup handoff couldn’t be verified. Its working files were retained."));
     for(NSString *name in payload) {
         NSString *relative=[@"System/Installation/Packages/Extras/VirtualIntelMac" stringByAppendingPathComponent:name];
         NSData *actual=VIMTigerControlFile([mount URLByAppendingPathComponent:relative]);
         if(![actual isEqual:payload[name]])
-            return VIMTigerProfileError(error,@"The prepared Tiger setup tools couldn’t be verified. Its working files were retained.");
+            return VIMTigerProfileError(error,VIMLocalized(@"tiger.the-prepared-tiger-setup-tools-couldn-t-be-verified-its-working-files-were", @"The prepared Tiger setup tools couldn’t be verified. Its working files were retained."));
     }
     NSData *controlRecord=VIMTigerControlFile([mount URLByAppendingPathComponent:@"System/Installation/Packages/Extras/VirtualIntelMac/BuildReceipt.plist"]);
     if(![controlRecord isEqual:VIMTigerControlFile([VIMTigerTools(support) URLByAppendingPathComponent:@"BuildReceipt.plist"])])
-        return VIMTigerProfileError(error,@"The prepared Tiger control record couldn’t be verified. Its working files were retained.");
+        return VIMTigerProfileError(error,VIMLocalized(@"tiger.the-prepared-tiger-control-record-couldn-t-be-verified-its-working-files-were", @"The prepared Tiger control record couldn’t be verified. Its working files were retained."));
     for(NSString *name in graphics){
         NSURL *file=[mount URLByAppendingPathComponent:[@"System/Installation/Packages/Extras/VirtualIntelMac" stringByAppendingPathComponent:name]];
         NSData *actual=VIMTigerControlFile(file);
         if(![actual isEqual:graphics[name]])
-            return VIMTigerProfileError(error,@"The prepared Tiger graphics files couldn’t be verified. Its working files were retained.");
+            return VIMTigerProfileError(error,VIMLocalized(@"tiger.the-prepared-tiger-graphics-files-couldn-t-be-verified-its-working-files-were", @"The prepared Tiger graphics files couldn’t be verified. Its working files were retained."));
     }
     for(NSString *name in audio){
         NSURL *file=[mount URLByAppendingPathComponent:[@"System/Installation/Packages/Extras/VirtualIntelMac" stringByAppendingPathComponent:name]];
         NSData *actual=VIMTigerControlFile(file);
         if(![actual isEqual:audio[name]])
-            return VIMTigerProfileError(error,@"The prepared Tiger sound files couldn’t be verified. Its working files were retained.");
+            return VIMTigerProfileError(error,VIMLocalized(@"tiger.the-prepared-tiger-sound-files-couldn-t-be-verified-its-working-files-were", @"The prepared Tiger sound files couldn’t be verified. Its working files were retained."));
     }
     NSData *postflight=VIMTigerControlFile([mount URLByAppendingPathComponent:@"System/Installation/Packages/OSInstall.mpkg/Contents/Resources/postflight"]);
     return [[[NSString alloc] initWithData:postflight encoding:NSUTF8StringEncoding] hasSuffix:@"\n/System/Installation/Packages/Extras/VirtualIntelMac/opengl-tiger-install-config --finish-install \"$3\" || exit $?\nexit 0\n"]||
-        VIMTigerProfileError(error,@"The prepared Tiger installation handoff couldn’t be verified. Its working files were retained.");
+        VIMTigerProfileError(error,VIMLocalized(@"tiger.the-prepared-tiger-installation-handoff-couldn-t-be-verified-its-working-files-were", @"The prepared Tiger installation handoff couldn’t be verified. Its working files were retained."));
 }
 static inline BOOL VIMTigerStageInstallerControls(NSURL *mount,NSURL *support,NSDictionary **receipt,NSError **error) {
     NSDictionary *payload=VIMTigerControlPayload(support,error),*graphics=VIMTigerInstallerGraphics(support,error),*audio=VIMTigerInstallerAudio(support,error);if(!payload||!graphics||!audio)return NO;
@@ -176,14 +177,14 @@ static inline BOOL VIMTigerStageInstallerControls(NSURL *mount,NSURL *support,NS
     NSData *prepared=VIMTigerNativePostflight(VIMTigerControlFile(postflight),error);
     if(!prepared)return NO;
     if([rc componentsSeparatedByString:@"\t/etc/rc.cdrom.local\n"].count!=2)
-        return VIMTigerProfileError(error,@"This Tiger disc uses a different startup interface. Its original files weren’t changed.");
+        return VIMTigerProfileError(error,VIMLocalized(@"tiger.this-tiger-disc-uses-a-different-startup-interface-its-original-files-weren-t", @"This Tiger disc uses a different startup interface. Its original files weren’t changed."));
     NSURL *destination=[mount URLByAppendingPathComponent:@"System/Installation/Packages/Extras/VirtualIntelMac"];
     // Reject an existing hook, even a dangling symlink. Never overwrite an
     // unknown preparation or transplant this hook to an installed OS.
     for(NSString *path in @[@"etc/rc.cdrom.local",@"etc/minstallconfig.xml",@"System/Installation/Packages/Extras/VirtualIntelMac"]) {
         struct stat st;NSURL *URL=[mount URLByAppendingPathComponent:path];
         if(!lstat(URL.fileSystemRepresentation,&st)||errno!=ENOENT)
-            return VIMTigerProfileError(error,@"This Tiger working copy already contains setup changes. Prepare a new copy from the original installer.");
+            return VIMTigerProfileError(error,VIMLocalized(@"tiger.this-tiger-working-copy-already-contains-setup-changes-prepare-a-new-copy-from", @"This Tiger working copy already contains setup changes. Prepare a new copy from the original installer."));
     }
     if(![fm createDirectoryAtURL:destination withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0755} error:error])return NO;
     NSMutableDictionary *hashes=[NSMutableDictionary new];

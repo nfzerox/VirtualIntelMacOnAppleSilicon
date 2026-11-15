@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #pragma once
 #import <Foundation/Foundation.h>
 #import <CommonCrypto/CommonDigest.h>
@@ -20,17 +21,17 @@ static inline BOOL VIMTigerProfileRegularFile(NSURL *URL) {
     struct stat info;return URL.isFileURL&&!lstat(URL.fileSystemRepresentation,&info)&&S_ISREG(info.st_mode);
 }
 static inline NSXMLDocument *VIMTigerSourceDistribution(NSData *data,NSError **error) {
-    if(!data.length||data.length>262144){VIMTigerProfileError(error,@"The Tiger installation plan is missing or incomplete.");return nil;}
+    if(!data.length||data.length>262144){VIMTigerProfileError(error,VIMLocalized(@"tiger.the-tiger-installation-plan-is-missing-or-incomplete", @"The Tiger installation plan is missing or incomplete."));return nil;}
     NSXMLDocument *document=[[NSXMLDocument alloc] initWithData:data
         options:NSXMLNodePreserveAll|NSXMLNodeLoadExternalEntitiesNever error:error];
     NSXMLElement *root=document.rootElement;
     if(!document||document.DTD||![root.name isEqual:@"installer-gui-script"]) {
-        VIMTigerProfileError(error,@"The Tiger installation plan could not be read safely. Its original disc was not changed.");return nil;
+        VIMTigerProfileError(error,VIMLocalized(@"tiger.the-tiger-installation-plan-could-not-be-read-safely-its-original-disc-was", @"The Tiger installation plan could not be read safely. Its original disc was not changed."));return nil;
     }
     return document;
 }
 static inline BOOL VIMTigerValidateRestoreDVD(NSURL *mount,NSError **error) {
-    if(!mount.isFileURL)return VIMTigerProfileError(error,@"Choose a local Tiger restore disc.");
+    if(!mount.isFileURL)return VIMTigerProfileError(error,VIMLocalized(@"tiger.choose-a-local-tiger-restore-disc", @"Choose a local Tiger restore disc."));
     NSDictionary *version=[NSDictionary dictionaryWithContentsOfURL:[mount URLByAppendingPathComponent:@"System/Library/CoreServices/SystemVersion.plist"]];
     NSURL *package=[mount URLByAppendingPathComponent:@"System/Installation/Packages/OSInstall.mpkg"];
     NSURL *distribution=[package URLByAppendingPathComponent:@"Contents/OSInstall.dist"];
@@ -40,7 +41,7 @@ static inline BOOL VIMTigerValidateRestoreDVD(NSURL *mount,NSError **error) {
        !VIMTigerProfileRegularFile([mount URLByAppendingPathComponent:@"mach_kernel"])||
        !VIMTigerProfileRegularFile([mount URLByAppendingPathComponent:@"System/Library/CoreServices/boot.efi"])||
        !VIMTigerProfileRegularFile([mount URLByAppendingPathComponent:@"Applications/Utilities/Installer.app/Contents/MacOS/Installer"]))
-        return VIMTigerProfileError(error,@"Choose a complete Intel Tiger installation or restore disc with its native boot and installation files.");
+        return VIMTigerProfileError(error,VIMLocalized(@"tiger.choose-a-complete-intel-tiger-installation-or-restore-disc-with-its-native-boot", @"Choose a complete Intel Tiger installation or restore disc with its native boot and installation files."));
     NSXMLDocument *document=VIMTigerSourceDistribution([NSData dataWithContentsOfURL:distribution],error);
     if(!document)return NO;
     // Native bundle distributions resolve relative URLs from the package
@@ -51,10 +52,10 @@ static inline BOOL VIMTigerValidateRestoreDVD(NSURL *mount,NSError **error) {
         if([path hasPrefix:@"file:"])path=[path substringFromIndex:5];
         path=path.stringByRemovingPercentEncoding;
         if(!path.length||path.isAbsolutePath||[path containsString:@":"])
-            return VIMTigerProfileError(error,@"The Tiger disc contains an unexpected installation package location.");
+            return VIMTigerProfileError(error,VIMLocalized(@"tiger.the-tiger-disc-contains-an-unexpected-installation-package-location", @"The Tiger disc contains an unexpected installation package location."));
         NSURL *file=[[package URLByAppendingPathComponent:path] URLByStandardizingPath];
         NSString *prefix=[[mount URLByStandardizingPath].path stringByAppendingString:@"/"];
-        if(![file.path hasPrefix:prefix])return VIMTigerProfileError(error,@"The Tiger disc contains a package location outside the disc.");
+        if(![file.path hasPrefix:prefix])return VIMTigerProfileError(error,VIMLocalized(@"tiger.the-tiger-disc-contains-a-package-location-outside-the-disc", @"The Tiger disc contains a package location outside the disc."));
         // A different restore set may omit optional packages from Disc 1.
         // Preserve native package resolution instead of rejecting that set
         // before the user can try it. External-disc choices are pruned below.
@@ -80,7 +81,7 @@ static inline NSData *VIMTigerPrepareDiscOneDistribution(NSData *source,NSDictio
     NSMutableSet<NSString *> *optional=[NSMutableSet new];NSMutableArray<NSXMLElement *> *pending=[branches mutableCopy];
     while(pending.count){NSXMLElement *line=pending.lastObject;[pending removeLastObject];
         NSString *name=[line attributeForName:@"choice"].stringValue;
-        if(!name.length){VIMTigerProfileError(error,@"The Tiger disc contains an incomplete package selection.");return nil;}
+        if(!name.length){VIMTigerProfileError(error,VIMLocalized(@"tiger.the-tiger-disc-contains-an-incomplete-package-selection", @"The Tiger disc contains an incomplete package selection."));return nil;}
         [optional addObject:name];[pending addObjectsFromArray:[line elementsForName:@"line"]];
     }
     NSMutableSet *external=[NSMutableSet new];
@@ -114,7 +115,7 @@ static inline NSData *VIMTigerPrepareDiscOneDistribution(NSData *source,NSDictio
     // Do not hardcode the names or number of system/app choices on a retail
     // or other model's restore disc. Keep every non-optional record unchanged.
     NSData *output=document.XMLData;
-    if(!output.length||output.length>262144){VIMTigerProfileError(error,@"The prepared Tiger installation plan could not be saved.");return nil;}
+    if(!output.length||output.length>262144){VIMTigerProfileError(error,VIMLocalized(@"tiger.the-prepared-tiger-installation-plan-could-not-be-saved", @"The prepared Tiger installation plan could not be saved."));return nil;}
     if(receipt)*receipt=@{@"FormatVersion":@1,@"TigerRestorePolicyVersion":@1,
         @"OriginalDistributionSHA256":VIMTigerDistributionSHA256(source),@"PreparedDistributionSHA256":VIMTigerDistributionSHA256(output),
         @"RestoreModelRestrictionRemoved":@YES,@"DiscTwoExcluded":@YES,@"RemovedOptionalChoices":@(removedChoices),@"RemovedOptionalPackages":@(removedPackages),@"RemovedDiscTwoPackages":@(discTwoPackages)};

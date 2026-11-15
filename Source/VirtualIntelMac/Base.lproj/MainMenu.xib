@@ -15,7 +15,7 @@
         <customObject id="YLy-65-1bz" customClass="NSFontManager"/>
         <menu title="Main Menu" systemMenu="main" id="AYu-sK-qS6">
             <items>
-                <menuItem title="Virtual Intel Mac" id="1Xt-HY-uBw">
+                <menuItem title="Virtual Intel Mac" identifier="vim.app" id="1Xt-HY-uBw">
                     <modifierMask key="keyEquivalentModifierMask"/>
                     <menu key="submenu" title="Virtual Intel Mac" systemMenu="apple" id="uQy-DD-JDr">
                         <items>
@@ -59,7 +59,7 @@
                         </items>
                     </menu>
                 </menuItem>
-                <menuItem title="File" id="dMs-cI-mzQ">
+                <menuItem title="File" identifier="vim.file" id="dMs-cI-mzQ">
                     <modifierMask key="keyEquivalentModifierMask"/>
                     <menu key="submenu" title="File" id="bib-Uj-vzu">
                         <items>
@@ -122,7 +122,7 @@
                         </items>
                     </menu>
                 </menuItem>
-                <menuItem title="Edit" id="5QF-Oa-p0T">
+                <menuItem title="Edit" identifier="vim.edit" id="5QF-Oa-p0T">
                     <modifierMask key="keyEquivalentModifierMask"/>
                     <menu key="submenu" title="Edit" id="W48-6f-4Dl">
                         <items>
@@ -341,7 +341,7 @@
                         </items>
                     </menu>
                 </menuItem>
-                <menuItem title="Format" id="jxT-CU-nIS">
+                <menuItem title="Format" identifier="vim.format" id="jxT-CU-nIS">
                     <modifierMask key="keyEquivalentModifierMask"/>
                     <menu key="submenu" title="Format" id="GEO-Iw-cKr">
                         <items>
@@ -603,7 +603,7 @@
                         </items>
                     </menu>
                 </menuItem>
-                <menuItem title="View" id="H8h-7b-M4v">
+                <menuItem title="View" identifier="vim.view" id="H8h-7b-M4v">
                     <modifierMask key="keyEquivalentModifierMask"/>
                     <menu key="submenu" title="View" id="HyV-fh-RgO">
                         <items>
@@ -635,7 +635,7 @@
                         </items>
                     </menu>
                 </menuItem>
-                <menuItem title="Window" id="aUF-d1-5bR">
+                <menuItem title="Window" identifier="vim.window" id="aUF-d1-5bR">
                     <modifierMask key="keyEquivalentModifierMask"/>
                     <menu key="submenu" title="Window" systemMenu="window" id="Td7-aD-5lo">
                         <items>
@@ -660,7 +660,7 @@
                         </items>
                     </menu>
                 </menuItem>
-                <menuItem title="Help" id="wpr-3q-Mcd">
+                <menuItem title="Help" identifier="vim.help" id="wpr-3q-Mcd">
                     <modifierMask key="keyEquivalentModifierMask"/>
                     <menu key="submenu" title="Help" systemMenu="help" id="F2S-fz-NVQ">
                         <items>

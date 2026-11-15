@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMUpdateChecker.h"
 #import "VIMAlerts.h"
 
@@ -29,7 +30,7 @@ static NSString * const VIMReleasePage = @"https://github.com/nfzerox/VirtualInt
 }
 - (void)showTitle:(NSString *)title detail:(NSString *)detail release:(BOOL)release {
     NSAlert *alert = [NSAlert new]; alert.messageText = title; alert.informativeText = detail;
-    if (release) [alert addButtonWithTitle:@"View Release"]; [alert addButtonWithTitle:@"OK"];
+    if (release) [alert addButtonWithTitle:VIMLocalized(@"updatechecker.view-release", @"View Release")]; [alert addButtonWithTitle:VIMLocalized(@"common.ok", @"OK")];
     VIMPresentAlert(alert,nil,^(NSModalResponse response){
         if(response==NSAlertFirstButtonReturn&&release)[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:VIMReleasePage]];
     });
@@ -44,7 +45,7 @@ static NSString * const VIMReleasePage = @"https://github.com/nfzerox/VirtualInt
         if ([last isKindOfClass:NSDate.class] && -last.timeIntervalSinceNow < 86400) return;
     }
     self.checking = YES; self.manualRequested = manual;
-    [self publishResult:@"Checking for updates…"];
+    [self publishResult:VIMLocalized(@"updatechecker.checking-for-updates", @"Checking for updates…")];
     [defaults setObject:NSDate.date forKey:@"VIMLastUpdateAttempt"];
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:
         @"https://api.github.com/repos/nfzerox/VirtualIntelMacOnAppleSilicon/releases/latest"]
@@ -68,28 +69,28 @@ static NSString * const VIMReleasePage = @"https://github.com/nfzerox/VirtualInt
             self.checking = NO; self.manualRequested = NO;
             NSString *failure = nil;
             if (error) failure = error.localizedDescription;
-            else if (status == 404) failure = @"GitHub has no accessible published release for this project yet.";
-            else if (status == 403 || status == 429) failure = @"GitHub temporarily limited update checks. Please try again later.";
-            else if (status != 200) failure = [NSString stringWithFormat:@"GitHub returned HTTP %ld. Please try again later.", (long)status];
-            else if (!version || !stable) failure = @"The latest release has an unsupported version format. You can check the project’s Releases page.";
+            else if (status == 404) failure = VIMLocalized(@"updatechecker.github-has-no-accessible-published-release-for-this-project-yet", @"GitHub has no accessible published release for this project yet.");
+            else if (status == 403 || status == 429) failure = VIMLocalized(@"updatechecker.github-temporarily-limited-update-checks-please-try-again-later", @"GitHub temporarily limited update checks. Please try again later.");
+            else if (status != 200) failure = [NSString stringWithFormat:VIMLocalized(@"updatechecker.github-returned-http-ld-please-try-again-later", @"GitHub returned HTTP %ld. Please try again later."), (long)status];
+            else if (!version || !stable) failure = VIMLocalized(@"updatechecker.the-latest-release-has-an-unsupported-version-format-you-can", @"The latest release has an unsupported version format. You can check the project’s Releases page.");
             NSString *current = [VIMUpdateChecker stableVersion:
                 [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"]];
-            if (!failure && !current) failure = @"This development build has no comparable release version.";
+            if (!failure && !current) failure = VIMLocalized(@"updatechecker.this-development-build-has-no-comparable-release-version", @"This development build has no comparable release version.");
             if (failure) {
                 [self publishResult:failure];
-                if (interactive) [self showTitle:@"Unable to Check for Updates" detail:failure release:YES];
+                if (interactive) [self showTitle:VIMLocalized(@"updatechecker.unable-to-check-for-updates", @"Unable to Check for Updates") detail:failure release:YES];
                 return;
             }
             if ([VIMUpdateChecker compareVersion:version toVersion:current] == NSOrderedDescending) {
-                [self publishResult:[NSString stringWithFormat:@"Version %@ is available. Choose Check Now to view the release.",version]];
+                [self publishResult:[NSString stringWithFormat:VIMLocalized(@"updatechecker.version-is-available-choose-check-now-to-view-the-release", @"Version %@ is available. Choose Check Now to view the release."),version]];
                 if (!interactive && [[defaults stringForKey:@"VIMAnnouncedRelease"] isEqual:version]) return;
                 [defaults setObject:version forKey:@"VIMAnnouncedRelease"];
-                [self showTitle:@"A New Version Is Available" detail:[NSString stringWithFormat:
-                    @"Virtual Intel Mac %@ is available. You’re using %@.", version, current] release:YES];
+                [self showTitle:VIMLocalized(@"updatechecker.a-new-version-is-available", @"A New Version Is Available") detail:[NSString stringWithFormat:
+                    VIMLocalized(@"updatechecker.virtual-intel-mac-is-available-you-re-using", @"Virtual Intel Mac %@ is available. You’re using %@."), version, current] release:YES];
             } else {
-                [self publishResult:[NSString stringWithFormat:@"You’re up to date (%@).",current]];
-                if(interactive)[self showTitle:@"You’re Up to Date" detail:[NSString stringWithFormat:
-                    @"You’re using Virtual Intel Mac %@. No newer stable release is available.", current] release:NO];
+                [self publishResult:[NSString stringWithFormat:VIMLocalized(@"updatechecker.you-re-up-to-date", @"You’re up to date (%@)."),current]];
+                if(interactive)[self showTitle:VIMLocalized(@"updatechecker.you-re-up-to-date-2", @"You’re Up to Date") detail:[NSString stringWithFormat:
+                    VIMLocalized(@"updatechecker.you-re-using-virtual-intel-mac-no-newer-stable-release", @"You’re using Virtual Intel Mac %@. No newer stable release is available."), current] release:NO];
             }
         });
     }] resume];

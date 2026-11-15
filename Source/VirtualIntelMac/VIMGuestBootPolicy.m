@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMGuestBootPolicy.h"
 #import "VIMGuestAgent.h"
 #include <fcntl.h>
@@ -18,7 +19,7 @@ static BOOL SavePolicy(NSDictionary *record,NSURL *file,NSError **error) {
         int parent=open(file.URLByDeletingLastPathComponent.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
         ok=parent>=0&&!fsync(parent);if(parent>=0)close(parent);
     }
-    if(!ok&&error)*error=PolicyError(@"The guest boot-policy record could not be saved durably.");return ok;
+    if(!ok&&error)*error=PolicyError(VIMLocalized(@"guestbootpolicy.the-guest-boot-policy-record-could-not-be-saved-durably", @"The guest boot-policy record could not be saved durably."));return ok;
 }
 @interface VIMGuestBootPolicy ()
 @property VIMGuestAgent *agent;
@@ -52,17 +53,17 @@ static BOOL SavePolicy(NSDictionary *record,NSURL *file,NSError **error) {
     if(![@[@"mojave",@"catalina",@"bigsur"] containsObject:report[@"Guest"]]||
        ![report[@"InstalledSystemCandidate"] isEqual:@YES]||![report[@"LiveRoot"] isEqual:@YES]||
        ![report[@"KernelMatchesSystem"] isEqual:@YES]||!identifier.length) {
-        completion(NO,PolicyError(@"Guest boot-policy preparation requires a matching installed system."));return;
+        completion(NO,PolicyError(VIMLocalized(@"guestbootpolicy.guest-boot-policy-preparation-requires-a-matching-installed-system", @"Guest boot-policy preparation requires a matching installed system.")));return;
     }
     for(NSString *key in @[@"VolumeUUID",@"ProductBuildVersion",@"BootSessionUUID"])
-        if(![report[key] isKindOfClass:NSString.class]||![report[key] length]){completion(NO,PolicyError(@"The guest identity is incomplete."));return;}
+        if(![report[key] isKindOfClass:NSString.class]||![report[key] length]){completion(NO,PolicyError(VIMLocalized(@"guestbootpolicy.the-guest-identity-is-incomplete", @"The guest identity is incomplete.")));return;}
     NSDictionary *prior=[NSDictionary dictionaryWithContentsOfURL:journal];
     if(prior) {
         // A different system disk needs its own explicit installation/repair;
         // never reuse an old volume's permission to write its replacement.
         if(![prior[@"FormatVersion"] isEqual:@1]||![prior[@"MachineIdentifier"] isEqual:identifier]||
            ![prior[@"Guest"] isEqual:report[@"Guest"]]||![prior[@"VolumeUUID"] isEqual:report[@"VolumeUUID"]]) {
-            completion(NO,PolicyError(@"This Mac’s saved boot-policy record belongs to a different system. Its boot policy was not changed."));return;
+            completion(NO,PolicyError(VIMLocalized(@"guestbootpolicy.this-mac-s-saved-boot-policy-record-belongs-to-a", @"This Mac’s saved boot-policy record belongs to a different system. Its boot policy was not changed.")));return;
         }
         operation.state=[prior mutableCopy];
         if(GuestDirectory(prior[@"GuestDirectory"])&&[prior[@"DispatchAttempted"] isEqual:@YES]) {
@@ -74,7 +75,7 @@ static BOOL SavePolicy(NSDictionary *record,NSURL *file,NSError **error) {
             [operation run:NO];return;
         }
         if([prior[@"DispatchAttempted"] isEqual:@YES]) {
-            completion(NO,PolicyError(@"The previous compatibility change has an unknown outcome. It was not repeated."));return;
+            completion(NO,PolicyError(VIMLocalized(@"guestbootpolicy.the-previous-compatibility-change-has-an-unknown-outcome-it-was", @"The previous compatibility change has an unknown outcome. It was not repeated.")));return;
         }
     } else operation.state=[@{@"FormatVersion":@1,@"Attempt":NSUUID.UUID.UUIDString,@"MachineIdentifier":identifier,
         @"Guest":report[@"Guest"],@"VolumeUUID":report[@"VolumeUUID"],@"Phase":@"preparing",
@@ -101,12 +102,12 @@ static BOOL SavePolicy(NSDictionary *record,NSURL *file,NSError **error) {
         @"guest-install":[self.tools URLByAppendingPathComponent:@"guest-install"],@"BootPolicy.json":file}
         progress:nil completion:^(NSDictionary *receipt,NSError *failure){
         NSString *directory=receipt[@"Directory"];
-        if(failure||!GuestDirectory(directory)){[self finish:NO error:failure?:PolicyError(@"The guest compatibility files could not be prepared.")];return;}
+        if(failure||!GuestDirectory(directory)){[self finish:NO error:failure?:PolicyError(VIMLocalized(@"guestbootpolicy.the-guest-compatibility-files-could-not-be-prepared", @"The guest compatibility files could not be prepared."))];return;}
         self.state[@"GuestDirectory"]=directory;self.state[@"Transfer"]=receipt;
         [self.agent runExecutable:@"/bin/chmod" arguments:@[@"0700",[directory stringByAppendingPathComponent:@"guest-install"]] timeout:10 completion:^(NSDictionary *reply,NSError *issue){
-            if(issue||![reply[@"exitcode"] isEqual:@0]){[self finish:NO error:issue?:PolicyError(@"The compatibility helper could not be prepared.")];return;}
+            if(issue||![reply[@"exitcode"] isEqual:@0]){[self finish:NO error:issue?:PolicyError(VIMLocalized(@"guestbootpolicy.the-compatibility-helper-could-not-be-prepared", @"The compatibility helper could not be prepared."))];return;}
             [self.agent runExecutable:@"/bin/chmod" arguments:@[@"0600",[directory stringByAppendingPathComponent:@"BootPolicy.json"]] timeout:10 completion:^(NSDictionary *privacy,NSError *privacyError){
-                if(privacyError||![privacy[@"exitcode"] isEqual:@0]){[self finish:NO error:privacyError?:PolicyError(@"The guest compatibility request could not be secured.")];return;}
+                if(privacyError||![privacy[@"exitcode"] isEqual:@0]){[self finish:NO error:privacyError?:PolicyError(VIMLocalized(@"guestbootpolicy.the-guest-compatibility-request-could-not-be-secured", @"The guest compatibility request could not be secured."))];return;}
                 [self run:YES];
             }];
         }];
@@ -114,9 +115,9 @@ static BOOL SavePolicy(NSDictionary *record,NSURL *file,NSError **error) {
 }
 - (void)run:(BOOL)configure {
     NSString *directory=self.state[@"GuestDirectory"];
-    if(!GuestDirectory(directory)){[self finish:NO error:PolicyError(@"The guest compatibility record has an invalid path.")];return;}
+    if(!GuestDirectory(directory)){[self finish:NO error:PolicyError(VIMLocalized(@"guestbootpolicy.the-guest-compatibility-record-has-an-invalid-path", @"The guest compatibility record has an invalid path."))];return;}
     if(configure) {
-        if([self.state[@"DispatchAttempted"] isEqual:@YES]){[self finish:NO error:PolicyError(@"A compatibility change was already dispatched. It was not repeated.")];return;}
+        if([self.state[@"DispatchAttempted"] isEqual:@YES]){[self finish:NO error:PolicyError(VIMLocalized(@"guestbootpolicy.a-compatibility-change-was-already-dispatched-it-was-not-repeated", @"A compatibility change was already dispatched. It was not repeated."))];return;}
         self.state[@"DispatchAttempted"]=@YES;self.state[@"Phase"]=@"dispatched";NSError *error=nil;
         if(!SavePolicy(self.state,self.journal,&error)){self.completion(NO,error);return;}
     }
@@ -130,7 +131,7 @@ static BOOL SavePolicy(NSDictionary *record,NSURL *file,NSError **error) {
             [result[@"TaskForPIDRestrictionDisabled"] isEqual:@YES];
         for(NSString *key in @[@"Guest",@"VolumeUUID",@"ProductBuildVersion",@"BootSessionUUID"])
             valid=valid&&[result[key] isEqual:self.report[key]];
-        if(failure||!valid){[self finish:NO error:failure?:PolicyError(@"Guest privacy compatibility could not be verified. The previous boot policy was retained.")];return;}
+        if(failure||!valid){[self finish:NO error:failure?:PolicyError(VIMLocalized(@"guestbootpolicy.guest-privacy-compatibility-could-not-be-verified-the-previous-boot", @"Guest privacy compatibility could not be verified. The previous boot policy was retained."))];return;}
         if(!configure&&[result[@"PreferenceVerified"] isEqual:@NO]&&
            ([result[@"TransactionPhase"] isEqual:@"files-published"]||
             (!result[@"TransactionPhase"]&&[self.state[@"InitialResult"][@"Changed"] isEqual:@NO]))&&
@@ -155,7 +156,7 @@ static BOOL SavePolicy(NSDictionary *record,NSURL *file,NSError **error) {
         self.state[@"Result"]=result;
         if(configure&&!self.state[@"InitialResult"])self.state[@"InitialResult"]=result;
         [self finish:[result[@"PreferenceVerified"] isEqual:@YES] error:[result[@"PreferenceVerified"] isEqual:@YES]?nil:
-            PolicyError(@"The guest compatibility preference is missing or changed. No previous write was repeated.")];
+            PolicyError(VIMLocalized(@"guestbootpolicy.the-guest-compatibility-preference-is-missing-or-changed-no-previous", @"The guest compatibility preference is missing or changed. No previous write was repeated."))];
     }];
 }
 @end

@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMMenuController.h"
 #import "VIMLibraryViewController.h"
 #import "VIMMachine.h"
@@ -21,25 +22,26 @@
     if((self=[super init])) {
         self.library=library;
         NSMenu *main=NSApp.mainMenu;
-        NSMenuItem *legacy=[main itemWithTitle:@"Mac"];if(legacy)[main removeItem:legacy];
-        self.fileMenu=[main itemWithTitle:@"File"].submenu;
+        NSMenuItem *legacy=VIMMenuItem(main, @"vim.mac");if(legacy)[main removeItem:legacy];
+        self.fileMenu=VIMMenuItem(main, @"vim.file").submenu;
         self.fileMenu.autoenablesItems=YES;
         // Do not inherit the document-template menu's Print/Recent sections.
         self.fileMenu.minimumWidth=0;
-        self.editItem=[main itemWithTitle:@"Edit"];self.hostEditMenu=self.editItem.submenu;
-        self.guestEditMenu=[[NSMenu alloc] initWithTitle:@"Edit"];
-        NSArray *editTitles=@[@"Undo",@"Cut",@"Copy",@"Paste",@"Select All"],*editActions=@[@"undo:",@"cut:",@"copy:",@"paste:",@"selectAll:"],*editKeys=@[@"z",@"x",@"c",@"v",@"a"];
+        self.editItem=VIMMenuItem(main, @"vim.edit");self.hostEditMenu=self.editItem.submenu;
+        self.guestEditMenu=[[NSMenu alloc] initWithTitle:VIMLocalized(@"menu.edit", @"Edit")];
+        NSArray *editTitles=@[VIMLocalized(@"menu.undo", @"Undo"),VIMLocalized(@"menu.cut", @"Cut"),VIMLocalized(@"menu.copy", @"Copy"),VIMLocalized(@"menu.paste", @"Paste"),VIMLocalized(@"menu.select-all", @"Select All")],*editActions=@[@"undo:",@"cut:",@"copy:",@"paste:",@"selectAll:"],*editKeys=@[@"z",@"x",@"c",@"v",@"a"];
         for(NSUInteger i=0;i<editTitles.count;i++){if(i==1)[self.guestEditMenu addItem:NSMenuItem.separatorItem];[self.guestEditMenu addItemWithTitle:editTitles[i] action:NSSelectorFromString(editActions[i]) keyEquivalent:editKeys[i]];}
         self.guestEditMenu.delegate=self;self.hostEditMenu.delegate=self;
-        NSMenuItem *view=[main itemWithTitle:@"View"];
-        if(!view){view=[[NSMenuItem alloc] initWithTitle:@"View" action:nil keyEquivalent:@""];[main insertItem:view atIndex:MIN(3,main.numberOfItems)];}
-        self.viewMenu=[[NSMenu alloc] initWithTitle:@"View"];view.submenu=self.viewMenu;
+        NSMenuItem *view=VIMMenuItem(main, @"vim.view");
+        if(!view){view=[[NSMenuItem alloc] initWithTitle:VIMLocalized(@"library.view", @"View") action:nil keyEquivalent:@""];[main insertItem:view atIndex:MIN(3,main.numberOfItems)];}
+        view.identifier=@"vim.view";self.viewMenu=[[NSMenu alloc] initWithTitle:VIMLocalized(@"library.view", @"View")];view.submenu=self.viewMenu;
         self.fileMenu.delegate=self;self.viewMenu.delegate=self;
-        self.actionsItem=[[NSMenuItem alloc] initWithTitle:@"Actions" action:nil keyEquivalent:@""];self.actionsItem.submenu=[[NSMenu alloc] initWithTitle:@"Actions"];self.actionsItem.submenu.delegate=self;
-        self.devicesItem=[[NSMenuItem alloc] initWithTitle:@"Devices" action:nil keyEquivalent:@""];self.devicesItem.submenu=[[NSMenu alloc] initWithTitle:@"Devices"];self.devicesItem.submenu.delegate=self;
+        self.actionsItem=[[NSMenuItem alloc] initWithTitle:VIMLocalized(@"menu.actions", @"Actions") action:nil keyEquivalent:@""];self.actionsItem.submenu=[[NSMenu alloc] initWithTitle:VIMLocalized(@"menu.actions", @"Actions")];self.actionsItem.submenu.delegate=self;
+        self.devicesItem=[[NSMenuItem alloc] initWithTitle:VIMLocalized(@"menu.devices", @"Devices") action:nil keyEquivalent:@""];self.devicesItem.submenu=[[NSMenu alloc] initWithTitle:VIMLocalized(@"menu.devices", @"Devices")];self.devicesItem.submenu.delegate=self;
+        self.actionsItem.identifier=@"vim.actions";self.devicesItem.identifier=@"vim.devices";
         NSInteger index=[main indexOfItem:view]+1;[main insertItem:self.actionsItem atIndex:index];[main insertItem:self.devicesItem atIndex:index+1];
-        NSMenu *windows=NSApp.windowsMenu?:[main itemWithTitle:@"Window"].submenu;
-        if(windows){[windows addItem:NSMenuItem.separatorItem];[windows addItemWithTitle:@"Library" action:@selector(showLibrary:) keyEquivalent:@""].target=NSApp.delegate;}
+        NSMenu *windows=NSApp.windowsMenu?:VIMMenuItem(main, @"vim.window").submenu;
+        if(windows){[windows addItem:NSMenuItem.separatorItem];[windows addItemWithTitle:VIMLocalized(@"menu.library", @"Library") action:@selector(showLibrary:) keyEquivalent:@""].target=NSApp.delegate;}
         for(NSString *name in @[NSWindowDidBecomeKeyNotification,NSWindowDidResignKeyNotification,NSWindowWillCloseNotification,@"VIMLibraryChanged"])
             [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(contextChanged:) name:name object:nil];
         [self refresh];
@@ -74,44 +76,44 @@
     [self buildGuestMenus:session];
     [self.fileMenu removeAllItems];
     if(!guest) {
-        [self add:@"New Virtual Intel Mac…" action:@selector(newMac:) key:@"n" to:self.fileMenu target:NSApp.delegate];
-        [self add:@"Open Virtual Intel Mac…" action:@selector(openExistingMac:) key:@"o" to:self.fileMenu target:self.library];
+        [self add:VIMLocalized(@"menu.new-virtual-intel-mac", @"New Virtual Intel Mac…") action:@selector(newMac:) key:@"n" to:self.fileMenu target:NSApp.delegate];
+        [self add:VIMLocalized(@"menu.open-virtual-intel-mac", @"Open Virtual Intel Mac…") action:@selector(openExistingMac:) key:@"o" to:self.fileMenu target:self.library];
         VIMMachine *selected=self.library.selectedMachine;
         if(selected&&self.activeWindow==self.library.view.window) {
             [self.fileMenu addItem:NSMenuItem.separatorItem];
-            NSMenuItem *remove=[self add:[NSString stringWithFormat:@"Remove “%@”",selected.name] action:@selector(removeSelectedMachine:) key:@"" to:self.fileMenu target:self.library];remove.enabled=![VIMSession isRunningMachine:selected];
+            NSMenuItem *remove=[self add:[NSString stringWithFormat:VIMLocalized(@"library.remove.named", @"Remove “%@”"),selected.name] action:@selector(removeSelectedMachine:) key:@"" to:self.fileMenu target:self.library];remove.enabled=![VIMSession isRunningMachine:selected];
         }
         [self.fileMenu addItem:NSMenuItem.separatorItem];
     }
-    [self add:@"Close Window" action:@selector(performClose:) key:@"w" to:self.fileMenu target:nil];
+    [self add:VIMLocalized(@"menu.close-window", @"Close Window") action:@selector(performClose:) key:@"w" to:self.fileMenu target:nil];
     [self.viewMenu removeAllItems];
     if(guest) {
-        NSMenuItem *full=[self add:(self.activeWindow.styleMask&NSWindowStyleMaskFullScreen)?@"Exit Full Screen":@"Enter Full Screen" action:@selector(toggleFullScreen:) key:@"f" to:self.viewMenu target:self.activeWindow];full.keyEquivalentModifierMask=NSEventModifierFlagControl|NSEventModifierFlagCommand;
+        NSMenuItem *full=[self add:(self.activeWindow.styleMask&NSWindowStyleMaskFullScreen)?VIMLocalized(@"menu.exit-full-screen", @"Exit Full Screen"):VIMLocalized(@"menu.enter-full-screen", @"Enter Full Screen") action:@selector(toggleFullScreen:) key:@"f" to:self.viewMenu target:self.activeWindow];full.keyEquivalentModifierMask=NSEventModifierFlagControl|NSEventModifierFlagCommand;
         [self.viewMenu addItem:NSMenuItem.separatorItem];
-        NSMenuItem *retina=[self.viewMenu addItemWithTitle:session.supportsRetinaDisplay?@"Retina Resolution":@"Resolution" action:nil keyEquivalent:@""];retina.submenu=[NSMenu new];
+        NSMenuItem *retina=[self.viewMenu addItemWithTitle:session.supportsRetinaDisplay?VIMLocalized(@"ui.retina-resolution", @"Retina Resolution"):VIMLocalized(@"ui.resolution", @"Resolution") action:nil keyEquivalent:@""];retina.identifier=@"vim.resolution";retina.submenu=[NSMenu new];
         for(NSUInteger i=0;i<3;i++) {
             if(i==1&&!session.supportsRetinaDisplay)continue;
-            NSMenuItem *item=[self add:@[@"More Space",@"Best for Retina display",@"Scaled"][i] action:@selector(changeRetinaMode:) key:@"" to:retina.submenu target:session];item.tag=i;item.state=[session.displayMode isEqual:@[@"space",@"retina",@"scaled"][i]]?NSControlStateValueOn:NSControlStateValueOff;
+            NSMenuItem *item=[self add:@[VIMLocalized(@"settings.more-space", @"More Space"),VIMLocalized(@"settings.best-for-retina-display", @"Best for Retina display"),VIMLocalized(@"ui.scaled", @"Scaled")][i] action:@selector(changeRetinaMode:) key:@"" to:retina.submenu target:session];item.tag=i;item.state=[session.displayMode isEqual:@[@"space",@"retina",@"scaled"][i]]?NSControlStateValueOn:NSControlStateValueOff;
         }
-        NSMenuItem *filter=[self.viewMenu addItemWithTitle:@"Scaling Filter" action:nil keyEquivalent:@""];filter.submenu=[NSMenu new];
+        NSMenuItem *filter=[self.viewMenu addItemWithTitle:VIMLocalized(@"menu.scaling-filter", @"Scaling Filter") action:nil keyEquivalent:@""];filter.submenu=[NSMenu new];
         for(NSString *value in @[@"nearest",@"linear"]) {
-            NSMenuItem *item=[self add:[value isEqual:@"nearest"]?@"Nearest Neighbor":@"Linear" action:@selector(changeDisplayScalingFilter:) key:@"" to:filter.submenu target:session];
+            NSMenuItem *item=[self add:[value isEqual:@"nearest"]?VIMLocalized(@"settings.nearest-neighbor", @"Nearest Neighbor"):VIMLocalized(@"ui.linear", @"Linear") action:@selector(changeDisplayScalingFilter:) key:@"" to:filter.submenu target:session];
             item.representedObject=value;item.state=[session.displayScalingFilter isEqual:value]?NSControlStateValueOn:NSControlStateValueOff;
         }
-        [self.viewMenu addItem:NSMenuItem.separatorItem];[self add:@"Take Screenshot…" action:@selector(takeScreenshot:) key:@"" to:self.viewMenu target:session];
+        [self.viewMenu addItem:NSMenuItem.separatorItem];[self add:VIMLocalized(@"menu.take-screenshot", @"Take Screenshot…") action:@selector(takeScreenshot:) key:@"" to:self.viewMenu target:session];
     } else {
-        for(NSUInteger i=0;i<2;i++){NSMenuItem *item=[self add:i?@"Compact View":@"Expanded View" action:@selector(setDensity:) key:@"" to:self.viewMenu target:self];item.tag=i;item.state=self.library.compact==(i==1)?NSControlStateValueOn:NSControlStateValueOff;}
+        for(NSUInteger i=0;i<2;i++){NSMenuItem *item=[self add:i?VIMLocalized(@"menu.compact-view", @"Compact View"):VIMLocalized(@"menu.expanded-view", @"Expanded View") action:@selector(setDensity:) key:@"" to:self.viewMenu target:self];item.tag=i;item.state=self.library.compact==(i==1)?NSControlStateValueOn:NSControlStateValueOff;}
         [self.viewMenu addItem:NSMenuItem.separatorItem];
-        NSMenuItem *arrange=[self.viewMenu addItemWithTitle:@"Arrange By" action:nil keyEquivalent:@""];arrange.submenu=[[NSMenu alloc] initWithTitle:@"Arrange By"];
+        NSMenuItem *arrange=[self.viewMenu addItemWithTitle:VIMLocalized(@"menu.arrange-by", @"Arrange By") action:nil keyEquivalent:@""];arrange.submenu=[[NSMenu alloc] initWithTitle:VIMLocalized(@"menu.arrange-by", @"Arrange By")];
         NSArray *names=@[@"Name",@"Type",@"Date Last Opened",@"Date Created",@"Size",@"Tags",@"None"];
         for(NSUInteger i=0;i<names.count;i++) {
             if(i==6)[arrange.submenu addItem:NSMenuItem.separatorItem];
-            NSMenuItem *item=[self add:names[i] action:@selector(arrange:) key:i==6?@"0":[NSString stringWithFormat:@"%lu",(unsigned long)i+1] to:arrange.submenu target:self];
+            NSMenuItem *item=[self add:VIMLocalizedLabel(names[i]) action:@selector(arrange:) key:i==6?@"0":[NSString stringWithFormat:@"%lu",(unsigned long)i+1] to:arrange.submenu target:self];
             item.keyEquivalentModifierMask=NSEventModifierFlagControl|NSEventModifierFlagCommand;item.representedObject=names[i];item.state=[self.library.arrangement isEqual:names[i]]?NSControlStateValueOn:NSControlStateValueOff;
         }
     }
     [self.viewMenu addItem:NSMenuItem.separatorItem];
-    NSMenuItem *toolbar=[self add:self.activeWindow.toolbar.visible?@"Hide Toolbar":@"Show Toolbar" action:@selector(toggleToolbarShown:) key:@"t" to:self.viewMenu target:self];
+    NSMenuItem *toolbar=[self add:self.activeWindow.toolbar.visible?VIMLocalized(@"menu.hide-toolbar", @"Hide Toolbar"):VIMLocalized(@"menu.show-toolbar", @"Show Toolbar") action:@selector(toggleToolbarShown:) key:@"t" to:self.viewMenu target:self];
     toolbar.keyEquivalentModifierMask=NSEventModifierFlagOption|NSEventModifierFlagCommand;
 }
 - (void)toggleToolbarShown:(id)sender {
@@ -120,7 +122,7 @@
 - (void)buildGuestMenus:(VIMSession *)session {
     NSMenu *actions=self.actionsItem.submenu,*devices=self.devicesItem.submenu;[actions removeAllItems];[devices removeAllItems];
     actions.autoenablesItems=devices.autoenablesItems=session!=nil;
-    NSArray *titles=@[@"Start",@"Shut Down",@"Stop…",@"Reset…"],*selectors=@[@"startAgain:",@"shutdown:",@"forceStop:",@"resetMachine:"];
+    NSArray *titles=@[VIMLocalized(@"library.start", @"Start"),VIMLocalized(@"menu.shut-down", @"Shut Down"),VIMLocalized(@"menu.stop", @"Stop…"),VIMLocalized(@"menu.reset", @"Reset…")],*selectors=@[@"startAgain:",@"shutdown:",@"forceStop:",@"resetMachine:"];
     NSArray *symbols=@[@"power",@"power.circle",@"stop.fill",@"arrow.counterclockwise"];
     for(NSUInteger i=0;i<titles.count;i++) {
         if(i==1||i==2)[actions addItem:NSMenuItem.separatorItem];
@@ -130,21 +132,21 @@
 #endif
     }
     [actions addItem:NSMenuItem.separatorItem];
-    NSMenuItem *apps=[self add:@"Download Apps…" action:@selector(downloadApps:) key:@"" to:actions target:session];
+    NSMenuItem *apps=[self add:VIMLocalized(@"menu.download-apps", @"Download Apps…") action:@selector(downloadApps:) key:@"" to:actions target:session];
     apps.image=VIMAppsSymbolImage();apps.enabled=session!=nil;
-    [actions addItem:NSMenuItem.separatorItem];NSMenuItem *configure=[self add:@"Configure…" action:@selector(configureMachine:) key:@"" to:actions target:session];configure.image=[NSImage imageWithSystemSymbolName:@"gearshape" accessibilityDescription:nil];configure.enabled=session!=nil;
+    [actions addItem:NSMenuItem.separatorItem];NSMenuItem *configure=[self add:VIMLocalized(@"library.configure", @"Configure…") action:@selector(configureMachine:) key:@"" to:actions target:session];configure.image=[NSImage imageWithSystemSymbolName:@"gearshape" accessibilityDescription:nil];configure.enabled=session!=nil;
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 270000
     if(@available(macOS 27.0,*)){configure.preferredImageVisibility=NSMenuItemImageVisibilityVisible;apps.preferredImageVisibility=NSMenuItemImageVisibilityVisible;}
 #endif
     for(NSString *name in @[@"Network",@"Sound Output",@"Microphone",@"CD/DVD",@"USB",@"Sharing",@"Keyboard"]) {
-        NSMenuItem *item=[devices addItemWithTitle:name action:nil keyEquivalent:@""];
+        NSMenuItem *item=[devices addItemWithTitle:VIMLocalizedLabel(name) action:nil keyEquivalent:@""];
         if(!session) {
             item.enabled=NO;item.submenu=[NSMenu new];item.submenu.autoenablesItems=NO;
-            NSMenuItem *placeholder=[item.submenu addItemWithTitle:@"No Virtual Mac Selected" action:nil keyEquivalent:@""];placeholder.enabled=NO;
+            NSMenuItem *placeholder=[item.submenu addItemWithTitle:VIMLocalized(@"menu.no-virtual-mac-selected", @"No Virtual Mac Selected") action:nil keyEquivalent:@""];placeholder.enabled=NO;
             continue;
         }
         if(![name isEqual:@"Sharing"]){item.submenu=[session deviceMenuForKind:name];continue;}
-        item.submenu=[NSMenu new];[self add:@"File Sharing…" action:@selector(showSharingSettings:) key:@"" to:item.submenu target:session];[self add:@"Remote Login…" action:@selector(showSSHSettings:) key:@"" to:item.submenu target:session];
+        item.submenu=[NSMenu new];[self add:VIMLocalized(@"menu.file-sharing", @"File Sharing…") action:@selector(showSharingSettings:) key:@"" to:item.submenu target:session];[self add:VIMLocalized(@"menu.remote-login", @"Remote Login…") action:@selector(showSSHSettings:) key:@"" to:item.submenu target:session];
     }
 }
 - (void)menuNeedsUpdate:(NSMenu *)menu {
@@ -158,7 +160,7 @@
 - (void)setDensity:(NSMenuItem *)sender {[self.library setDensityFromMenu:sender];[self contextChanged:nil];}
 - (void)arrange:(NSMenuItem *)sender {[self.library arrangeFromMenu:sender];[self contextChanged:nil];}
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
-    if(item.action==@selector(toggleToolbarShown:)){item.title=self.activeWindow.toolbar.visible?@"Hide Toolbar":@"Show Toolbar";return self.activeWindow.toolbar!=nil;}
+    if(item.action==@selector(toggleToolbarShown:)){item.title=self.activeWindow.toolbar.visible?VIMLocalized(@"menu.hide-toolbar", @"Hide Toolbar"):VIMLocalized(@"menu.show-toolbar", @"Show Toolbar");return self.activeWindow.toolbar!=nil;}
     if(item.action==@selector(setDensity:)||item.action==@selector(arrange:))return self.activeWindow==self.library.view.window;
     return YES;
 }

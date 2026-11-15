@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMDisplayConnection.h"
 #import "VIMMetalView.h"
 #include <sys/socket.h>
@@ -67,7 +68,7 @@ static NSError *VIMDisplayError(NSString *message) {
     if(!kr)kr=bootstrap_register(bootstrap_port,(char *)name.UTF8String,port);
     if(kr){
         if(port)mach_port_destroy(mach_task_self(),port);
-        if(error)*error=VIMDisplayError(@"The GPU display connection could not be created.");
+        if(error)*error=VIMDisplayError(VIMLocalized(@"displayconnection.the-gpu-display-connection-could-not-be-created", @"The GPU display connection could not be created."));
         return nil;
     }
     self.surfaceRendererPID=pid;self.surfaceServiceName=name;
@@ -132,7 +133,7 @@ static NSError *VIMDisplayError(NSString *message) {
     // Short path avoids sockaddr_un's 104-byte limit even with long home paths.
     char directory[] = "/tmp/vim-display.XXXXXX";
     if (!mkdtemp(directory)) {
-        if (error) *error = VIMDisplayError(@"Could not create a private display connection.");
+        if (error) *error = VIMDisplayError(VIMLocalized(@"displayconnection.could-not-create-a-private-display-connection", @"Could not create a private display connection."));
         return nil;
     }
     _directory = @(directory); _socketPath = [_directory stringByAppendingPathComponent:@"display"];
@@ -142,7 +143,7 @@ static NSError *VIMDisplayError(NSString *message) {
     if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) || listen(fd, 1)) {
         if (fd >= 0) close(fd);
         unlink(_socketPath.fileSystemRepresentation); rmdir(directory);
-        if (error) *error = VIMDisplayError(@"Could not listen for the guest display.");
+        if (error) *error = VIMDisplayError(VIMLocalized(@"displayconnection.could-not-listen-for-the-guest-display", @"Could not listen for the guest display."));
         return nil;
     }
     fcntl(fd, F_SETFD, FD_CLOEXEC);
@@ -206,7 +207,7 @@ static NSError *VIMDisplayError(NSString *message) {
         !hello.sequence && !hello.width && !hello.height && !hello.stride && !hello.reserved;
     if (!valid) {
         if (frameFD >= 0) close(frameFD);
-        return VIMDisplayError(@"The guest display sent an invalid connection header.");
+        return VIMDisplayError(VIMLocalized(@"displayconnection.the-guest-display-sent-an-invalid-connection-header", @"The guest display sent an invalid connection header."));
     }
     // A guest may remain idle indefinitely; only the handshake has a deadline.
     struct timeval noTimeout = {0};
@@ -220,7 +221,7 @@ static NSError *VIMDisplayError(NSString *message) {
             length:8192ULL*8192*4 error:&installationError];
         else close(frameFD);
     });
-    if (!installed) return installationError ?: VIMDisplayError(@"The guest display was closed.");
+    if (!installed) return installationError ?: VIMDisplayError(VIMLocalized(@"displayconnection.the-guest-display-was-closed", @"The guest display was closed."));
     dispatch_async(dispatch_get_main_queue(), ^{
         if(self.requestedWidth)[self requestWidth:self.requestedWidth height:self.requestedHeight density:self.requestedDensity];
     });
@@ -266,7 +267,7 @@ static NSError *VIMDisplayError(NSString *message) {
             frame.sequence <= sequence || (frame.operation==2&&frame.reserved) || frame.width < 320 || frame.width > 8192 ||
             frame.height < 200 || frame.height > 8192 || frame.stride < frame.width*4 ||
             frame.stride % 256 || frame.stride > (8192ULL*8192*4)/frame.height)
-            return VIMDisplayError(@"The guest display sent an invalid frame.");
+            return VIMDisplayError(VIMLocalized(@"displayconnection.the-guest-display-sent-an-invalid-frame", @"The guest display sent an invalid frame."));
         sequence = frame.sequence;
         dispatch_semaphore_t completed = dispatch_semaphore_create(0);
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -281,7 +282,7 @@ static NSError *VIMDisplayError(NSString *message) {
         VIMDisplayMessage ack = {.magic=VIMDisplayMagic, .operation=3, .sequence=sequence};
         if (![self sendMessage:ack]) break;
     }
-    return VIMDisplayError(@"The guest display connection ended.");
+    return VIMDisplayError(VIMLocalized(@"displayconnection.the-guest-display-connection-ended", @"The guest display connection ended."));
 }
 - (BOOL)sendMessage:(VIMDisplayMessage)message {
     // Lock covers short writes and close. No main-thread caller performs I/O.

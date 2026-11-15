@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMAutomaticSetup.h"
 #import "VIMMachine.h"
 #import <Security/Security.h>
@@ -17,13 +18,13 @@ static NSDictionary *Credential(NSString *identifier) {
 static int CredentialDirectory(BOOL create,NSError **error) {
     NSURL *support=[NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
     NSURL *directory=[support URLByAppendingPathComponent:@"Virtual Intel Mac/Setup Credentials" isDirectory:YES];
-    if(!directory){SetupFailure(error,@"The private setup-password folder is unavailable.");return -1;}
+    if(!directory){SetupFailure(error,VIMLocalized(@"automaticsetup.the-private-setup-password-folder-is-unavailable", @"The private setup-password folder is unavailable."));return -1;}
     if(create&&![NSFileManager.defaultManager createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:error])return -1;
     int fd=open(directory.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
-    if(fd<0){if(create||errno!=ENOENT)SetupFailure(error,@"The private setup-password folder could not be opened.");return -1;}
+    if(fd<0){if(create||errno!=ENOENT)SetupFailure(error,VIMLocalized(@"automaticsetup.the-private-setup-password-folder-could-not-be-opened", @"The private setup-password folder could not be opened."));return -1;}
     struct stat st;
     if(fstat(fd,&st)||!S_ISDIR(st.st_mode)||st.st_uid!=getuid()||(st.st_mode&0077)){
-        close(fd);SetupFailure(error,@"The setup-password folder must be private to your Mac account.");return -1;
+        close(fd);SetupFailure(error,VIMLocalized(@"automaticsetup.the-setup-password-folder-must-be-private-to-your-mac", @"The setup-password folder must be private to your Mac account."));return -1;
     }
     if(create)[directory setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:NULL];
     return fd;
@@ -33,7 +34,7 @@ static BOOL PrivateCredential(struct stat *st) {return S_ISREG(st->st_mode)&&st-
 + (BOOL)supportsGuest:(NSString *)guest {return [@[@"tiger",@"leopard",@"snowleopard",@"lion",@"mountainlion",@"mavericks",@"yosemite",@"elcapitan",@"sierra",@"highsierra",@"mojave",@"catalina",@"bigsur"] containsObject:guest];}
 + (NSDictionary *)installerConfigurationForVolumeUUID:(NSString *)UUID error:(NSError **)error {
     if(![UUID isKindOfClass:NSString.class]||![[NSUUID alloc] initWithUUIDString:UUID]||
-       [UUID isEqual:@"00000000-0000-0000-0000-000000000000"]){SetupFailure(error,@"The new Macintosh HD could not be identified safely.");return nil;}
+       [UUID isEqual:@"00000000-0000-0000-0000-000000000000"]){SetupFailure(error,VIMLocalized(@"automaticsetup.the-new-macintosh-hd-could-not-be-identified-safely", @"The new Macintosh HD could not be identified safely."));return nil;}
     return @{@"Package":@"/System/Installation/Packages/OSInstall.mpkg",@"InstallType":@"automated",
         @"Language":@"English",@"TargetUUID":UUID,@"ShouldErase":@NO,@"ShouldArchiveAndInstall":@NO,@"QuitWhenDone":@YES};
 }
@@ -45,21 +46,21 @@ static BOOL PrivateCredential(struct stat *st) {return S_ISREG(st->st_mode)&&st-
     NSRegularExpression *pattern=[NSRegularExpression regularExpressionWithPattern:@"^[a-z_][a-z0-9_-]{0,30}$" options:0 error:NULL];
     if(![username isKindOfClass:NSString.class]||[pattern numberOfMatchesInString:username options:0 range:NSMakeRange(0,username.length)]!=1||
        [username hasPrefix:@"_"]||[@[@"root",@"daemon",@"nobody",@"guest",@"wheel"] containsObject:username])
-        return SetupFailure(error,@"Use an account name of 1–31 lowercase letters, numbers, hyphens or underscores, starting with a letter.");
+        return SetupFailure(error,VIMLocalized(@"automaticsetup.use-an-account-name-of-1-31-lowercase-letters-numbers", @"Use an account name of 1–31 lowercase letters, numbers, hyphens or underscores, starting with a letter."));
     return YES;
 }
 + (BOOL)validatePassword:(NSString *)password error:(NSError **)error {
     if(![password isKindOfClass:NSString.class]||[password lengthOfBytesUsingEncoding:NSUTF8StringEncoding]>511||
        [password rangeOfString:[NSString stringWithFormat:@"%C",(unichar)0]].location!=NSNotFound)
-        return SetupFailure(error,@"Choose a password of at most 511 UTF-8 bytes, without a null character.");
+        return SetupFailure(error,VIMLocalized(@"automaticsetup.choose-a-password-of-at-most-511-utf-8-bytes", @"Choose a password of at most 511 UTF-8 bytes, without a null character."));
     return YES;
 }
 + (BOOL)savePassword:(NSString *)password identifier:(NSString *)identifier error:(NSError **)error {
     if(![self validatePassword:password error:error])return NO;
-    if(!Credential(identifier))return SetupFailure(error,@"This setup session has no valid credential identifier.");
+    if(!Credential(identifier))return SetupFailure(error,VIMLocalized(@"automaticsetup.this-setup-session-has-no-valid-credential-identifier", @"This setup session has no valid credential identifier."));
     int directory=CredentialDirectory(YES,error);if(directory<0)return NO;
     struct stat st;BOOL exists=fstatat(directory,identifier.UTF8String,&st,AT_SYMLINK_NOFOLLOW)==0;
-    if((exists&&!PrivateCredential(&st))||(!exists&&errno!=ENOENT)){close(directory);return SetupFailure(error,@"The saved setup password has unexpected permissions. It was not replaced.");}
+    if((exists&&!PrivateCredential(&st))||(!exists&&errno!=ENOENT)){close(directory);return SetupFailure(error,VIMLocalized(@"automaticsetup.the-saved-setup-password-has-unexpected-permissions-it-was-not", @"The saved setup password has unexpected permissions. It was not replaced."));}
     NSString *temporary=[@".pending-" stringByAppendingString:NSUUID.UUID.UUIDString];
     int fd=openat(directory,temporary.UTF8String,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
     NSData *data=[password dataUsingEncoding:NSUTF8StringEncoding];BOOL success=fd>=0&&fchmod(fd,0600)==0;
@@ -69,10 +70,10 @@ static BOOL PrivateCredential(struct stat *st) {return S_ISREG(st->st_mode)&&st-
     if(success)success=fsync(fd)==0;if(fd>=0)close(fd);
     if(success)success=renameat(directory,temporary.UTF8String,directory,identifier.UTF8String)==0;
     if(!success)unlinkat(directory,temporary.UTF8String,0);else fsync(directory);
-    close(directory);return success||SetupFailure(error,@"The temporary setup password could not be saved privately on this Mac. Try again.");
+    close(directory);return success||SetupFailure(error,VIMLocalized(@"automaticsetup.the-temporary-setup-password-could-not-be-saved-privately-on", @"The temporary setup password could not be saved privately on this Mac. Try again."));
 }
 + (NSString *)passwordForIdentifier:(NSString *)identifier error:(NSError **)error {
-    NSDictionary *identity=Credential(identifier);if(!identity){SetupFailure(error,@"This setup session has no valid credential identifier.");return nil;}
+    NSDictionary *identity=Credential(identifier);if(!identity){SetupFailure(error,VIMLocalized(@"automaticsetup.this-setup-session-has-no-valid-credential-identifier", @"This setup session has no valid credential identifier."));return nil;}
     NSError *failure=nil;int directory=CredentialDirectory(NO,&failure);
     if(failure){if(error)*error=failure;return nil;}
     if(directory>=0){
@@ -82,28 +83,28 @@ static BOOL PrivateCredential(struct stat *st) {return S_ISREG(st->st_mode)&&st-
                 if(count<0||data.length+(NSUInteger)count>511){safe=NO;break;}[data appendBytes:bytes length:(NSUInteger)count];}
             close(fd);NSString *password=safe?[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]:nil;
             if(password&&[self validatePassword:password error:error])return password;
-            SetupFailure(error,@"The saved setup password is not a valid private credential. Enter it again.");return nil;
+            SetupFailure(error,VIMLocalized(@"automaticsetup.the-saved-setup-password-is-not-a-valid-private-credential", @"The saved setup password is not a valid private credential. Enter it again."));return nil;
         }
-        if(openError!=ENOENT){SetupFailure(error,@"The saved setup password could not be read safely. Enter it again.");return nil;}
+        if(openError!=ENOENT){SetupFailure(error,VIMLocalized(@"automaticsetup.the-saved-setup-password-could-not-be-read-safely-enter", @"The saved setup password could not be read safely. Enter it again."));return nil;}
     }
     // Compatibility only: migrate a previously approved Keychain item without
     // ever presenting an authorization dialog. New setups do not use Keychain.
     NSMutableDictionary *query=[identity mutableCopy];query[(__bridge id)kSecReturnData]=@YES;query[(__bridge id)kSecMatchLimit]=(__bridge id)kSecMatchLimitOne;
     query[(__bridge id)kSecUseAuthenticationUI]=(__bridge id)kSecUseAuthenticationUIFail;
     CFTypeRef result=NULL;OSStatus status=SecItemCopyMatching((__bridge CFDictionaryRef)query,&result);
-    if(status!=errSecSuccess){SetupFailure(error,@"Enter the virtual Mac’s setup password again. Its saved credential is not available on this Mac.");return nil;}
+    if(status!=errSecSuccess){SetupFailure(error,VIMLocalized(@"automaticsetup.enter-the-virtual-mac-s-setup-password-again-its-saved", @"Enter the virtual Mac’s setup password again. Its saved credential is not available on this Mac."));return nil;}
     NSData *data=CFBridgingRelease(result);NSString *password=[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     if(!password||![self savePassword:password identifier:identifier error:error])return nil;
     NSMutableDictionary *cleanup=[identity mutableCopy];cleanup[(__bridge id)kSecUseAuthenticationUI]=(__bridge id)kSecUseAuthenticationUIFail;
     SecItemDelete((__bridge CFDictionaryRef)cleanup);return password;
 }
 + (BOOL)removePasswordForIdentifier:(NSString *)identifier error:(NSError **)error {
-    NSDictionary *query=Credential(identifier);if(!query)return SetupFailure(error,@"This setup session has no valid credential identifier.");
+    NSDictionary *query=Credential(identifier);if(!query)return SetupFailure(error,VIMLocalized(@"automaticsetup.this-setup-session-has-no-valid-credential-identifier", @"This setup session has no valid credential identifier."));
     NSError *failure=nil;int directory=CredentialDirectory(NO,&failure);if(failure){if(error)*error=failure;return NO;}
     if(directory>=0){struct stat st;int found=fstatat(directory,identifier.UTF8String,&st,AT_SYMLINK_NOFOLLOW);
         BOOL safe=found==0?PrivateCredential(&st):errno==ENOENT;
         BOOL removed=safe&&(found!=0||unlinkat(directory,identifier.UTF8String,0)==0);close(directory);
-        if(!removed)return SetupFailure(error,@"The temporary setup password could not be retired safely. Its record was retained.");}
+        if(!removed)return SetupFailure(error,VIMLocalized(@"automaticsetup.the-temporary-setup-password-could-not-be-retired-safely-its", @"The temporary setup password could not be retired safely. Its record was retained."));}
     NSMutableDictionary *cleanup=[query mutableCopy];cleanup[(__bridge id)kSecUseAuthenticationUI]=(__bridge id)kSecUseAuthenticationUIFail;
     SecItemDelete((__bridge CFDictionaryRef)cleanup);return YES;
 }
@@ -118,7 +119,7 @@ static BOOL PrivateCredential(struct stat *st) {return S_ISREG(st->st_mode)&&st-
         @"MachineIdentifier":machine.configuration[@"Identifier"],@"VolumeUUID":target[@"VolumeUUID"],@"Enabled":@NO} mutableCopy];
     if(profile) {
         if(![profile[@"MachineIdentifier"] isEqual:machine.configuration[@"Identifier"]]||
-           ![profile[@"VolumeUUID"] isEqual:target[@"VolumeUUID"]]){SetupFailure(error,@"The saved automatic setup target does not match this Mac.");return nil;}
+           ![profile[@"VolumeUUID"] isEqual:target[@"VolumeUUID"]]){SetupFailure(error,VIMLocalized(@"automaticsetup.the-saved-automatic-setup-target-does-not-match-this-mac", @"The saved automatic setup target does not match this Mac."));return nil;}
         if(![self validateUsername:profile[@"Username"] error:error])return nil;
         for(NSString *key in @[@"Enabled",@"Username",@"FileSharing",@"RemoteLogin",@"AutomaticLogin"])if(profile[key])policy[key]=profile[key];
     }
@@ -140,17 +141,17 @@ static BOOL PrivateCredential(struct stat *st) {return S_ISREG(st->st_mode)&&st-
     if(![fm createDirectoryAtURL:content withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:error])return nil;
     if(![policy writeToURL:[content URLByAppendingPathComponent:@"VirtualIntelMac.plist"] error:error])return nil;
     NSURL *log=[job URLByAppendingPathComponent:@"Media.log"];
-    if(![fm createFileAtPath:log.path contents:nil attributes:@{NSFilePosixPermissions:@0600}]){SetupFailure(error,@"The automatic setup disc could not be prepared.");return nil;}
+    if(![fm createFileAtPath:log.path contents:nil attributes:@{NSFilePosixPermissions:@0600}]){SetupFailure(error,VIMLocalized(@"automaticsetup.the-automatic-setup-disc-could-not-be-prepared", @"The automatic setup disc could not be prepared."));return nil;}
     NSFileHandle *handle=[NSFileHandle fileHandleForWritingToURL:log error:error];if(!handle)return nil;
     NSTask *task=[NSTask new];task.executableURL=[NSURL fileURLWithPath:@"/usr/bin/hdiutil"];
     task.arguments=@[@"makehybrid",@"-hfs",@"-iso",@"-hfs-volume-name",@"VIM Setup",@"-o",base.path,content.path];
     task.standardInput=NSFileHandle.fileHandleWithNullDevice;task.standardOutput=handle;task.standardError=handle;
     BOOL launched=[task launchAndReturnError:error];if(launched)[task waitUntilExit];[handle closeFile];
-    if(!launched||task.terminationStatus){SetupFailure(error,@"The automatic setup disc could not be prepared. Its diagnostic files were retained in this Mac’s State folder.");return nil;}
+    if(!launched||task.terminationStatus){SetupFailure(error,VIMLocalized(@"automaticsetup.the-automatic-setup-disc-could-not-be-prepared-its-diagnostic", @"The automatic setup disc could not be prepared. Its diagnostic files were retained in this Mac’s State folder."));return nil;}
     // Only this stopped VM's generated file is replaced. Never modify a
     // reusable installer, a mounted disc or any user's selected media.
     if(rename(output.fileSystemRepresentation,image.fileSystemRepresentation)||![policy writeToURL:receipt error:error]) {
-        SetupFailure(error,@"The automatic setup disc could not be saved.");return nil;
+        SetupFailure(error,VIMLocalized(@"automaticsetup.the-automatic-setup-disc-could-not-be-saved", @"The automatic setup disc could not be saved."));return nil;
     }
     [fm removeItemAtURL:job error:NULL];return image;
 }

@@ -1,0 +1,374 @@
+/* Main Menu */
+"AYu-sK-qS6.title" = "主菜单";
+
+/* Virtual Intel Mac */
+"1Xt-HY-uBw.title" = "Virtual Intel Mac";
+
+/* Virtual Intel Mac */
+"uQy-DD-JDr.title" = "Virtual Intel Mac";
+
+/* About Virtual Intel Mac */
+"5kV-Vb-QxS.title" = "关于 Virtual Intel Mac";
+
+/* Preferences… */
+"BOF-NM-1cW.title" = "偏好设置…";
+
+/* Services */
+"NMo-om-nkz.title" = "服务";
+
+/* Services */
+"hz9-B4-Xy5.title" = "服务";
+
+/* Hide Virtual Intel Mac */
+"Olw-nP-bQN.title" = "隐藏 Virtual Intel Mac";
+
+/* Hide Others */
+"Vdr-fp-XzO.title" = "隐藏其他";
+
+/* Show All */
+"Kd2-mp-pUS.title" = "全部显示";
+
+/* Quit Virtual Intel Mac */
+"4sb-4s-VLi.title" = "退出 Virtual Intel Mac";
+
+/* File */
+"dMs-cI-mzQ.title" = "文件";
+
+/* File */
+"bib-Uj-vzu.title" = "文件";
+
+/* New */
+"Was-JA-tGl.title" = "新建";
+
+/* Open… */
+"IAo-SY-fd9.title" = "打开…";
+
+/* Open Recent */
+"tXI-mr-wws.title" = "打开最近使用";
+
+/* Open Recent */
+"oas-Oc-fiZ.title" = "打开最近使用";
+
+/* Clear Menu */
+"vNY-rz-j42.title" = "清除菜单";
+
+/* Close */
+"DVo-aG-piG.title" = "关闭";
+
+/* Save… */
+"pxx-59-PXV.title" = "存储…";
+
+/* Save As… */
+"Bw7-FT-i3A.title" = "存储为…";
+
+/* Revert to Saved */
+"KaW-ft-85H.title" = "复原到存储版本";
+
+/* Page Setup… */
+"qIS-W8-SiK.title" = "页面设置…";
+
+/* Print… */
+"aTl-1u-JFS.title" = "打印…";
+
+/* Edit */
+"5QF-Oa-p0T.title" = "编辑";
+
+/* Edit */
+"W48-6f-4Dl.title" = "编辑";
+
+/* Undo */
+"dRJ-4n-Yzg.title" = "撤销";
+
+/* Redo */
+"6dh-zS-Vam.title" = "重做";
+
+/* Cut */
+"uRl-iY-unG.title" = "剪切";
+
+/* Copy */
+"x3v-GG-iWU.title" = "拷贝";
+
+/* Paste */
+"gVA-U4-sdL.title" = "粘贴";
+
+/* Paste and Match Style */
+"WeT-3V-zwk.title" = "粘贴并匹配样式";
+
+/* Delete */
+"pa3-QI-u2k.title" = "删除";
+
+/* Select All */
+"Ruw-6m-B2m.title" = "全选";
+
+/* Find */
+"4EN-yA-p0u.title" = "查找";
+
+/* Find */
+"1b7-l0-nxx.title" = "查找";
+
+/* Find… */
+"Xz5-n4-O0W.title" = "查找…";
+
+/* Find and Replace… */
+"YEy-JH-Tfz.title" = "查找并替换…";
+
+/* Find Next */
+"q09-fT-Sye.title" = "查找下一个";
+
+/* Find Previous */
+"OwM-mh-QMV.title" = "查找上一个";
+
+/* Use Selection for Find */
+"buJ-ug-pKt.title" = "使用所选内容查找";
+
+/* Jump to Selection */
+"S0p-oC-mLd.title" = "跳到所选内容";
+
+/* Spelling and Grammar */
+"Dv1-io-Yv7.title" = "拼写和语法";
+
+/* Spelling */
+"3IN-sU-3Bg.title" = "拼写";
+
+/* Show Spelling and Grammar */
+"HFo-cy-zxI.title" = "显示拼写和语法";
+
+/* Check Document Now */
+"hz2-CU-CR7.title" = "现在检查文稿";
+
+/* Check Spelling While Typing */
+"rbD-Rh-wIN.title" = "键入时检查拼写";
+
+/* Check Grammar With Spelling */
+"mK6-2p-4JG.title" = "随拼写检查语法";
+
+/* Correct Spelling Automatically */
+"78Y-hA-62v.title" = "自动纠正拼写";
+
+/* Substitutions */
+"9ic-FL-obx.title" = "替换";
+
+/* Substitutions */
+"FeM-D8-WVr.title" = "替换";
+
+/* Show Substitutions */
+"z6F-FW-3nz.title" = "显示替换";
+
+/* Smart Copy/Paste */
+"9yt-4B-nSM.title" = "智能拷贝/粘贴";
+
+/* Smart Quotes */
+"hQb-2v-fYv.title" = "智能引号";
+
+/* Smart Dashes */
+"rgM-f4-ycn.title" = "智能破折号";
+
+/* Smart Links */
+"cwL-P1-jid.title" = "智能链接";
+
+/* Data Detectors */
+"tRr-pd-1PS.title" = "数据检测器";
+
+/* Text Replacement */
+"HFQ-gK-NFA.title" = "文本替换";
+
+/* Transformations */
+"2oI-Rn-ZJC.title" = "转换";
+
+/* Transformations */
+"c8a-y6-VQd.title" = "转换";
+
+/* Make Upper Case */
+"vmV-6d-7jI.title" = "大写";
+
+/* Make Lower Case */
+"d9M-CD-aMd.title" = "小写";
+
+/* Capitalize */
+"UEZ-Bs-lqG.title" = "首字母大写";
+
+/* Speech */
+"xrE-MZ-jX0.title" = "语音";
+
+/* Speech */
+"3rS-ZA-NoH.title" = "语音";
+
+/* Start Speaking */
+"Ynk-f8-cLZ.title" = "开始朗读";
+
+/* Stop Speaking */
+"Oyz-dy-DGm.title" = "停止朗读";
+
+/* Format */
+"jxT-CU-nIS.title" = "格式";
+
+/* Format */
+"GEO-Iw-cKr.title" = "格式";
+
+/* Font */
+"Gi5-1S-RQB.title" = "字体";
+
+/* Font */
+"aXa-aM-Jaq.title" = "字体";
+
+/* Show Fonts */
+"Q5e-8K-NDq.title" = "显示字体";
+
+/* Bold */
+"GB9-OM-e27.title" = "粗体";
+
+/* Italic */
+"Vjx-xi-njq.title" = "斜体";
+
+/* Underline */
+"WRG-CD-K1S.title" = "下划线";
+
+/* Bigger */
+"Ptp-SP-VEL.title" = "更大";
+
+/* Smaller */
+"i1d-Er-qST.title" = "更小";
+
+/* Kern */
+"jBQ-r6-VK2.title" = "字距";
+
+/* Kern */
+"tlD-Oa-oAM.title" = "字距";
+
+/* Use Default */
+"GUa-eO-cwY.title" = "使用默认";
+
+/* Use None */
+"cDB-IK-hbR.title" = "不使用";
+
+/* Tighten */
+"46P-cB-AYj.title" = "紧缩";
+
+/* Loosen */
+"ogc-rX-tC1.title" = "放松";
+
+/* Ligatures */
+"o6e-r0-MWq.title" = "连字";
+
+/* Ligatures */
+"w0m-vy-SC9.title" = "连字";
+
+/* Use Default */
+"agt-UL-0e3.title" = "使用默认";
+
+/* Use None */
+"J7y-lM-qPV.title" = "不使用";
+
+/* Use All */
+"xQD-1f-W4t.title" = "全部使用";
+
+/* Baseline */
+"OaQ-X3-Vso.title" = "基线";
+
+/* Baseline */
+"ijk-EB-dga.title" = "基线";
+
+/* Use Default */
+"3Om-Ey-2VK.title" = "使用默认";
+
+/* Superscript */
+"Rqc-34-cIF.title" = "上标";
+
+/* Subscript */
+"I0S-gh-46l.title" = "下标";
+
+/* Raise */
+"2h7-ER-AoG.title" = "升高";
+
+/* Lower */
+"1tx-W0-xDw.title" = "降低";
+
+/* Show Colors */
+"bgn-CT-cEk.title" = "显示颜色";
+
+/* Copy Style */
+"5Vv-lz-BsD.title" = "拷贝样式";
+
+/* Paste Style */
+"vKC-jM-MkH.title" = "粘贴样式";
+
+/* Text */
+"Fal-I4-PZk.title" = "文本";
+
+/* Text */
+"d9c-me-L2H.title" = "文本";
+
+/* Align Left */
+"ZM1-6Q-yy1.title" = "左对齐";
+
+/* Center */
+"VIY-Ag-zcb.title" = "居中";
+
+/* Justify */
+"J5U-5w-g23.title" = "两端对齐";
+
+/* Align Right */
+"wb2-vD-lq4.title" = "右对齐";
+
+/* Writing Direction */
+"H1b-Si-o9J.title" = "书写方向";
+
+/* Writing Direction */
+"8mr-sm-Yjd.title" = "书写方向";
+
+/* Paragraph */
+"ZvO-Gk-QUH.title" = "段落";
+
+/* Selection */
+"cqv-fj-IhA.title" = "所选内容";
+
+/* Show Ruler */
+"vLm-3I-IUL.title" = "显示标尺";
+
+/* Copy Ruler */
+"MkV-Pr-PK5.title" = "拷贝标尺";
+
+/* Paste Ruler */
+"LVM-kO-fVI.title" = "粘贴标尺";
+
+/* View */
+"H8h-7b-M4v.title" = "显示";
+
+/* View */
+"HyV-fh-RgO.title" = "显示";
+
+/* Show Toolbar */
+"snW-S8-Cw5.title" = "显示工具栏";
+
+/* Customize Toolbar… */
+"1UK-8n-QPP.title" = "自定工具栏…";
+
+/* Show Sidebar */
+"kIP-vf-haE.title" = "显示边栏";
+
+/* Enter Full Screen */
+"4J7-dP-txa.title" = "进入全屏幕";
+
+/* Window */
+"aUF-d1-5bR.title" = "窗口";
+
+/* Window */
+"Td7-aD-5lo.title" = "窗口";
+
+/* Minimize */
+"OY7-WF-poV.title" = "最小化";
+
+/* Zoom */
+"R4o-n2-Eq4.title" = "缩放";
+
+/* Bring All to Front */
+"LE2-aR-0XJ.title" = "前置全部窗口";
+
+/* Help */
+"wpr-3q-Mcd.title" = "帮助";
+
+/* Help */
+"F2S-fz-NVQ.title" = "帮助";
+
+/* Virtual Intel Mac Help */
+"FKE-Sm-Kum.title" = "Virtual Intel Mac 帮助";

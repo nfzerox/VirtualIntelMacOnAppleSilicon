@@ -1,3 +1,4 @@
+#import "VIMLocalization.h"
 #import "VIMLibraryLocation.h"
 #import "VIMAlerts.h"
 #include <sys/file.h>
@@ -35,7 +36,7 @@ static BOOL PrepareRoot(NSURL *root,NSURL *previousRoot,NSError **error) {
     int lock=open([root URLByAppendingPathComponent:@".LibraryLayout.lock"].fileSystemRepresentation,O_CREAT|O_RDWR|O_NOFOLLOW|O_CLOEXEC,0600);
     struct stat info;
     if(lock<0||fstat(lock,&info)||!S_ISREG(info.st_mode)||info.st_nlink!=1||flock(lock,LOCK_EX|LOCK_NB)) {
-        if(lock>=0)close(lock);return LocationError(error,EBUSY,@"Another copy of Virtual Intel Mac is organizing this library. Try again after it finishes.");
+        if(lock>=0)close(lock);return LocationError(error,EBUSY,VIMLocalized(@"librarylocation.another-copy-of-virtual-intel-mac-is-organizing-this-library", @"Another copy of Virtual Intel Mac is organizing this library. Try again after it finishes."));
     }
     NSMutableArray<NSNumber *> *locks=[NSMutableArray new];
     BOOL (^finish)(BOOL)=^BOOL(BOOL result){for(NSNumber *fd in locks)close(fd.intValue);close(lock);return result;};
@@ -45,14 +46,14 @@ static BOOL PrepareRoot(NSURL *root,NSURL *previousRoot,NSError **error) {
     NSDictionary *job=[NSUserDefaults.standardUserDefaults dictionaryForKey:@"VIMCreationJob"];
     NSString *jobLibrary=job[@"Library"];
     if(jobLibrary.length&&[[VIMLibraryLocation rootURLForLibrary:[NSURL fileURLWithPath:jobLibrary]].path isEqual:root.path]&&[@[@"downloading",@"preparing",@"creating",@"stopping"] containsObject:job[@"Phase"]])
-        return finish(LocationError(error,EBUSY,@"The library will be organized after the current Mac finishes being created."));
+        return finish(LocationError(error,EBUSY,VIMLocalized(@"librarylocation.the-library-will-be-organized-after-the-current-mac-finishes", @"The library will be organized after the current Mac finishes being created.")));
     NSURL *machines=[root URLByAppendingPathComponent:@"Machines" isDirectory:YES];
     NSURL *journal=[root URLByAppendingPathComponent:@".LibraryLayoutMigration.plist"];
     NSDictionary *record=[NSDictionary dictionaryWithContentsOfURL:journal];
     if(record&&(![record[@"FormatVersion"] isEqual:@1]||![record[@"Legacy"] isEqual:previousRoot.path]||![record[@"Moves"] isKindOfClass:NSDictionary.class]))
-        return finish(LocationError(error,1,@"The library’s layout record is unreadable. Its files have not been removed."));
+        return finish(LocationError(error,1,VIMLocalized(@"librarylocation.the-library-s-layout-record-is-unreadable-its-files-have", @"The library’s layout record is unreadable. Its files have not been removed.")));
     NSMutableDictionary *moves=record?[[record objectForKey:@"Moves"] mutableCopy]:[NSMutableDictionary new];
-    if(!moves)return finish(LocationError(error,1,@"The library’s layout record is unreadable. Its files have not been removed."));
+    if(!moves)return finish(LocationError(error,1,VIMLocalized(@"librarylocation.the-library-s-layout-record-is-unreadable-its-files-have", @"The library’s layout record is unreadable. Its files have not been removed.")));
     if(!record) {
         // A legacy (pre-Layout2) root keeps .vintelmac packages loose at its top
         // level; an already-organized Layout2 root keeps them under Machines/.
@@ -84,16 +85,16 @@ static BOOL PrepareRoot(NSURL *root,NSURL *previousRoot,NSError **error) {
     }
     // Longest prefix first is not sufficient for physical moves: move nested
     // Preparation before its old Downloads parent. Persist the exact plan.
-    for(id old in moves)if(![old isKindOfClass:NSString.class]||![moves[old] isKindOfClass:NSString.class])return finish(LocationError(error,1,@"The library’s layout record is invalid."));
+    for(id old in moves)if(![old isKindOfClass:NSString.class]||![moves[old] isKindOfClass:NSString.class])return finish(LocationError(error,1,VIMLocalized(@"librarylocation.the-library-s-layout-record-is-invalid", @"The library’s layout record is invalid.")));
     NSArray *order=[moves.allKeys sortedArrayUsingComparator:^NSComparisonResult(NSString *a,NSString *b){return a.length>b.length?NSOrderedAscending:(a.length<b.length?NSOrderedDescending:[a compare:b]);}];
     NSMutableSet *packages=[NSMutableSet new];
     for(NSString *old in order) {
         NSString *new=moves[old];
         if(![old isAbsolutePath]||![new isAbsolutePath]||![old hasPrefix:[previousRoot.path stringByAppendingString:@"/"]]||![new hasPrefix:[root.path stringByAppendingString:@"/"]])
-            return finish(LocationError(error,1,@"The library’s layout record contains an unexpected location."));
+            return finish(LocationError(error,1,VIMLocalized(@"librarylocation.the-library-s-layout-record-contains-an-unexpected-location", @"The library’s layout record contains an unexpected location.")));
         BOOL original=[fm fileExistsAtPath:old],destination=[fm fileExistsAtPath:new];
-        if(original&&destination)return finish(LocationError(error,1,@"Two library items have the same name. Nothing will be overwritten. Rename the duplicate and try again."));
-        if(!original&&!destination)return finish(LocationError(error,1,@"A library item is missing. Reconnect its drive before trying again."));
+        if(original&&destination)return finish(LocationError(error,1,VIMLocalized(@"librarylocation.two-library-items-have-the-same-name-nothing-will-be", @"Two library items have the same name. Nothing will be overwritten. Rename the duplicate and try again.")));
+        if(!original&&!destination)return finish(LocationError(error,1,VIMLocalized(@"librarylocation.a-library-item-is-missing-reconnect-its-drive-before-trying", @"A library item is missing. Reconnect its drive before trying again.")));
         if([old.pathExtension isEqual:@"vintelmac"])[packages addObject:original?old:new];
     }
     for(NSURL *item in [fm contentsOfDirectoryAtURL:machines includingPropertiesForKeys:nil options:0 error:nil]?:@[])
@@ -101,11 +102,11 @@ static BOOL PrepareRoot(NSURL *root,NSURL *previousRoot,NSError **error) {
     for(NSString *package in packages) {
             int fd=open([[package stringByAppendingPathComponent:@"State"] stringByAppendingPathComponent:@"Session.lock"].fileSystemRepresentation,O_CREAT|O_RDWR|O_NOFOLLOW|O_CLOEXEC,0600);
             if(fd<0||fstat(fd,&info)||!S_ISREG(info.st_mode)||info.st_nlink!=1||flock(fd,LOCK_EX|LOCK_NB)) {
-                if(fd>=0)close(fd);return finish(LocationError(error,EBUSY,@"The library will be organized after all its virtual Macs have shut down."));
+                if(fd>=0)close(fd);return finish(LocationError(error,EBUSY,VIMLocalized(@"librarylocation.the-library-will-be-organized-after-all-its-virtual-macs", @"The library will be organized after all its virtual Macs have shut down.")));
             }
             [locks addObject:@(fd)];
             fd=open([package stringByAppendingPathComponent:@"State/Configuration.lock"].fileSystemRepresentation,O_CREAT|O_RDWR|O_NOFOLLOW|O_CLOEXEC,0600);
-            if(fd<0||fstat(fd,&info)||!S_ISREG(info.st_mode)||info.st_nlink!=1||flock(fd,LOCK_EX|LOCK_NB)){if(fd>=0)close(fd);return finish(LocationError(error,EBUSY,@"Wait for this Mac’s settings to finish saving, then try again."));}
+            if(fd<0||fstat(fd,&info)||!S_ISREG(info.st_mode)||info.st_nlink!=1||flock(fd,LOCK_EX|LOCK_NB)){if(fd>=0)close(fd);return finish(LocationError(error,EBUSY,VIMLocalized(@"librarylocation.wait-for-this-mac-s-settings-to-finish-saving-then", @"Wait for this Mac’s settings to finish saving, then try again.")));}
             [locks addObject:@(fd)];
     }
     if(!WriteLocationPlist(@{@"FormatVersion":@1,@"Legacy":previousRoot.path,@"Moves":moves},journal,error))return finish(NO);
@@ -222,7 +223,7 @@ static BOOL PrepareRoot(NSURL *root,NSURL *previousRoot,NSError **error) {
     NSNumber *directory = nil;
     if (!URL.isFileURL || ![URL getResourceValue:&directory forKey:NSURLIsDirectoryKey error:error] || !directory.boolValue) {
         if (error && !*error) *error = [NSError errorWithDomain:@"VirtualIntelMac.Library" code:1
-            userInfo:@{NSLocalizedDescriptionKey:@"Choose an existing folder for your Macs."}];
+            userInfo:@{NSLocalizedDescriptionKey:VIMLocalized(@"librarylocation.choose-an-existing-folder-for-your-macs", @"Choose an existing folder for your Macs.")}];
         return NO;
     }
     URL=[self rootURLForLibrary:URL];
@@ -242,8 +243,8 @@ static BOOL PrepareRoot(NSURL *root,NSURL *previousRoot,NSError **error) {
     NSOpenPanel *panel = [NSOpenPanel openPanel];
     panel.canChooseDirectories = YES; panel.canChooseFiles = NO; panel.canCreateDirectories = YES;
     panel.allowsMultipleSelection = NO; panel.directoryURL = self.rootURL;
-    panel.prompt = @"Use This Folder";
-    panel.message = @"This folder will contain Machines, Downloads and Installers. An external drive can save space on this Mac. Macs in other libraries stay where they are.";
+    panel.prompt = VIMLocalized(@"librarylocation.use-this-folder", @"Use This Folder");
+    panel.message = VIMLocalized(@"librarylocation.this-folder-will-contain-machines-downloads-and-installers-an-external", @"This folder will contain Machines, Downloads and Installers. An external drive can save space on this Mac. Macs in other libraries stay where they are.");
     void (^selected)(NSModalResponse) = ^(NSModalResponse response) {
         if (response != NSModalResponseOK) { completion(NO); return; }
         NSError *error = nil;
