@@ -48,6 +48,20 @@ static BOOL VIMRegionalInvalidResult(NSError **error) {
         NSLocalizedDescriptionKey:VIMLocalized(@"regional.invalid-request", @"Choose a valid language, region and time zone."),NSUnderlyingErrorKey:failure}];
     return normalized;
 }
++ (NSDictionary *)defaultRequestInPreferences:(NSUserDefaults *)preferences error:(NSError **)error {
+    if(error)*error=nil;
+    id saved=[preferences objectForKey:@"VIMNewMachineRegionalSettings"];
+    if(!saved)return nil;
+    NSDictionary *request=[self normalizeRequest:saved error:error];if(!request)return nil;
+    // Follow-host is a policy, not the snapshot taken when preferences were saved.
+    return [request[@"Source"] isEqual:@"host"]?[self hostSnapshotWithError:error]:request;
+}
++ (BOOL)saveDefaultRequest:(NSDictionary *)request preferences:(NSUserDefaults *)preferences error:(NSError **)error {
+    if(error)*error=nil;
+    if(!request){[preferences removeObjectForKey:@"VIMNewMachineRegionalSettings"];return YES;}
+    NSDictionary *normalized=[self normalizeRequest:request error:error];if(!normalized)return NO;
+    [preferences setObject:normalized forKey:@"VIMNewMachineRegionalSettings"];return YES;
+}
 + (NSDictionary *)hostSnapshotWithError:(NSError **)error {
     NSArray *languages=CFBridgingRelease(CFPreferencesCopyValue(CFSTR("AppleLanguages"),kCFPreferencesAnyApplication,kCFPreferencesCurrentUser,kCFPreferencesAnyHost));
     NSString *locale=CFBridgingRelease(CFPreferencesCopyValue(CFSTR("AppleLocale"),kCFPreferencesAnyApplication,kCFPreferencesCurrentUser,kCFPreferencesAnyHost));

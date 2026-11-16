@@ -8,16 +8,52 @@
 #import "VIMAutomaticSetup.h"
 #import "VIMQMPConnection.h"
 #import "VIMNewMachineWindow.h"
+#import "AppDelegate.h"
+
+@interface VIMRegionalSettings (DefaultsTests)
++ (NSDictionary *)defaultRequestInPreferences:(NSUserDefaults *)preferences error:(NSError **)error;
++ (BOOL)saveDefaultRequest:(NSDictionary *)request preferences:(NSUserDefaults *)preferences error:(NSError **)error;
+@end
+@interface VIMRegionalSettingsView (ModeTests)
+- (NSInteger)configurationMode;
+- (void)setConfigurationMode:(NSInteger)mode;
+- (void)controlTextDidEndEditing:(NSNotification *)notification;
+@end
+@interface AppDelegate (RegionalDefaultsTests)
+- (NSView *)regionalDefaultsSection;
+- (void)reloadRegionalDefaults:(id)sender;
+- (void)regionalDefaultsModeChanged:(NSPopUpButton *)sender;
+- (BOOL)windowShouldClose:(NSWindow *)window;
+- (void)windowDidResignKey:(NSNotification *)notification;
+@end
 
 @interface VIMNewMachineWindow (RegionalOptionsTests)
 - (NSStackView *)automaticSetupSection;
 - (void)finishAutomaticOptions:(NSButton *)sender;
+- (void)restoreRegionalDefaults;
+- (void)resetConfigurationUnlessResuming;
+- (void)automaticSetupChanged:(id)sender;
+- (BOOL)regionalAutomaticSetupRequired;
+- (void)resolveRegionalAutomaticSetup:(NSModalResponse)response;
+- (void)beginSetup:(id)sender;
+@end
+@interface RegionalCreationProbe : VIMNewMachineWindow
+@property NSUInteger beginCount;
+@end
+@implementation RegionalCreationProbe
+- (void)beginSetup:(id)sender { self.beginCount++; }
 @end
 @interface RegionalOptionsParent : NSWindow
 @property BOOL acceptedOptions;
+@property NSWindow *openedSheet;
+@property(copy) void (^sheetCompletion)(NSModalResponse);
 @end
 @implementation RegionalOptionsParent
-- (void)endSheet:(NSWindow *)sheet returnCode:(NSModalResponse)response { self.acceptedOptions=response==NSModalResponseOK; }
+- (void)beginSheet:(NSWindow *)sheet completionHandler:(void (^)(NSModalResponse))completion { self.openedSheet=sheet;self.sheetCompletion=completion; }
+- (void)endSheet:(NSWindow *)sheet returnCode:(NSModalResponse)response {
+    self.acceptedOptions=response==NSModalResponseOK;
+    void (^completion)(NSModalResponse)=self.sheetCompletion;self.sheetCompletion=nil;self.openedSheet=nil;if(completion)completion(response);
+}
 @end
 
 @interface VIMModernSetup (RegionalTests)
@@ -77,6 +113,145 @@ static VIMMachine *Fixture(NSURL *root, NSString *guest) {
     Check(machine!=nil, error.localizedDescription?:@"Cannot load fixture"); return machine;
 }
 
+static void DefaultPolicyTests(NSDictionary *regional) {
+    Check([VIMRegionalSettings respondsToSelector:@selector(defaultRequestInPreferences:error:)],@"New-machine regional defaults are not implemented");
+    NSString *suite=[@"com.virtualintelmac.regional-tests." stringByAppendingString:NSUUID.UUID.UUIDString];
+    NSUserDefaults *preferences=[[NSUserDefaults alloc] initWithSuiteName:suite];NSError *error=nil;
+    @try {
+        Check(![VIMRegionalSettings defaultRequestInPreferences:preferences error:&error]&&!error,@"A fresh preference store enabled the experiment");
+        [preferences setObject:@"preserve" forKey:@"UnrelatedPreference"];
+        Check([VIMRegionalSettings saveDefaultRequest:regional preferences:preferences error:&error],@"Cannot save custom regional defaults");
+        Check([[VIMRegionalSettings defaultRequestInPreferences:[[NSUserDefaults alloc] initWithSuiteName:suite] error:NULL] isEqual:regional],@"Custom defaults were lost on preference reload");
+        NSDictionary *before=[preferences persistentDomainForName:suite];
+        Check(![VIMRegionalSettings saveDefaultRequest:@{@"invalid":@YES} preferences:preferences error:&error]&&error,@"Invalid defaults were accepted");
+        Check([[preferences persistentDomainForName:suite] isEqual:before],@"Invalid defaults replaced a valid policy");
+        NSMutableDictionary *host=[regional mutableCopy];host[@"Source"]=@"host";
+        Check([VIMRegionalSettings saveDefaultRequest:host preferences:preferences error:NULL],@"Cannot save follow-host defaults");
+        Check([[VIMRegionalSettings defaultRequestInPreferences:preferences error:NULL] isEqual:[VIMRegionalSettings hostSnapshotWithError:NULL]],@"Follow-host defaults reused a stale snapshot");
+        Check([VIMRegionalSettings saveDefaultRequest:nil preferences:preferences error:&error]&&!error&&![VIMRegionalSettings defaultRequestInPreferences:preferences error:NULL],@"Disabling defaults did not remove the policy");
+        Check([[preferences stringForKey:@"UnrelatedPreference"] isEqual:@"preserve"],@"Saving defaults changed unrelated preferences");
+        [preferences setObject:@"damaged" forKey:@"VIMNewMachineRegionalSettings"];
+        Check(![VIMRegionalSettings defaultRequestInPreferences:preferences error:&error]&&error,@"Damaged defaults were silently treated as disabled");
+        [VIMRegionalSettings saveDefaultRequest:regional preferences:preferences error:NULL];
+
+        RegionalCreationProbe *creation=[[RegionalCreationProbe alloc] initWithWindow:nil];
+        [creation setValue:preferences forKey:@"regionalPreferences"];
+        [creation setValue:[NSTextField wrappingLabelWithString:@""] forKey:@"regionalNotice"];
+        [creation automaticSetupSection];
+        VIMRegionalSettingsView *editor=[creation valueForKey:@"regionalView"];
+        Check([[editor requestWithError:NULL] isEqual:regional],@"New creation did not automatically inherit and enable custom defaults");
+        Check(![[creation valueForKey:@"regionalNotice"] isHidden]&&[[[creation valueForKey:@"regionalNotice"] stringValue] length]>0,@"Active defaults were hidden on the creation page");
+        Check(![creation regionalAutomaticSetupRequired],@"Enabled Automatic Setup incorrectly requires confirmation");
+        [(NSSwitch *)[creation valueForKey:@"automaticSwitch"] setState:NSControlStateValueOff];[creation automaticSetupChanged:nil];
+        Check([creation regionalAutomaticSetupRequired],@"Turning off Automatic Setup silently drops regional intent");
+        [creation resolveRegionalAutomaticSetup:NSAlertThirdButtonReturn];
+        Check(creation.beginCount==0&&[editor configurationMode]==2,@"Cancelling the conflict changed regional intent or started creation");
+        [creation resolveRegionalAutomaticSetup:NSAlertFirstButtonReturn];
+        Check([[creation valueForKey:@"automaticSwitch"] state]==NSControlStateValueOn&&[editor configurationMode]==2&&creation.beginCount==0,@"Enable action failed to restore Automatic Setup while preserving regional intent");
+        [(NSSwitch *)[creation valueForKey:@"automaticSwitch"] setState:NSControlStateValueOff];[creation automaticSetupChanged:nil];
+        [creation resolveRegionalAutomaticSetup:NSAlertSecondButtonReturn];
+        Check(creation.beginCount==1&&[editor configurationMode]==0&&![creation regionalAutomaticSetupRequired],@"Explicit skip did not continue without a regional request");
+        Check([[VIMRegionalSettings defaultRequestInPreferences:preferences error:NULL] isEqual:regional],@"Per-machine skip changed software defaults");
+        [creation restoreRegionalDefaults];Check(![editor requestWithError:NULL],@"Disabled parent unexpectedly produced a request");
+        [creation setValue:@{@"Guest":@"tiger",@"AutomaticSetup":@{}} forKey:@"job"];
+        [editor restoreRequest:nil];editor.frozen=YES;[creation restoreRegionalDefaults];
+        Check([editor configurationMode]==0,@"Software defaults modified a resumed task without regional intent");
+        [creation setValue:@{@"Guest":@"tiger",@"AutomaticSetup":@{@"Enabled":@YES,@"RegionalSettings":regional}} forKey:@"job"];
+        [editor restoreRequest:regional];
+        [VIMRegionalSettings saveDefaultRequest:nil preferences:preferences error:NULL];[creation restoreRegionalDefaults];
+        Check([editor configurationMode]==2,@"Changing software defaults modified frozen regional intent");
+        [editor setConfigurationMode:0];Check([editor configurationMode]==2,@"A frozen task accepted a new regional mode");
+        [VIMRegionalSettings saveDefaultRequest:regional preferences:preferences error:NULL];
+        NSPopUpButton *guest=[NSPopUpButton new];[guest addItemsWithTitles:@[@"Tiger",@"Leopard"]];[guest selectItemAtIndex:1];[creation setValue:guest forKey:@"system"];
+        [creation restoreRegionalDefaults];
+        Check(!editor.frozen&&[editor configurationMode]==2,@"Starting a different guest reused the old task instead of new-machine defaults");
+        [(NSSwitch *)[creation valueForKey:@"automaticSwitch"] setState:NSControlStateValueOff];[creation automaticSetupChanged:nil];
+        Check([creation regionalAutomaticSetupRequired],@"An unrelated saved task suppressed the new guest's conflict confirmation");
+        [creation setValue:@{@"Guest":@"tiger"} forKey:@"job"];
+        [creation resetConfigurationUnlessResuming];
+        [guest selectItemAtIndex:0];[creation resetConfigurationUnlessResuming];
+        Check([[creation valueForKey:@"automaticSwitch"] state]==NSControlStateValueOff&&editor.frozen&&[editor configurationMode]==0,@"Returning to a saved manual guest inherited automatic and regional settings from another guest");
+        [creation setValue:@{@"Guest":@"tiger",@"AutomaticSetup":@{@"Enabled":@YES,@"RegionalSettings":regional}} forKey:@"job"];
+        NSTextField *visiblePassword=[creation valueForKey:@"visibleGuestPassword"];visiblePassword.stringValue=@"temporary-other-guest";visiblePassword.hidden=NO;
+        [creation resetConfigurationUnlessResuming];
+        Check(visiblePassword.hidden&&[visiblePassword.stringValue isEqual:[[creation valueForKey:@"guestPassword"] stringValue]],@"Returning to a saved task retained another guest's visible password");
+        [VIMRegionalSettings saveDefaultRequest:nil preferences:preferences error:NULL];
+
+        AppDelegate *app=[AppDelegate new];[app setValue:preferences forKey:@"regionalPreferences"];
+        RegionalOptionsParent *parent=[[RegionalOptionsParent alloc] initWithContentRect:NSMakeRect(0,0,640,330) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+        [app setValue:parent forKey:@"settingsWindow"];
+        Check([app respondsToSelector:@selector(regionalDefaultsSection)],@"Regional defaults must be editable directly in the settings page");
+        NSView *section=[app regionalDefaultsSection];
+        [section.widthAnchor constraintEqualToConstant:576].active=YES;
+        [parent.contentView addSubview:section];section.frame=NSMakeRect(0,0,576,section.fittingSize.height);
+        VIMRegionalSettingsView *defaultsEditor=[app valueForKey:@"regionalDefaultsView"];
+        NSPopUpButton *mode=[app valueForKey:@"regionalDefaultsMode"];
+        Check(mode.numberOfItems==3&&mode.indexOfSelectedItem==0,@"Software settings did not offer disabled/follow-host/custom modes");
+        Check([mode isDescendantOf:section]&&[defaultsEditor isDescendantOf:section]&&parent.openedSheet==nil,@"Regional controls opened a second-level settings sheet");
+        Check(defaultsEditor.hidden,@"Disabled defaults unnecessarily display custom editors");
+        NSTextField *otherField=[NSTextField textFieldWithString:@"unrelated input"];otherField.frame=NSMakeRect(0,300,150,22);[parent.contentView addSubview:otherField];
+        [parent makeFirstResponder:otherField];NSResponder *otherEditor=parent.firstResponder;
+        Check(![defaultsEditor requestWithError:NULL]&&parent.firstResponder==otherEditor,@"Reading disabled regional settings unexpectedly ended another field's editing");
+        [parent makeFirstResponder:nil];[otherField removeFromSuperview];
+        CGFloat compactHeight=section.fittingSize.height;
+        [defaultsEditor restoreRequest:regional];[mode selectItemAtIndex:2];[app regionalDefaultsModeChanged:mode];
+        Check(!defaultsEditor.hidden,@"Custom mode did not reveal its editors inline");
+        Check([[VIMRegionalSettings defaultRequestInPreferences:preferences error:NULL] isEqual:regional],@"Selecting custom defaults did not save immediately");
+        fprintf(stderr,"Inline regional defaults fitting height: %.0f collapsed, %.0f custom\n",compactHeight,section.fittingSize.height);
+        [app reloadRegionalDefaults:nil];
+        Check(mode.indexOfSelectedItem==2&&[[defaultsEditor requestWithError:NULL] isEqual:regional],@"Reopening settings lost automatically saved changes");
+        NSComboBox *zone=[defaultsEditor valueForKey:@"zone"];
+        zone.stringValue=@"Europe/London";
+        NSTokenField *languages=[defaultsEditor valueForKey:@"language"];
+        [parent makeFirstResponder:languages];NSResponder *activeEditor=parent.firstResponder;
+        [defaultsEditor controlTextDidEndEditing:[NSNotification notificationWithName:NSControlTextDidEndEditingNotification object:zone]];
+        Check([[[VIMRegionalSettings defaultRequestInPreferences:preferences error:NULL] objectForKey:@"TimeZoneIdentifier"] isEqual:@"Europe/London"]&&parent.firstResponder==activeEditor,@"Committing a field did not save without stealing focus");
+        [parent makeFirstResponder:nil];
+        languages.objectValue=@[@"de",@"en"];
+        [languages sendAction:languages.action to:languages.target];
+        Check([[[VIMRegionalSettings defaultRequestInPreferences:preferences error:NULL] objectForKey:@"PreferredLanguages"] isEqual:@[@"de",@"en"]],@"Committing language tokens did not save their order");
+        NSButton *fallback=[defaultsEditor valueForKey:@"allowFallback"];[fallback performClick:nil];
+        Check([[[VIMRegionalSettings defaultRequestInPreferences:preferences error:NULL] objectForKey:@"UnsupportedPolicy"] isEqual:@"strict"],@"Changing fallback policy did not save immediately");
+        NSDictionary *lastSaved=[VIMRegionalSettings defaultRequestInPreferences:preferences error:NULL];
+        zone.stringValue=@"../../invalid";
+        NSString *helpBefore=[[app valueForKey:@"regionalDefaultsHelp"] stringValue];
+        [defaultsEditor controlTextDidEndEditing:[NSNotification notificationWithName:NSControlTextDidEndEditingNotification object:zone]];
+        Check(parent.openedSheet==nil&&[[VIMRegionalSettings defaultRequestInPreferences:preferences error:NULL] isEqual:lastSaved]&&![[[app valueForKey:@"regionalDefaultsHelp"] stringValue] isEqual:helpBefore],@"Invalid edits must stay unsaved and preserve the last valid policy");
+        zone.stringValue=@"Europe/Paris";
+        [defaultsEditor controlTextDidEndEditing:[NSNotification notificationWithName:NSControlTextDidEndEditingNotification object:zone]];
+        Check([[[VIMRegionalSettings defaultRequestInPreferences:preferences error:NULL] objectForKey:@"TimeZoneIdentifier"] isEqual:@"Europe/Paris"],@"Correcting invalid input did not resume automatic saving");
+        [parent makeFirstResponder:zone];
+        NSText *fieldEditor=zone.currentEditor;
+        Check(fieldEditor!=nil,@"Cannot exercise pending field-editor text");fieldEditor.string=@"America/Chicago";
+        Check([app windowShouldClose:parent]&&[[[VIMRegionalSettings defaultRequestInPreferences:preferences error:NULL] objectForKey:@"TimeZoneIdentifier"] isEqual:@"America/Chicago"],@"Closing settings lost the pending text edit");
+        [zone selectItemAtIndex:[zone indexOfItemWithObjectValue:@"Europe/Paris"]];
+        [zone.delegate comboBoxSelectionDidChange:[NSNotification notificationWithName:NSComboBoxSelectionDidChangeNotification object:zone]];
+        [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+        Check([[[VIMRegionalSettings defaultRequestInPreferences:preferences error:NULL] objectForKey:@"TimeZoneIdentifier"] isEqual:@"Europe/Paris"],@"Selecting a timezone did not save after the combo updated its text");
+        [languages.delegate tokenField:languages shouldAddObjects:@[@"fr"] atIndex:0];languages.objectValue=@[@"fr",@"en"];
+        [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+        Check([[[VIMRegionalSettings defaultRequestInPreferences:preferences error:NULL] objectForKey:@"PreferredLanguages"] isEqual:@[@"fr",@"en"]],@"Adding a language token saved before its new value was committed");
+        [parent makeFirstResponder:languages];NSText *tokenEditor=languages.currentEditor;
+        Check(tokenEditor!=nil,@"Cannot exercise pending language text");tokenEditor.string=@"ja";
+        Check([app windowShouldClose:parent]&&[[[VIMRegionalSettings defaultRequestInPreferences:preferences error:NULL] objectForKey:@"PreferredLanguages"] isEqual:@[@"ja"]],@"Closing settings lost the final uncommitted language token");
+        [parent makeFirstResponder:zone];fieldEditor=zone.currentEditor;
+        Check(fieldEditor!=nil,@"Cannot exercise pending edit before switching windows");fieldEditor.string=@"Europe/Rome";
+        Check([app respondsToSelector:@selector(windowDidResignKey:)],@"Switching away from Settings must commit pending edits before creating a new Mac");
+        [app windowDidResignKey:[NSNotification notificationWithName:NSWindowDidResignKeyNotification object:parent]];
+        Check([[[VIMRegionalSettings defaultRequestInPreferences:preferences error:NULL] objectForKey:@"TimeZoneIdentifier"] isEqual:@"Europe/Rome"],@"Switching windows left a newer default unapplied");
+        [mode selectItemAtIndex:1];[app regionalDefaultsModeChanged:mode];
+        Check([[[VIMRegionalSettings defaultRequestInPreferences:preferences error:NULL] objectForKey:@"Source"] isEqual:@"host"],@"Follow-host mode did not save an active policy");
+        Check(defaultsEditor.hidden,@"Follow-host mode unnecessarily shows stale custom fields");
+        [mode selectItemAtIndex:0];[app regionalDefaultsModeChanged:mode];
+        Check(![VIMRegionalSettings defaultRequestInPreferences:preferences error:NULL],@"Off mode did not disable defaults");
+        [mode selectItemAtIndex:2];[app regionalDefaultsModeChanged:mode];
+        [languages.delegate tokenField:languages shouldAddObjects:@[@"de"] atIndex:0];languages.objectValue=@[@"de"];
+        [preferences setObject:@"damaged" forKey:@"VIMNewMachineRegionalSettings"];[app reloadRegionalDefaults:nil];
+        [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+        Check([[preferences objectForKey:@"VIMNewMachineRegionalSettings"] isEqual:@"damaged"],@"Programmatic reload unexpectedly saved or discarded damaged preferences");
+    } @finally { [preferences removePersistentDomainForName:suite]; }
+}
+
 int main(void) { @autoreleasepool {
     [NSApplication sharedApplication];
     NSFileManager *fm=NSFileManager.defaultManager;
@@ -84,6 +259,7 @@ int main(void) { @autoreleasepool {
     Check([fm createDirectoryAtURL:root withIntermediateDirectories:YES attributes:nil error:NULL], @"Cannot create test directory");
     @try {
         NSDictionary *regional=@{@"FormatVersion":@1,@"Source":@"custom",@"PreferredLanguages":@[@"vi-VN",@"en-GB"],@"RegionCode":@"VN",@"TimeZoneIdentifier":@"Asia/Ho_Chi_Minh",@"UnsupportedPolicy":@"fallback"};
+        DefaultPolicyTests(regional);
         VIMRegionalSettingsView *optional=[[VIMRegionalSettingsView alloc] initWithRequest:nil];NSError *optionalError=nil;
         Check(![optional requestWithError:&optionalError]&&!optionalError,@"Experimental regional settings must be disabled by default without producing a request or validation error");
         NSButton *experimental=[optional valueForKey:@"experimental"];
@@ -107,6 +283,7 @@ int main(void) { @autoreleasepool {
         Check(![optional requestWithError:NULL]&&!experimental.enabled,@"Turning off automatic setup must also suppress the experimental request");
         RegionalOptionsParent *optionsParent=[[RegionalOptionsParent alloc] initWithContentRect:NSMakeRect(0,0,480,600) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
         VIMNewMachineWindow *options=[[VIMNewMachineWindow alloc] initWithWindow:optionsParent];
+        [options setValue:[[NSUserDefaults alloc] initWithSuiteName:[@"com.virtualintelmac.empty-tests." stringByAppendingString:NSUUID.UUID.UUIDString]] forKey:@"regionalPreferences"];
         NSStackView *advanced=[options automaticSetupSection];
         [advanced.widthAnchor constraintEqualToConstant:432].active=YES;
         VIMRegionalSettingsView *advancedRegional=[options valueForKey:@"regionalView"];

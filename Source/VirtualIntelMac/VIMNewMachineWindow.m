@@ -1,5 +1,6 @@
 #import "VIMLocalization.h"
 #import "VIMRegionalSettingsView.h"
+#import "VIMRegionalSettings.h"
 #import "VIMNewMachineWindow.h"
 #import "VIMMachine.h"
 #import "VIMLibraryLocation.h"
@@ -244,6 +245,10 @@ static NSURL *InstallerDownloadDirectory(NSURL *source,NSString *library) {
 @property NSArray<NSNumber *> *automaticDraft;
 @property NSDictionary *regionalDraft;
 @property VIMRegionalSettingsView *regionalView;
+@property(nonatomic) NSUserDefaults *regionalPreferences;
+@property NSError *regionalDefaultsError;
+@property BOOL hasRegionalDefaults;
+@property NSTextField *regionalNotice;
 @property BOOL editingAutomaticOptions;
 @property NSSwitch *automaticSwitch;
 @property NSSwitch *automaticSharing;
@@ -257,6 +262,7 @@ static NSURL *InstallerDownloadDirectory(NSURL *source,NSString *library) {
 - (void)resetConfigurationUnlessResuming;
 @end
 @implementation VIMNewMachineWindow
+- (NSUserDefaults *)regionalPreferences {return _regionalPreferences?:NSUserDefaults.standardUserDefaults;}
 static VIMNewMachineWindow *creationController;
 + (BOOL)isCreating {return creationController.creating;}
 + (void)showConfigurationForGuest:(NSString *)guest {
@@ -379,11 +385,12 @@ static VIMNewMachineWindow *creationController;
         NSTextField *storage=AssistantText(VIMLocalized(@"creation.storage-size-can-t-be-changed-later-if-you-need", @"Storage size can’t be changed later. If you need additional storage in the future, set a larger size now."),12,NSFontWeightRegular);storage.textColor=NSColor.secondaryLabelColor;
         NSStackView *heading=[self headingWithTitle:self.systemTitle guest:@"mojave"];
         self.configurationIcon=(NSImageView *)heading.arrangedSubviews.firstObject;
-        NSStackView *stack=[NSStackView stackViewWithViews:@[heading,intro,form,storage]];
+        self.regionalNotice=AssistantText(@"",12,NSFontWeightRegular);self.regionalNotice.textColor=NSColor.secondaryLabelColor;self.regionalNotice.hidden=YES;
+        NSStackView *stack=[NSStackView stackViewWithViews:@[heading,intro,form,storage,self.regionalNotice]];
         self.configurationStack=stack;
         stack.orientation=NSUserInterfaceLayoutOrientationVertical;stack.alignment=NSLayoutAttributeLeading;stack.spacing=18;
         stack.translatesAutoresizingMaskIntoConstraints=NO;[window.contentView addSubview:stack];
-        for(NSView *text in @[heading,intro,storage])[text.widthAnchor constraintEqualToAnchor:stack.widthAnchor].active=YES;
+        for(NSView *text in @[heading,intro,storage,self.regionalNotice])[text.widthAnchor constraintEqualToAnchor:stack.widthAnchor].active=YES;
         self.configurationCenterY=[stack.centerYAnchor constraintEqualToAnchor:window.contentView.centerYAnchor constant:-25];
         [NSLayoutConstraint activateConstraints:@[[stack.leadingAnchor constraintEqualToAnchor:window.contentView.leadingAnchor constant:432],
             [stack.trailingAnchor constraintEqualToAnchor:window.contentView.trailingAnchor constant:-40],
@@ -403,18 +410,7 @@ static VIMNewMachineWindow *creationController;
             NSURL *library=libraryPath.isAbsolutePath?[NSURL fileURLWithPath:libraryPath]:VIMLibraryLocation.currentURL;
             self.diskField.integerValue=self.job[@"Disk"]?[self.job[@"Disk"] integerValue]:DefaultDiskGiB(library);
             self.cpuField.stringValue=[self.job[@"CPU"] stringValue]?:@"4";self.memoryField.stringValue=[self.job[@"Memory"] stringValue]?:@"4";
-            NSDictionary *setup=self.job[@"AutomaticSetup"];
-            if([setup isKindOfClass:NSDictionary.class]) {
-                self.automaticSwitch.state=[setup[@"Enabled"] boolValue]?NSControlStateValueOn:NSControlStateValueOff;
-                self.guestUsername.stringValue=setup[@"Username"]?:VIMAutomaticSetup.defaultUsername;
-                self.automaticSharing.state=[setup[@"FileSharing"] boolValue]?NSControlStateValueOn:NSControlStateValueOff;
-                self.automaticRemoteLogin.state=[setup[@"RemoteLogin"] boolValue]?NSControlStateValueOn:NSControlStateValueOff;
-                self.automaticLogin.state=[setup[@"AutomaticLogin"] boolValue]?NSControlStateValueOn:NSControlStateValueOff;
-                [self.regionalView restoreRequest:setup[@"RegionalSettings"]];
-                self.regionalView.frozen=YES;
-                self.guestPassword.stringValue=[VIMAutomaticSetup passwordForIdentifier:setup[@"CredentialIdentifier"] error:NULL]?:@"";
-                [self automaticSetupChanged:nil];
-            }
+            [self restoreSavedAutomaticSetup];
             [self systemChanged:nil];self.memorySlider.doubleValue=self.memoryField.doubleValue;self.cpuSlider.doubleValue=self.cpuField.doubleValue;
             self.createButton.title=VIMLocalized(@"creation.resume-setup", @"Resume Setup");
             self.overallProgress=[self.job[@"Progress"] doubleValue];
@@ -565,6 +561,9 @@ static VIMNewMachineWindow *creationController;
     options.orientation=NSUserInterfaceLayoutOrientationVertical;options.alignment=NSLayoutAttributeLeading;options.spacing=18;
     for(NSView *row in rows)[row.widthAnchor constraintEqualToAnchor:options.widthAnchor].active=YES;
     self.regionalView=[[VIMRegionalSettingsView alloc] initWithRequest:nil];
+    __weak typeof(self) weakSelf=self;
+    self.regionalView.onChange=^{[weakSelf updateRegionalNotice];};
+    [self restoreRegionalDefaults];
     NSBox *regionalDivider=[NSBox new];regionalDivider.boxType=NSBoxSeparator;
     NSStackView *section=[NSStackView stackViewWithViews:@[heading,explanation,divider,options,regionalDivider,self.regionalView]];
     section.orientation=NSUserInterfaceLayoutOrientationVertical;section.alignment=NSLayoutAttributeLeading;section.spacing=14;
@@ -574,6 +573,7 @@ static VIMNewMachineWindow *creationController;
 - (void)automaticSetupChanged:(id)sender {
     BOOL enabled=self.automaticSwitch.state==NSControlStateValueOn;
     self.regionalView.enabled=enabled;
+    [self updateRegionalNotice];
     for(NSControl *control in @[self.guestUsername,self.guestPassword,self.visibleGuestPassword,self.passwordVisibility,self.automaticSharing,self.automaticRemoteLogin,self.automaticLogin])control.enabled=enabled;
     if(!self.editingAutomaticOptions){
         NSString *guest=CreationGuests()[self.system.indexOfSelectedItem];
@@ -582,6 +582,61 @@ static VIMNewMachineWindow *creationController;
         // Collapse the rows and keep labels/editors in sync with the mode.
         for(NSUInteger row=1;row<=2;row++)for(NSUInteger column=0;column<2;column++)
             [self.hardwareForm cellAtColumnIndex:column rowIndex:row].contentView.hidden=!visible;
+    }
+}
+- (void)restoreSavedAutomaticSetup {
+    NSDictionary *setup=self.job[@"AutomaticSetup"];
+    self.regionalDefaultsError=nil;self.hasRegionalDefaults=NO;
+    if([setup isKindOfClass:NSDictionary.class]) {
+        self.automaticSwitch.state=[setup[@"Enabled"] boolValue]?NSControlStateValueOn:NSControlStateValueOff;
+        self.guestUsername.stringValue=setup[@"Username"]?:VIMAutomaticSetup.defaultUsername;
+        self.automaticSharing.state=[setup[@"FileSharing"] boolValue]?NSControlStateValueOn:NSControlStateValueOff;
+        self.automaticRemoteLogin.state=[setup[@"RemoteLogin"] boolValue]?NSControlStateValueOn:NSControlStateValueOff;
+        self.automaticLogin.state=[setup[@"AutomaticLogin"] boolValue]?NSControlStateValueOn:NSControlStateValueOff;
+        [self.regionalView restoreRequest:setup[@"RegionalSettings"]];
+        self.regionalView.frozen=YES;
+        self.guestPassword.stringValue=[VIMAutomaticSetup passwordForIdentifier:setup[@"CredentialIdentifier"] error:NULL]?:@"";
+        [self automaticSetupChanged:nil];
+    } else {
+        self.automaticSwitch.state=NSControlStateValueOff;
+        self.guestPassword.stringValue=@"";
+        [self.regionalView restoreRequest:nil];self.regionalView.frozen=YES;
+        [self automaticSetupChanged:nil];
+    }
+    self.visibleGuestPassword.stringValue=self.guestPassword.stringValue;
+    if(!self.visibleGuestPassword.hidden)[self toggleGuestPassword:nil];
+    self.automaticSwitch.enabled=NO;
+}
+- (void)restoreRegionalDefaults {
+    if([self isResumingSelectedGuest]){[self restoreSavedAutomaticSetup];return;}
+    NSError *error=nil;NSDictionary *request=[VIMRegionalSettings defaultRequestInPreferences:self.regionalPreferences error:&error];
+    self.regionalDefaultsError=error;self.hasRegionalDefaults=request!=nil||error!=nil;
+    self.regionalView.frozen=NO;[self.regionalView restoreRequest:request];[self updateRegionalNotice];
+}
+- (BOOL)isResumingSelectedGuest {return [self.job[@"Guest"] isEqual:CreationGuests()[self.system.indexOfSelectedItem]];}
+- (void)updateRegionalNotice {
+    VIMRegionalConfigurationMode mode=self.regionalView.configurationMode;
+    NSString *text=@"";
+    if(self.regionalDefaultsError)text=VIMLocalized(@"regional.defaults-invalid", @"The default regional settings could not be read. Review them in Settings.");
+    else if(mode!=VIMRegionalConfigurationOff&&self.automaticSwitch.state!=NSControlStateValueOn)
+        text=VIMLocalized(@"regional.creation-inactive", @"Language and region will not be applied while Automatic Setup is off.");
+    else if(mode==VIMRegionalConfigurationHost)text=VIMLocalized(@"regional.creation-host", @"Language and region: follow this Mac (Experimental)");
+    else if(mode==VIMRegionalConfigurationCustom)text=VIMLocalized(@"regional.creation-custom", @"Language and region: custom settings (Experimental)");
+    else if(self.hasRegionalDefaults)text=VIMLocalized(@"regional.creation-disabled", @"Language and region: disabled for this virtual Mac");
+    NSString *guest=CreationGuests()[self.system.indexOfSelectedItem];
+    self.regionalNotice.stringValue=text;
+    self.regionalNotice.hidden=!text.length||self.downloadOnly||![VIMAutomaticSetup supportsGuest:guest];
+}
+- (BOOL)regionalAutomaticSetupRequired {
+    NSString *guest=CreationGuests()[self.system.indexOfSelectedItem];
+    return ![self isResumingSelectedGuest]&&!self.downloadOnly&&[VIMAutomaticSetup supportsGuest:guest]&&
+        self.automaticSwitch.state!=NSControlStateValueOn&&self.regionalView.configurationMode!=VIMRegionalConfigurationOff;
+}
+- (void)resolveRegionalAutomaticSetup:(NSModalResponse)response {
+    if(response==NSAlertFirstButtonReturn) {
+        self.automaticSwitch.state=NSControlStateValueOn;[self automaticSetupChanged:nil];[self focusConfigurationEditor];
+    } else if(response==NSAlertSecondButtonReturn) {
+        self.regionalView.configurationMode=VIMRegionalConfigurationOff;[self automaticSetupChanged:nil];[self beginSetup:nil];
     }
 }
 - (void)showAutomaticOptions:(id)sender {
@@ -774,7 +829,8 @@ static VIMNewMachineWindow *creationController;
 }
 - (void)resetConfigurationUnlessResuming {
     NSUInteger index=(NSUInteger)self.system.indexOfSelectedItem;
-    if([self.job[@"Guest"] isEqual:CreationGuests()[index]])return;
+    if([self.job[@"Guest"] isEqual:CreationGuests()[index]]){[self restoreSavedAutomaticSetup];return;}
+    self.automaticSwitch.enabled=YES;
     self.nameField.stringValue=CreationNames()[index];
     self.cpuField.doubleValue=MIN(4,self.cpuSlider.maxValue);
     self.cpuSlider.doubleValue=self.cpuField.doubleValue;
@@ -784,7 +840,7 @@ static VIMNewMachineWindow *creationController;
     for(NSSwitch *control in @[self.automaticSwitch,self.automaticSharing,self.automaticRemoteLogin,self.automaticLogin])
         control.state=NSControlStateValueOn;
     self.regionalView.frozen=NO;self.regionalView.hidden=NO;
-    [self.regionalView restoreRequest:nil];
+    [self restoreRegionalDefaults];
     self.guestUsername.stringValue=VIMAutomaticSetup.defaultUsername;
     self.guestPassword.stringValue=@"";self.visibleGuestPassword.stringValue=@"";
     if(!self.visibleGuestPassword.hidden)[self toggleGuestPassword:nil];
@@ -900,6 +956,17 @@ static VIMNewMachineWindow *creationController;
     NSString *guest=CreationGuests()[self.system.indexOfSelectedItem];
     NSString *password=self.visibleGuestPassword.hidden?self.guestPassword.stringValue:self.visibleGuestPassword.stringValue;
     BOOL automatic=!self.downloadOnly&&[VIMAutomaticSetup supportsGuest:guest]&&self.automaticSwitch.state==NSControlStateValueOn;
+    if(!self.downloadOnly&&![self isResumingSelectedGuest]&&[VIMAutomaticSetup supportsGuest:guest]&&self.regionalDefaultsError) {
+        [self presentCreationError:VIMLocalized(@"regional.defaults-invalid", @"The default regional settings could not be read. Review them in Settings.")];return;
+    }
+    if([self regionalAutomaticSetupRequired]) {
+        NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"regional.automatic-required", @"Regional settings require Automatic Setup");
+        alert.informativeText=VIMLocalized(@"regional.automatic-required-detail", @"Automatic Setup is off, so the selected language, region and time zone cannot be applied. Enable Automatic Setup, or skip regional settings for this virtual Mac.");
+        [alert addButtonWithTitle:VIMLocalized(@"regional.enable-automatic", @"Enable Automatic Setup")];
+        [alert addButtonWithTitle:VIMLocalized(@"regional.skip-once", @"Skip Regional Settings This Time")];
+        [alert addButtonWithTitle:VIMLocalized(@"common.cancel", @"Cancel")];
+        __weak typeof(self) weakSelf=self;VIMPresentAlert(alert,self.window,^(NSModalResponse response){[weakSelf resolveRegionalAutomaticSetup:response];});return;
+    }
     if(automatic) {
         NSError *issue=nil;
         if(![VIMAutomaticSetup validateUsername:self.guestUsername.stringValue error:&issue]||![VIMAutomaticSetup validatePassword:password error:&issue]) {

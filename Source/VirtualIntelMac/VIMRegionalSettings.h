@@ -6,6 +6,8 @@ NS_ASSUME_NONNULL_BEGIN
 @interface VIMRegionalSettings : NSObject
 + (nullable NSDictionary *)hostSnapshotWithError:(NSError **)error;
 + (nullable NSDictionary *)normalizeRequest:(id)request error:(NSError **)error;
++ (nullable NSDictionary *)defaultRequestInPreferences:(NSUserDefaults *)preferences error:(NSError **)error;
++ (BOOL)saveDefaultRequest:(nullable NSDictionary *)request preferences:(NSUserDefaults *)preferences error:(NSError **)error;
 + (NSArray<NSDictionary<NSString *,NSString *> *> *)languageChoices;
 + (NSArray<NSDictionary<NSString *,NSString *> *> *)regionChoices;
 + (NSArray<NSDictionary<NSString *,NSString *> *> *)timeZoneChoices;

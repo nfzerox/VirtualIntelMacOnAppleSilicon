@@ -15,6 +15,8 @@
 #import "VIMDiskMaintenance.h"
 #import "VIMUSBClient.h"
 #import "VIMNetworkClient.h"
+#import "VIMRegionalSettings.h"
+#import "VIMRegionalSettingsView.h"
 #include <sys/sysctl.h>
 #include <errno.h>
 #include <stdint.h>
@@ -49,7 +51,7 @@
 }
 @end
 
-@interface AppDelegate ()
+@interface AppDelegate () <NSWindowDelegate>
 
 @property (strong) IBOutlet NSWindow *window;
 @property (strong) VIMUpdateChecker *updateChecker;
@@ -64,9 +66,17 @@
 @property BOOL quitConfirmationPending;
 @property BOOL quitApproved;
 @property VIMMenuController *menuController;
+@property(nonatomic) NSUserDefaults *regionalPreferences;
+@property NSTextField *regionalDefaultsStatus;
+@property NSStackView *regionalDefaultsContent;
+@property NSStackView *advancedSettingsContent;
+@property VIMRegionalSettingsView *regionalDefaultsView;
+@property NSPopUpButton *regionalDefaultsMode;
+@property NSTextField *regionalDefaultsHelp;
 @end
 
 @implementation AppDelegate
+- (NSUserDefaults *)regionalPreferences {return _regionalPreferences?:NSUserDefaults.standardUserDefaults;}
 
 - (BOOL)applicationShouldSaveSecureApplicationState:(NSApplication *)application {return NO;}
 - (BOOL)applicationShouldRestoreSecureApplicationState:(NSApplication *)application {return NO;}
@@ -250,6 +260,7 @@
 }
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+    [self.settingsWindow makeFirstResponder:nil];
     if([VIMDiskMaintenance hasActiveOperation])return NSTerminateCancel;
     if(self.quitConfirmationPending)return NSTerminateCancel;
     if(VIMNewMachineWindow.isCreating) {
@@ -294,7 +305,7 @@
 
 - (void)checkForUpdates:(id)sender { [self.updateChecker checkManually:YES]; }
 - (void)showInstallers:(id)sender { [VIMNewMachineWindow showWithInstaller:nil guest:nil]; }
-- (void)newMac:(id)sender { [VIMNewMachineWindow showWithInstaller:nil guest:nil]; }
+- (void)newMac:(id)sender { [self.settingsWindow makeFirstResponder:nil];[VIMNewMachineWindow showWithInstaller:nil guest:nil]; }
 - (void)showLibrary:(id)sender { [self.libraryController showLibrary]; }
 - (void)application:(NSApplication *)application openURLs:(NSArray<NSURL *> *)URLs {
     for(NSURL *URL in URLs) {
@@ -361,7 +372,7 @@
     if(!self.settingsWindow) {
         self.settingsWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,640,330)
             styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
-        self.settingsWindow.releasedWhenClosed=NO;self.settingsWindow.title=VIMLocalized(@"app.settings-2", @"Settings");
+        self.settingsWindow.releasedWhenClosed=NO;self.settingsWindow.delegate=self;self.settingsWindow.title=VIMLocalized(@"app.settings-2", @"Settings");
         self.settingsWindow.collectionBehavior=NSWindowCollectionBehaviorFullScreenNone;
         VIMSettingsTabs *tabs=[VIMSettingsTabs new];tabs.tabStyle=NSTabViewControllerTabStyleToolbar;
         NSViewController *general=[NSViewController new];general.view=[[VIMSettingsPage alloc] initWithFrame:NSMakeRect(0,0,640,330)];
@@ -397,7 +408,11 @@
         keep.state=[NSUserDefaults.standardUserDefaults boolForKey:@"VIMKeepInstallers"]?NSControlStateValueOn:NSControlStateValueOff;
         NSTextField *retention=[NSTextField wrappingLabelWithString:VIMLocalized(@"app.keep-the-finished-installer-app-and-disk-image-for-another", @"Keep the finished installer app and disk image for another virtual Mac. Temporary preparation files are always removed. Otherwise, the installer image is removed after the operating system is installed and graphics support is verified.")];
         retention.textColor=NSColor.secondaryLabelColor;
-        NSStackView *options=[NSStackView stackViewWithViews:@[keep,retention]];options.orientation=NSUserInterfaceLayoutOrientationVertical;options.alignment=NSLayoutAttributeLeading;options.spacing=8;options.translatesAutoresizingMaskIntoConstraints=NO;[advanced.view addSubview:options];
+        NSBox *regionalDivider=[NSBox new];regionalDivider.boxType=NSBoxSeparator;
+        NSView *regionalDefaults=[self regionalDefaultsSection];
+        NSStackView *options=[NSStackView stackViewWithViews:@[keep,retention,regionalDivider,regionalDefaults]];options.orientation=NSUserInterfaceLayoutOrientationVertical;options.alignment=NSLayoutAttributeLeading;options.spacing=8;options.translatesAutoresizingMaskIntoConstraints=NO;[advanced.view addSubview:options];
+        self.advancedSettingsContent=options;
+        for(NSView *view in @[retention,regionalDivider,regionalDefaults])[view.widthAnchor constraintEqualToAnchor:options.widthAnchor].active=YES;
         [NSLayoutConstraint activateConstraints:@[[options.leadingAnchor constraintEqualToAnchor:advanced.view.leadingAnchor constant:32],[options.trailingAnchor constraintEqualToAnchor:advanced.view.trailingAnchor constant:-32],[options.topAnchor constraintEqualToAnchor:advanced.view.topAnchor constant:28],[options.bottomAnchor constraintEqualToAnchor:advanced.view.bottomAnchor constant:-24],[advanced.view.widthAnchor constraintEqualToConstant:640]]];
         NSTabViewItem *advancedItem=[NSTabViewItem tabViewItemWithViewController:advanced];advancedItem.label=VIMLocalized(@"app.advanced", @"Advanced");advancedItem.image=[NSImage imageWithSystemSymbolName:@"gearshape.2" accessibilityDescription:VIMLocalized(@"app.advanced", @"Advanced")];[tabs addTabViewItem:advancedItem];
         self.settingsWindow.contentViewController=tabs;
@@ -408,7 +423,73 @@
         [self.settingsWindow setContentSize:fitting];[self.settingsWindow center];
     }
     [self refreshLibraryLocationPopup];
+    if(!self.settingsWindow.visible)[self reloadRegionalDefaults:nil];else [self refreshRegionalDefaultsStatus];
     [self.settingsWindow makeKeyAndOrderFront:nil];
+}
+- (void)refreshRegionalDefaultsStatus {
+    NSError *error=nil;NSDictionary *request=[VIMRegionalSettings defaultRequestInPreferences:self.regionalPreferences error:&error];
+    if(error)self.regionalDefaultsStatus.stringValue=VIMLocalized(@"regional.defaults-invalid", @"The default regional settings could not be read. Review them in Settings.");
+    else if(!request)self.regionalDefaultsStatus.stringValue=VIMLocalized(@"regional.defaults-status-off", @"Off. New virtual Macs use the guest’s defaults.");
+    else if([request[@"Source"] isEqual:@"host"])self.regionalDefaultsStatus.stringValue=VIMLocalized(@"regional.defaults-status-host", @"New virtual Macs automatically follow this Mac’s language, region and time zone.");
+    else self.regionalDefaultsStatus.stringValue=VIMLocalized(@"regional.defaults-status-custom", @"New virtual Macs automatically use your custom language, region and time zone settings.");
+    VIMSettingsTabs *tabs=(id)self.settingsWindow.contentViewController;
+    if([tabs isKindOfClass:VIMSettingsTabs.class]&&tabs.tabViewItems.count>1) {
+        NSViewController *advanced=tabs.tabViewItems[1].viewController;
+        [advanced.view layoutSubtreeIfNeeded];advanced.preferredContentSize=NSMakeSize(640,ceil(self.advancedSettingsContent.fittingSize.height)+52);
+        [tabs fitSelectedPage];
+    }
+}
+- (NSView *)regionalDefaultsSection {
+    if(self.regionalDefaultsContent)return self.regionalDefaultsContent;
+    NSTextField *title=[NSTextField labelWithString:VIMLocalized(@"regional.defaults-title", @"Language and Region for New Virtual Macs (Experimental)")];
+    title.font=[NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
+    self.regionalDefaultsMode=[NSPopUpButton new];
+    [self.regionalDefaultsMode addItemsWithTitles:@[VIMLocalized(@"regional.defaults-off", @"Off"),VIMLocalized(@"regional.defaults-host", @"Follow This Mac"),VIMLocalized(@"regional.defaults-custom", @"Custom")]];
+    self.regionalDefaultsMode.target=self;self.regionalDefaultsMode.action=@selector(regionalDefaultsModeChanged:);
+    self.regionalDefaultsMode.accessibilityLabel=title.stringValue;
+    self.regionalDefaultsView=[[VIMRegionalSettingsView alloc] initWithRequest:nil];self.regionalDefaultsView.showsModeControls=NO;
+    self.regionalDefaultsHelp=[NSTextField wrappingLabelWithString:@""];self.regionalDefaultsHelp.textColor=NSColor.secondaryLabelColor;
+    self.regionalDefaultsStatus=[NSTextField wrappingLabelWithString:@""];self.regionalDefaultsStatus.textColor=NSColor.secondaryLabelColor;
+    self.regionalDefaultsContent=[NSStackView stackViewWithViews:@[title,self.regionalDefaultsMode,self.regionalDefaultsHelp,self.regionalDefaultsView,self.regionalDefaultsStatus]];
+    NSStackView *content=self.regionalDefaultsContent;
+    content.orientation=NSUserInterfaceLayoutOrientationVertical;content.alignment=NSLayoutAttributeLeading;content.spacing=12;
+    for(NSView *view in @[title,self.regionalDefaultsHelp,self.regionalDefaultsView,self.regionalDefaultsStatus])[view.widthAnchor constraintEqualToAnchor:content.widthAnchor].active=YES;
+    __weak typeof(self) weakSelf=self;self.regionalDefaultsView.onChange=^{[weakSelf saveRegionalDefaults];};
+    [self reloadRegionalDefaults:nil];return content;
+}
+- (void)reloadRegionalDefaults:(id)sender {
+    [self.regionalDefaultsView.window makeFirstResponder:nil];
+    NSError *error=nil;NSDictionary *request=[VIMRegionalSettings defaultRequestInPreferences:self.regionalPreferences error:&error];
+    [self.regionalDefaultsView restoreRequest:request];
+    [self.regionalDefaultsMode selectItemAtIndex:self.regionalDefaultsView.configurationMode];
+    [self updateRegionalDefaultsPresentation];
+    if(error)self.regionalDefaultsHelp.stringValue=VIMLocalized(@"regional.defaults-repair", @"The saved defaults are invalid. Choose a new policy to replace them.");
+    [self refreshRegionalDefaultsStatus];
+}
+- (void)updateRegionalDefaultsPresentation {
+    self.regionalDefaultsView.configurationMode=self.regionalDefaultsMode.indexOfSelectedItem;
+    self.regionalDefaultsView.hidden=self.regionalDefaultsMode.indexOfSelectedItem!=VIMRegionalConfigurationCustom;
+    self.regionalDefaultsHelp.stringValue=VIMLocalized(@"regional.defaults-inline-help", @"Changes are saved automatically. Automatic Setup is required. Only new virtual Macs use this policy; existing Macs and setups in progress keep their settings.");
+    self.regionalDefaultsHelp.textColor=NSColor.secondaryLabelColor;
+}
+- (void)regionalDefaultsModeChanged:(NSPopUpButton *)sender {
+    [self updateRegionalDefaultsPresentation];[self saveRegionalDefaults];
+}
+- (void)saveRegionalDefaults {
+    NSError *error=nil;NSDictionary *request=[self.regionalDefaultsView committedRequestWithError:&error];
+    if(error||![VIMRegionalSettings saveDefaultRequest:request preferences:self.regionalPreferences error:&error]) {
+        self.regionalDefaultsHelp.stringValue=[NSString stringWithFormat:VIMLocalized(@"regional.defaults-unsaved", @"Not saved: %@"),error.localizedDescription];
+        self.regionalDefaultsHelp.textColor=NSColor.systemRedColor;
+        [self refreshRegionalDefaultsStatus];return;
+    }
+    [self updateRegionalDefaultsPresentation];[self refreshRegionalDefaultsStatus];
+}
+- (BOOL)windowShouldClose:(NSWindow *)window {
+    if(window==self.settingsWindow)[window makeFirstResponder:nil];
+    return YES;
+}
+- (void)windowDidResignKey:(NSNotification *)notification {
+    if(notification.object==self.settingsWindow)[self.settingsWindow makeFirstResponder:nil];
 }
 - (void)changeInstallerRetention:(NSButton *)sender {
     [NSUserDefaults.standardUserDefaults setBool:sender.state==NSControlStateValueOn forKey:@"VIMKeepInstallers"];

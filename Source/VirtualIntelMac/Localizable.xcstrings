@@ -1,6 +1,348 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "regional.defaults-unsaved": {
+      "comment": "An invalid edit was not saved; the last valid new-machine policy remains active.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not saved: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未保存：%@"
+          }
+        }
+      }
+    },
+    "regional.defaults-inline-help": {
+      "comment": "Inline regional defaults in the application Advanced settings page.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Changes are saved automatically. Automatic Setup is required. Only new virtual Macs use this policy; existing Macs and setups in progress keep their settings."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更改会自动保存。此功能需要自动设置，且仅用于新建的虚拟 Intel Mac。已有虚拟机和正在安装的任务保留原设置。"
+          }
+        }
+      }
+    },
+    "regional.defaults-invalid": {
+      "comment": "Default regional policy for future virtual Macs; experimental and explicitly enabled.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The default regional settings could not be read. Review them in Settings."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法读取默认语言与地区设置，请在软件设置中重新配置。"
+          }
+        }
+      }
+    },
+    "regional.creation-inactive": {
+      "comment": "Default regional policy for future virtual Macs; experimental and explicitly enabled.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Language and region will not be applied while Automatic Setup is off."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动设置已关闭，本次不会应用语言与地区设置。"
+          }
+        }
+      }
+    },
+    "regional.creation-host": {
+      "comment": "Default regional policy for future virtual Macs; experimental and explicitly enabled.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Language and region: follow this Mac (Experimental)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "语言与地区：跟随此 Mac（实验性）"
+          }
+        }
+      }
+    },
+    "regional.creation-custom": {
+      "comment": "Default regional policy for future virtual Macs; experimental and explicitly enabled.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Language and region: custom settings (Experimental)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "语言与地区：自定义设置（实验性）"
+          }
+        }
+      }
+    },
+    "regional.creation-disabled": {
+      "comment": "Default regional policy for future virtual Macs; experimental and explicitly enabled.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Language and region: disabled for this virtual Mac"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "语言与地区：已对此虚拟 Intel Mac 禁用"
+          }
+        }
+      }
+    },
+    "regional.automatic-required": {
+      "comment": "Default regional policy for future virtual Macs; experimental and explicitly enabled.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Regional settings require Automatic Setup"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "语言与地区设置需要启用自动设置"
+          }
+        }
+      }
+    },
+    "regional.automatic-required-detail": {
+      "comment": "Default regional policy for future virtual Macs; experimental and explicitly enabled.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatic Setup is off, so the selected language, region and time zone cannot be applied. Enable Automatic Setup, or skip regional settings for this virtual Mac."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动设置已关闭，无法应用所选语言、地区和时区。请启用自动设置，或对此虚拟 Intel Mac 跳过语言与地区设置。"
+          }
+        }
+      }
+    },
+    "regional.enable-automatic": {
+      "comment": "Default regional policy for future virtual Macs; experimental and explicitly enabled.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enable Automatic Setup"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "启用自动设置"
+          }
+        }
+      }
+    },
+    "regional.skip-once": {
+      "comment": "Default regional policy for future virtual Macs; experimental and explicitly enabled.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skip Regional Settings This Time"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本次跳过语言与地区设置"
+          }
+        }
+      }
+    },
+    "regional.defaults-title": {
+      "comment": "Default regional policy for future virtual Macs; experimental and explicitly enabled.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Language and Region for New Virtual Macs (Experimental)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新建虚拟 Intel Mac 的语言与地区（实验性）"
+          }
+        }
+      }
+    },
+    "regional.defaults-status-off": {
+      "comment": "Default regional policy for future virtual Macs; experimental and explicitly enabled.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Off. New virtual Macs use the guest’s defaults."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已关闭。新建的虚拟 Intel Mac 将使用客户机默认设置。"
+          }
+        }
+      }
+    },
+    "regional.defaults-status-host": {
+      "comment": "Default regional policy for future virtual Macs; experimental and explicitly enabled.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New virtual Macs automatically follow this Mac’s language, region and time zone."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新建的虚拟 Intel Mac 将自动跟随此 Mac 的语言、地区和时区。"
+          }
+        }
+      }
+    },
+    "regional.defaults-status-custom": {
+      "comment": "Default regional policy for future virtual Macs; experimental and explicitly enabled.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New virtual Macs automatically use your custom language, region and time zone settings."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新建的虚拟 Intel Mac 将自动使用自定义的语言、地区和时区设置。"
+          }
+        }
+      }
+    },
+    "regional.defaults-off": {
+      "comment": "Default regional policy for future virtual Macs; experimental and explicitly enabled.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Off"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭"
+          }
+        }
+      }
+    },
+    "regional.defaults-host": {
+      "comment": "Default regional policy for future virtual Macs; experimental and explicitly enabled.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Follow This Mac"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "跟随此 Mac"
+          }
+        }
+      }
+    },
+    "regional.defaults-custom": {
+      "comment": "Default regional policy for future virtual Macs; experimental and explicitly enabled.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Custom"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自定义"
+          }
+        }
+      }
+    },
+    "regional.defaults-repair": {
+      "comment": "Default regional policy for future virtual Macs; experimental and explicitly enabled.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The saved defaults are invalid. Choose a new policy to replace them."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存的默认设置无效，请选择新策略替换。"
+          }
+        }
+      }
+    },
     "app.a-mac-is-being-created" : {
       "comment" : "AppDelegate.m: A Mac is being created",
       "extractionState" : "manual",

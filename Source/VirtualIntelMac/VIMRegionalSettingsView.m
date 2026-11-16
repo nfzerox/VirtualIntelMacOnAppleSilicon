@@ -2,7 +2,7 @@
 #import "VIMRegionalSettings.h"
 #import "VIMLocalization.h"
 
-@interface VIMRegionalSettingsView () <NSTokenFieldDelegate>
+@interface VIMRegionalSettingsView () <NSTokenFieldDelegate,NSComboBoxDelegate>
 @property NSButton *experimental;
 @property NSButton *followHost;
 @property NSButton *allowFallback;
@@ -13,24 +13,28 @@
 @property NSArray<NSDictionary *> *regions;
 @property NSArray<NSDictionary *> *zones;
 @property NSDictionary *seed;
+@property BOOL restoringControls;
+@property NSUInteger changeGeneration;
 @end
 
 @implementation VIMRegionalSettingsView
 - (NSComboBox *)combo:(NSArray<NSDictionary *> *)choices label:(NSString *)label {
     NSComboBox *combo=[NSComboBox new];[combo addItemsWithObjectValues:[choices valueForKey:@"Title"]];
     combo.completes=YES;combo.numberOfVisibleItems=12;combo.accessibilityLabel=label;
+    combo.delegate=self;combo.target=self;combo.action=@selector(preferencesChanged:);
     [combo.widthAnchor constraintEqualToConstant:260].active=YES;return combo;
 }
 - (instancetype)initWithRequest:(NSDictionary *)request {
     if((self=[super initWithFrame:NSZeroRect])){
-        _enabled=YES;self.languages=VIMRegionalSettings.languageChoices;self.regions=VIMRegionalSettings.regionChoices;self.zones=VIMRegionalSettings.timeZoneChoices;
+        _enabled=YES;_showsModeControls=YES;self.languages=VIMRegionalSettings.languageChoices;self.regions=VIMRegionalSettings.regionChoices;self.zones=VIMRegionalSettings.timeZoneChoices;
         self.experimental=[NSButton checkboxWithTitle:VIMLocalized(@"regional.experimental", @"Set language, region and time zone (Experimental)") target:self action:@selector(updateEnabled:)];
         NSTextField *experimentalDetail=[NSTextField wrappingLabelWithString:VIMLocalized(@"regional.experimental-explanation", @"This experimental feature may prevent initial setup from completing on some macOS versions. Leave it disabled to use the guest’s defaults.")];
         experimentalDetail.textColor=NSColor.secondaryLabelColor;experimentalDetail.font=[NSFont systemFontOfSize:11];
         self.followHost=[NSButton checkboxWithTitle:VIMLocalized(@"regional.follow-host", @"Use this Mac’s language, region and time zone") target:self action:@selector(updateEnabled:)];
-        self.allowFallback=[NSButton checkboxWithTitle:VIMLocalized(@"regional.allow-fallback", @"Use supported alternatives when needed") target:nil action:nil];
+        self.allowFallback=[NSButton checkboxWithTitle:VIMLocalized(@"regional.allow-fallback", @"Use supported alternatives when needed") target:self action:@selector(preferencesChanged:)];
         NSString *language=VIMLocalized(@"regional.language", @"Preferred languages:"),*region=VIMLocalized(@"regional.region", @"Region:"),*zone=VIMLocalized(@"regional.time-zone", @"Time zone:");
         self.language=[NSTokenField new];self.language.delegate=self;self.language.accessibilityLabel=language;
+        self.language.target=self;self.language.action=@selector(preferencesChanged:);
         self.language.tokenizingCharacterSet=[NSCharacterSet characterSetWithCharactersInString:@",，"];
         [self.language.widthAnchor constraintEqualToConstant:260].active=YES;
         self.region=[self combo:self.regions label:region];self.zone=[self combo:self.zones label:zone];
@@ -57,6 +61,7 @@
     return [combo.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 }
 - (void)restoreRequest:(NSDictionary *)request {
+    self.restoringControls=YES;self.changeGeneration++;
     self.seed=request?:@{};self.experimental.state=request?NSControlStateValueOn:NSControlStateValueOff;
     NSDictionary *values=request?:[VIMRegionalSettings hostSnapshotWithError:NULL]?:@{};
     self.followHost.state=[values[@"Source"] isEqual:@"custom"]?NSControlStateValueOff:NSControlStateValueOn;
@@ -64,9 +69,23 @@
     self.language.objectValue=values[@"PreferredLanguages"]?:@[];
     [self select:self.region choices:self.regions value:values[@"RegionCode"]];
     [self select:self.zone choices:self.zones value:values[@"TimeZoneIdentifier"]];[self updateEnabled:nil];
+    self.restoringControls=NO;
 }
 - (void)setEnabled:(BOOL)enabled {_enabled=enabled;[self updateEnabled:nil];}
 - (void)setFrozen:(BOOL)frozen {_frozen=frozen;[self updateEnabled:nil];}
+- (VIMRegionalConfigurationMode)configurationMode {
+    if(self.experimental.state!=NSControlStateValueOn)return VIMRegionalConfigurationOff;
+    return self.followHost.state==NSControlStateValueOn?VIMRegionalConfigurationHost:VIMRegionalConfigurationCustom;
+}
+- (void)setConfigurationMode:(VIMRegionalConfigurationMode)mode {
+    if(self.frozen)return;
+    self.experimental.state=mode==VIMRegionalConfigurationOff?NSControlStateValueOff:NSControlStateValueOn;
+    self.followHost.state=mode==VIMRegionalConfigurationCustom?NSControlStateValueOff:NSControlStateValueOn;
+    [self updateEnabled:nil];
+}
+- (void)setShowsModeControls:(BOOL)showsModeControls {
+    _showsModeControls=showsModeControls;self.experimental.hidden=!showsModeControls;self.followHost.hidden=!showsModeControls;
+}
 - (void)updateEnabled:(id)sender {
     BOOL editable=self.enabled&&!self.frozen;
     self.experimental.enabled=editable;
@@ -74,20 +93,38 @@
     self.followHost.enabled=active;
     BOOL custom=active&&self.followHost.state==NSControlStateValueOff;
     self.language.enabled=self.region.enabled=self.zone.enabled=custom;self.allowFallback.enabled=custom;
+    if(sender)[self preferencesChanged:sender];
 }
 - (NSDictionary *)requestWithError:(NSError **)error {
+    if(self.enabled&&!self.frozen&&self.configurationMode==VIMRegionalConfigurationCustom)[self.window makeFirstResponder:nil];
+    return [self committedRequestWithError:error];
+}
+- (NSDictionary *)committedRequestWithError:(NSError **)error {
     if(error)*error=nil;
     if(!self.enabled||self.experimental.state!=NSControlStateValueOn)return nil;
     if(self.frozen)return self.seed.count?self.seed:nil;
     if(self.followHost.state==NSControlStateValueOn)return [VIMRegionalSettings hostSnapshotWithError:error];
-    // Finish a typed token before reading the ordered preference list.
-    [self.window makeFirstResponder:nil];
     NSArray *languages=self.language.objectValue?:@[];
     NSMutableDictionary *request=[@{@"FormatVersion":@1,@"Source":@"custom",@"PreferredLanguages":languages,
         @"UnsupportedPolicy":self.allowFallback.state==NSControlStateValueOn?@"fallback":@"strict"} mutableCopy];
     NSString *region=[self value:self.region choices:self.regions],*zone=[self value:self.zone choices:self.zones];
     if(region.length)request[@"RegionCode"]=region;if(zone.length)request[@"TimeZoneIdentifier"]=zone;
     return [VIMRegionalSettings normalizeRequest:request error:error];
+}
+- (void)preferencesChanged:(id)sender {
+    if(!self.restoringControls&&self.enabled&&!self.frozen&&self.onChange)self.onChange();
+}
+- (void)schedulePreferencesChanged {
+    if(self.restoringControls)return;
+    NSUInteger generation=self.changeGeneration;__weak typeof(self) weakSelf=self;
+    dispatch_async(dispatch_get_main_queue(),^{
+        typeof(self) self=weakSelf;if(self&&self.changeGeneration==generation)[self preferencesChanged:nil];
+    });
+}
+- (void)controlTextDidEndEditing:(NSNotification *)notification { [self preferencesChanged:notification.object]; }
+- (void)comboBoxSelectionDidChange:(NSNotification *)notification { [self schedulePreferencesChanged]; }
+- (NSArray *)tokenField:(NSTokenField *)field shouldAddObjects:(NSArray *)tokens atIndex:(NSUInteger)index {
+    [self schedulePreferencesChanged];return tokens;
 }
 - (NSString *)tokenField:(NSTokenField *)field displayStringForRepresentedObject:(id)object {
     for(NSDictionary *entry in self.languages)if([entry[@"Value"] isEqual:object])return entry[@"Title"];
@@ -110,8 +147,10 @@
 }
 - (void)restoreDraftState:(NSDictionary *)state {
     if(self.frozen)return;
+    self.restoringControls=YES;self.changeGeneration++;
     self.experimental.state=[state[@"Experimental"] integerValue];
     self.followHost.state=[state[@"Host"] integerValue];self.allowFallback.state=[state[@"Fallback"] integerValue];
     self.language.objectValue=state[@"Languages"]?:@[];self.region.stringValue=state[@"Region"]?:@"";self.zone.stringValue=state[@"Zone"]?:@"";[self updateEnabled:nil];
+    self.restoringControls=NO;
 }
 @end
