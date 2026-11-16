@@ -1,5 +1,7 @@
 #import <Foundation/Foundation.h>
 NS_ASSUME_NONNULL_BEGIN
+FOUNDATION_EXPORT NSString *const VIMInstallerHTTPStatusKey;
+FOUNDATION_EXPORT NSString *const VIMInstallerRetryAfterKey;
 /// Compiled host/protocol policy; asset locations and verification values live
 /// in the remotely configurable catalog, not duplicated in executable code.
 @interface VIMInstallerSource : NSObject
@@ -12,6 +14,12 @@ NS_ASSUME_NONNULL_BEGIN
     region:(NSString *)region timeZone:(NSString *)timeZone;
 /// Worker-only. Session cookies/tokens are ephemeral, never written to a receipt.
 + (nullable NSDictionary<NSString *,NSString *> *)headersForURL:(NSURL *)URL error:(NSError **)error;
++ (nullable NSDictionary<NSString *,NSString *> *)headersForURL:(NSURL *)URL
+    cancelled:(nullable BOOL (^)(void))cancelled error:(NSError **)error;
+/// Transport candidates retain the original catalog identity and digest.
++ (NSURL *)transportURLForSourceURL:(NSURL *)URL retryAttempt:(NSUInteger)retry;
++ (BOOL)isRecoveryTransportURL:(NSURL *)URL forSourceURL:(NSURL *)source;
++ (NSDictionary *)errorInfoForHTTPResponse:(nullable NSHTTPURLResponse *)response message:(NSString *)message;
 /// Validates the pinned recovery payload. Other assets use their recipe's
 /// signature/version validation. Reads in bounded chunks, not a whole-file NSData.
 + (BOOL)verifyFile:(NSURL *)file source:(NSURL *)URL error:(NSError **)error;

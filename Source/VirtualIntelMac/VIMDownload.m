@@ -15,6 +15,7 @@ static NSError *DownloadError(NSString *message) {
 @property(nonatomic) NSURL *sourceURL;
 @property(nonatomic) NSURLSession *session;
 @property(nonatomic) NSURLSessionDataTask *task;
+@property(nonatomic) NSDictionary *authorizationHeaders;
 @property(nonatomic) NSOperationQueue *queue;
 @property(nonatomic) int file;
 @property(nonatomic) int lockFile;
@@ -25,6 +26,14 @@ static NSError *DownloadError(NSString *message) {
 @property(nonatomic) BOOL pausing;
 @property(nonatomic) BOOL accepted;
 @property(nonatomic) BOOL active;
+@property(atomic) BOOL pauseRequested;
+@property(atomic) NSUInteger generation;
+@property(nonatomic) BOOL finished;
+@property(nonatomic) NSUInteger consecutiveRetries;
+@property(nonatomic) NSUInteger totalRetries;
+@property(nonatomic) BOOL refreshedAuthorization;
+@property(nonatomic) BOOL authorizedRecovery;
+@property(nonatomic) int64_t attemptOffset;
 @property(nonatomic) CFAbsoluteTime lastProgress;
 @property(nonatomic,copy) void (^completion)(NSURL *,NSError *,BOOL);
 @end
@@ -50,8 +59,18 @@ static NSError *DownloadError(NSString *message) {
 - (void)startWithCompletion:(void (^)(NSURL *,NSError *,BOOL))completion {
     NSAssert(NSThread.isMainThread,@"Download lifecycle is main-thread owned");
     if(self.active) { completion(nil,DownloadError(VIMLocalized(@"download.this-download-is-already-running", @"This download is already running.")),NO);return; }
-    self.active=YES;self.completion=completion;self.pausing=NO;self.failure=nil;self.accepted=NO;
-    [self.queue addOperationWithBlock:^{[self beginTransfer];}];
+    self.active=YES;self.completion=completion;self.pauseRequested=NO;
+    [self.queue addOperationWithBlock:^{
+        self.finished=NO;self.pausing=NO;self.failure=nil;self.accepted=NO;
+        self.consecutiveRetries=0;self.totalRetries=0;self.refreshedAuthorization=NO;
+        [self beginTransfer];
+    }];
+}
+- (void)reportState:(VIMDownloadState)state delay:(NSTimeInterval)delay {
+    NSUInteger generation=self.generation;
+    dispatch_async(dispatch_get_main_queue(),^{
+        if(self.active&&!self.pauseRequested&&generation==self.generation&&self.stateChanged)self.stateChanged(state,delay);
+    });
 }
 - (void)beginTransfer {
     NSError *error=nil;NSFileManager *fm=NSFileManager.defaultManager;
@@ -77,8 +96,10 @@ static NSError *DownloadError(NSString *message) {
         NSDictionary *attributes=[fm attributesOfItemAtPath:self.finishedURL.path error:NULL];
         if([attributes[NSFileType] isEqual:NSFileTypeRegular] && [attributes[NSFileSize] longLongValue]>0 &&
             [attributes[NSFileSize] isEqual:self.metadata[@"Length"]]) {
-            if([VIMInstallerSource verifyFile:self.finishedURL source:self.sourceURL error:&error])[self finish:self.finishedURL error:nil];
-            else [self finish:nil error:error];return;
+            [self reportState:VIMDownloadStateVerifying delay:0];
+            BOOL verified=[VIMInstallerSource verifyFile:self.finishedURL source:self.sourceURL error:&error];
+            if(self.pauseRequested){self.pausing=YES;[self finish:nil error:nil];}
+            else [self finish:verified?self.finishedURL:nil error:error];return;
         }
         if(!finished) {
             // Preparation retired the completed payload. A crash between its
@@ -93,39 +114,70 @@ static NSError *DownloadError(NSString *message) {
         [self finish:nil error:DownloadError(VIMLocalized(@"download.cannot-open-this-download-or-another-process-is-using-it", @"Cannot open this download, or another process is using it."))];return;
     }
     self.received=st.st_size;
+    [self beginAttempt];
+}
+- (NSString *)resumeValidator {
+    NSString *etag=self.metadata[@"ETag"],*modified=self.metadata[@"LastModified"];
+    return [etag isKindOfClass:NSString.class]&&etag.length&&![etag hasPrefix:@"W/"]?etag:
+        ([modified isKindOfClass:NSString.class]?modified:nil);
+}
+- (void)beginAttempt {
+    if(self.finished)return;
+    if(self.pauseRequested){self.pausing=YES;[self finish:nil error:nil];return;}
+    self.failure=nil;self.accepted=NO;self.attemptOffset=self.received;
+    NSUInteger generation=++self.generation;
     if(self.received>0 && self.received==[self.metadata[@"Length"] longLongValue]) {
         self.accepted=YES;self.total=self.received;
         [self completeTransferWithError:nil];return;
     }
-    NSString *etag=self.metadata[@"ETag"],*modified=self.metadata[@"LastModified"];
-    NSString *validator=[etag isKindOfClass:NSString.class] && etag.length && ![etag hasPrefix:@"W/"]?etag:
-        ([modified isKindOfClass:NSString.class]?modified:nil);
+    NSError *error=nil;
+    NSString *validator=[self resumeValidator];
     if(self.received && !validator.length) {
         if(ftruncate(self.file,0)) { [self finish:nil error:DownloadError(VIMLocalized(@"download.could-not-restart-the-partial-download", @"Could not restart the partial download."))];return; }
         self.received=0;
     }
     if(![self saveMetadata:&error]) { [self finish:nil error:error];return; }
-    NSURL *actual=[VIMInstallerCatalog downloadURLForAppleURL:self.sourceURL];
+    NSURL *mapped=[VIMInstallerCatalog downloadURLForAppleURL:self.sourceURL];
+    BOOL mirror=![mapped isEqual:self.sourceURL];
+    self.authorizedRecovery=!mirror&&[VIMInstallerSource isMavericksRecoveryAsset:self.sourceURL];
+    NSURL *actual=mirror?mapped:[VIMInstallerSource transportURLForSourceURL:self.sourceURL retryAttempt:self.totalRetries];
+    [self reportState:VIMDownloadStateAuthorizing delay:0];
+    __weak typeof(self) weakSelf=self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+        NSError *failure=nil;
+        NSDictionary *headers=mirror?@{}:[VIMInstallerSource headersForURL:self.sourceURL cancelled:^BOOL{
+            typeof(self) current=weakSelf;
+            return !current||current.pauseRequested||current.generation!=generation;
+        } error:&failure];
+        [self.queue addOperationWithBlock:^{
+            if(self.finished||generation!=self.generation)return;
+            if(self.pauseRequested){self.pausing=YES;[self finish:nil error:nil];return;}
+            if(!headers){[self completeTransferWithError:failure];return;}
+            [self startRequestAtURL:actual headers:headers];
+        }];
+    });
+}
+- (void)startRequestAtURL:(NSURL *)actual headers:(NSDictionary *)headers {
+    self.authorizationHeaders=[headers copy];
     NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:actual cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:30];
     [request setValue:@"identity" forHTTPHeaderField:@"Accept-Encoding"];
     // A debug loopback mirror serves already cached bytes, so it neither
     // needs nor should receive an Apple recovery token. The original source
     // remains authoritative for approval, resumability and digest checking.
-    NSDictionary *headers=[actual isEqual:self.sourceURL]?
-        [VIMInstallerSource headersForURL:self.sourceURL error:&error]:@{};
-    if(!headers){[self finish:nil error:error];return;}
     for(NSString *key in headers)[request setValue:headers[key] forHTTPHeaderField:key];
     if(self.received) {
         [request setValue:[NSString stringWithFormat:@"bytes=%lld-",self.received] forHTTPHeaderField:@"Range"];
-        [request setValue:validator forHTTPHeaderField:@"If-Range"];
+        [request setValue:[self resumeValidator] forHTTPHeaderField:@"If-Range"];
     }
     NSURLSessionConfiguration *configuration=NSURLSessionConfiguration.ephemeralSessionConfiguration;
     configuration.URLCache=nil;configuration.timeoutIntervalForRequest=30;
+    configuration.HTTPShouldSetCookies=NO;
     configuration.timeoutIntervalForResource=7*24*3600;
     self.session=[NSURLSession sessionWithConfiguration:configuration delegate:self delegateQueue:self.queue];
     self.task=[self.session dataTaskWithRequest:request];[self.task resume];
 }
 - (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)task didReceiveResponse:(NSURLResponse *)response completionHandler:(void (^)(NSURLSessionResponseDisposition))completionHandler {
+    if(session!=self.session||self.finished||self.pauseRequested||self.failure){completionHandler(NSURLSessionResponseCancel);return;}
     NSHTTPURLResponse *http=[response isKindOfClass:NSHTTPURLResponse.class]?(id)response:nil;
     int64_t offset=self.received;
     BOOL valid=http && (http.statusCode==200||http.statusCode==206);
@@ -137,7 +189,7 @@ static NSError *DownloadError(NSString *message) {
             first==offset && last>=first && total>last && total<=100LL*1024*1024*1024 && last==total-1;
         self.total=total;
         NSString *previous=self.metadata[@"ETag"],*current=[http valueForHTTPHeaderField:@"ETag"];
-        if([previous isKindOfClass:NSString.class] && ![previous hasPrefix:@"W/"] && current && ![previous isEqual:current])valid=NO;
+        if([previous isKindOfClass:NSString.class] && previous.length && ![previous hasPrefix:@"W/"] && current && ![previous isEqual:current])valid=NO;
     } else if(valid) {
         // If-Range mismatch or ignored Range: replace, never append a full body.
         if(offset && ftruncate(self.file,0))valid=NO;
@@ -147,8 +199,9 @@ static NSError *DownloadError(NSString *message) {
     if(encoding.length && ![encoding.lowercaseString isEqual:@"identity"])valid=NO;
     if(self.total>100LL*1024*1024*1024)valid=NO;
     if(!valid) {
-        self.failure=[NSError errorWithDomain:@"VirtualIntelMac.Download" code:2 userInfo:@{
-            NSLocalizedDescriptionKey:[NSString stringWithFormat:VIMLocalized(@"download.the-server-returned-an-invalid-download-response-http-ld", @"The server returned an invalid download response (HTTP %ld)."),http.statusCode]}];
+        self.failure=[NSError errorWithDomain:@"VirtualIntelMac.Download" code:2 userInfo:
+            [VIMInstallerSource errorInfoForHTTPResponse:http message:
+                [NSString stringWithFormat:VIMLocalized(@"download.the-server-returned-an-invalid-download-response-http-ld", @"The server returned an invalid download response (HTTP %ld)."),http.statusCode]]];
         completionHandler(NSURLSessionResponseCancel);return;
     }
     if(lseek(self.file,self.received,SEEK_SET)<0) {
@@ -163,7 +216,7 @@ static NSError *DownloadError(NSString *message) {
     self.accepted=YES;completionHandler(NSURLSessionResponseAllow);
 }
 - (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)task didReceiveData:(NSData *)data {
-    if(!self.accepted||self.failure)return;
+    if(session!=self.session||self.finished||self.pauseRequested||!self.accepted||self.failure)return;
     if(self.received>100LL*1024*1024*1024-(int64_t)data.length ||
         (self.total>=0 && (int64_t)data.length>self.total-self.received)) {
         self.failure=DownloadError(VIMLocalized(@"download.the-download-exceeded-its-expected-length", @"The download exceeded its expected length."));[task cancel];return;
@@ -177,21 +230,94 @@ static NSError *DownloadError(NSString *message) {
     }
     CFAbsoluteTime now=CFAbsoluteTimeGetCurrent();
     if(now-self.lastProgress>=0.2) {
-        self.lastProgress=now;int64_t received=self.received,total=self.total;
-        dispatch_async(dispatch_get_main_queue(), ^{if(self.progress)self.progress(received,total);});
+        self.lastProgress=now;int64_t received=self.received,total=self.total;NSUInteger generation=self.generation;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if(self.active&&!self.pauseRequested&&generation==self.generation&&self.progress)self.progress(received,total);
+        });
     }
 }
-// Use NSURLSession's ordinary redirect handling. CDN redirects are not a new
-// catalog source; the original source's completed-file checks remain in force.
+- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task
+    willPerformHTTPRedirection:(NSHTTPURLResponse *)response newRequest:(NSURLRequest *)request
+    completionHandler:(void (^)(NSURLRequest *))completionHandler {
+    if(session!=self.session||self.finished||self.pauseRequested){completionHandler(nil);return;}
+    if(self.authorizedRecovery||[self.authorizationHeaders[@"Cookie"] length]) {
+        if(![VIMInstallerSource isRecoveryTransportURL:request.URL forSourceURL:self.sourceURL]) {
+            self.failure=DownloadError(VIMLocalized(@"download.unsupported-redirect", @"The download server redirected to an unsupported location."));
+            completionHandler(nil);return;
+        }
+        NSMutableURLRequest *redirect=[request mutableCopy];
+        [redirect setValue:self.authorizationHeaders[@"Cookie"] forHTTPHeaderField:@"Cookie"];
+        completionHandler(redirect);return;
+    }
+    completionHandler(request);
+}
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
+    if(session!=self.session||self.finished)return;
     [self completeTransferWithError:error];
 }
+- (BOOL)isRetryableError:(NSError *)error {
+    for(NSUInteger depth=0;error&&depth<8;depth++,error=error.userInfo[NSUnderlyingErrorKey]) {
+        if([error.domain isEqual:NSURLErrorDomain]) {
+            switch(error.code) {
+                case NSURLErrorTimedOut:case NSURLErrorNetworkConnectionLost:case NSURLErrorCannotConnectToHost:
+                case NSURLErrorCannotFindHost:case NSURLErrorDNSLookupFailed:case NSURLErrorNotConnectedToInternet:return YES;
+                default:break;
+            }
+        }
+        NSInteger status=[error.userInfo[VIMInstallerHTTPStatusKey] integerValue];
+        if([@[@408,@429,@500,@502,@503,@504] containsObject:@(status)])return YES;
+        if([error.domain isEqual:@"VirtualIntelMac.Download"]&&error.code==3)return YES;
+    }
+    return NO;
+}
+- (NSTimeInterval)retryDelayForError:(NSError *)error consecutiveRetry:(NSUInteger)retry {
+    NSTimeInterval delay=MIN(30.,pow(2.,MIN(retry-1,(NSUInteger)5)))*(.8+arc4random_uniform(401)/1000.);
+    delay=MIN(30.,delay);
+    for(NSUInteger depth=0;error&&depth<8;depth++,error=error.userInfo[NSUnderlyingErrorKey]) {
+        NSDate *date=error.userInfo[VIMInstallerRetryAfterKey];
+        if([date isKindOfClass:NSDate.class])delay=MAX(delay,date.timeIntervalSinceNow);
+    }
+    return delay;
+}
+- (BOOL)recoverFromError:(NSError *)error {
+    BOOL refresh=[error.domain isEqual:@"VirtualIntelMac.Download"]&&
+        [error.userInfo[VIMInstallerHTTPStatusKey] integerValue]==403&&
+        self.authorizedRecovery&&!self.refreshedAuthorization;
+    if(!refresh&&![self isRetryableError:error])return NO;
+    if(self.received-self.attemptOffset>=1024*1024)self.consecutiveRetries=0;
+    if(self.consecutiveRetries>=6||self.totalRetries>=20)return NO;
+    NSTimeInterval delay=[self retryDelayForError:error consecutiveRetry:self.consecutiveRetries+1];
+    if(!isfinite(delay)||delay<0||delay>300)return NO;
+    if(self.file>=0&&fsync(self.file)) {
+        [self finish:nil error:DownloadError(VIMLocalized(@"download.partial-save-failed", @"Could not save the partial download to disk."))];return YES;
+    }
+    if(refresh)self.refreshedAuthorization=YES;
+    self.consecutiveRetries++;self.totalRetries++;
+    [self.session invalidateAndCancel];self.session=nil;self.task=nil;self.authorizationHeaders=nil;
+    self.failure=nil;self.accepted=NO;
+    NSUInteger generation=++self.generation;
+    [self reportState:VIMDownloadStateWaitingToRetry delay:delay];
+    __weak typeof(self) weakSelf=self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(delay*NSEC_PER_SEC)),dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+        typeof(self) self=weakSelf;if(!self)return;
+        [self.queue addOperationWithBlock:^{
+            if(!self.finished&&generation==self.generation)[self beginAttempt];
+        }];
+    });
+    return YES;
+}
 - (void)completeTransferWithError:(NSError *)error {
+    if(self.finished)return;
     error=self.failure?:error;
-    if(self.pausing) { [self finish:nil error:nil];return; }
-    if(!error && (!self.accepted || !self.received || (self.total>=0&&self.received!=self.total)))error=DownloadError(VIMLocalized(@"download.the-installer-download-did-not-finish-completely", @"The installer download did not finish completely."));
+    if(self.pauseRequested||self.pausing) {self.pausing=YES;[self finish:nil error:nil];return;}
+    if(!error && (!self.accepted || !self.received || (self.total>=0&&self.received!=self.total)))
+        error=[NSError errorWithDomain:@"VirtualIntelMac.Download" code:3 userInfo:@{NSLocalizedDescriptionKey:VIMLocalized(@"download.the-installer-download-did-not-finish-completely", @"The installer download did not finish completely.")}];
+    if(error&&[self recoverFromError:error])return;
     if(!error && fsync(self.file))error=DownloadError(VIMLocalized(@"download.could-not-flush-the-completed-download-to-disk", @"Could not flush the completed download to disk."));
-    if(!error && ![VIMInstallerSource verifyFile:self.partialURL source:self.sourceURL error:&error]) {
+    if(!error)[self reportState:VIMDownloadStateVerifying delay:0];
+    BOOL verified=!error&&[VIMInstallerSource verifyFile:self.partialURL source:self.sourceURL error:&error];
+    if(self.pauseRequested){self.pausing=YES;[self finish:nil error:nil];return;}
+    if(!verified) {
         // Retain the failed bytes for diagnosis; never publish them as complete.
         [self finish:nil error:error];return;
     }
@@ -204,12 +330,19 @@ static NSError *DownloadError(NSString *message) {
 }
 - (void)pause {
     NSAssert(NSThread.isMainThread,@"Download lifecycle is main-thread owned");
-    [self.queue addOperationWithBlock:^{if(self.task){self.pausing=YES;[self.task cancel];}}];
+    if(!self.active)return;
+    self.pauseRequested=YES;
+    [self.queue addOperationWithBlock:^{
+        if(self.finished)return;
+        self.pausing=YES;[self finish:nil error:nil];
+    }];
 }
 - (void)finish:(NSURL *)file error:(NSError *)error {
+    if(self.finished)return;
+    self.finished=YES;self.generation++;
     if(self.file>=0) { fsync(self.file);close(self.file);self.file=-1; }
     if(self.lockFile>=0) { close(self.lockFile);self.lockFile=-1; }
-    [self.session finishTasksAndInvalidate];self.session=nil;self.task=nil;
+    [self.session invalidateAndCancel];self.session=nil;self.task=nil;self.authorizationHeaders=nil;
     BOOL paused=self.pausing;
     dispatch_async(dispatch_get_main_queue(), ^{
         self.active=NO;void (^completion)(NSURL *,NSError *,BOOL)=self.completion;self.completion=nil;

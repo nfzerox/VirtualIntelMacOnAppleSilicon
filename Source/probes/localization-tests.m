@@ -20,6 +20,8 @@ int main(int argc, const char *argv[]) {
         Check([VIMMinutesRemaining(12, YES) isEqual:chinese ? @"大约还需 12 分钟" : @"About 12 minutes remaining"], @"Approximate duration is incorrect");
         Check([VIMHoursRemaining(2, 1) isEqual:chinese ? @"还需 2 小时 1 分钟" : @"2 hours 1 minute remaining"], @"Mixed hour/minute duration is incorrect");
         Check([VIMHoursRemaining(1, 0) isEqual:chinese ? @"还需 1 小时" : @"1 hour remaining"], @"Exact hour is incorrect");
+        NSString *retry = [NSString localizedStringWithFormat:VIMLocalized(@"download.recovery-countdown", @"Reconnecting in %ld s…"), (long)7];
+        Check([retry isEqual:chinese ? @"7 秒后重新连接…" : @"Reconnecting in 7 s…"], @"Download recovery countdown has the wrong language or format");
         NSMenu *root = [NSMenu new];
         NSMenuItem *file = [[NSMenuItem alloc] initWithTitle:chinese ? @"文件" : @"File" action:nil keyEquivalent:@""];
         file.identifier = @"vim.file"; [root addItem:file];

@@ -7,6 +7,9 @@
 #include <unistd.h>
 #include <errno.h>
 
+NSString *const VIMInstallerHTTPStatusKey=@"HTTPStatus";
+NSString *const VIMInstallerRetryAfterKey=@"RetryAfter";
+
 static NSString *Hex(NSData *data) {
     NSMutableString *value=[NSMutableString new];
     const unsigned char *bytes=data.bytes;
@@ -25,19 +28,57 @@ static BOOL SourceFailure(NSError **error,NSString *message) {
 }
 // Only small recovery control messages use this blocking worker bridge. Large
 // downloads always use VIMDownload's streaming, cancellable persistent transfer.
-static NSData *RecoveryRequest(NSURLSession *session,NSMutableURLRequest *request,NSHTTPURLResponse **response,NSError **error) {
+static NSData *RecoveryRequest(NSURLSession *session,NSMutableURLRequest *request,NSHTTPURLResponse **response,BOOL (^cancelled)(void),NSError **error) {
     __block NSData *body;__block NSHTTPURLResponse *http;__block NSError *failure;
     dispatch_semaphore_t done=dispatch_semaphore_create(0);
     [[session dataTaskWithRequest:request completionHandler:^(NSData *data,NSURLResponse *reply,NSError *issue){
         body=data;http=[reply isKindOfClass:NSHTTPURLResponse.class]?(id)reply:nil;failure=issue;dispatch_semaphore_signal(done);
     }] resume];
-    dispatch_semaphore_wait(done,DISPATCH_TIME_FOREVER);
+    while(dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC/10))) {
+        if(cancelled&&cancelled()) {
+            [session invalidateAndCancel];
+            if(error)*error=[NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorCancelled userInfo:nil];
+            return nil;
+        }
+    }
     if(failure||http.statusCode!=200||body.length>65536){
-        SourceFailure(error,VIMLocalized(@"installersource.apple-s-recovery-service-could-not-authorize-the-mavericks-download", @"Apple’s recovery service could not authorize the Mavericks download. Your partial download is saved; try again later."));return nil;
+        NSMutableDictionary *info=[[VIMInstallerSource errorInfoForHTTPResponse:http
+            message:VIMLocalized(@"installersource.apple-s-recovery-service-could-not-authorize-the-mavericks-download", @"Apple’s recovery service could not authorize the Mavericks download. Your partial download is saved; try again later.")] mutableCopy];
+        if(failure)info[NSUnderlyingErrorKey]=failure;
+        if(error)*error=[NSError errorWithDomain:@"VirtualIntelMac.InstallerSource" code:1 userInfo:info];
+        return nil;
     }
     if(response)*response=http;return body;
 }
 @implementation VIMInstallerSource
++ (NSDictionary *)errorInfoForHTTPResponse:(NSHTTPURLResponse *)response message:(NSString *)message {
+    NSMutableDictionary *info=[@{NSLocalizedDescriptionKey:message} mutableCopy];
+    if(response)info[VIMInstallerHTTPStatusKey]=@(response.statusCode);
+    NSString *value=[response valueForHTTPHeaderField:@"Retry-After"];
+    if(value.length) {
+        NSScanner *scanner=[NSScanner scannerWithString:value];long long seconds=0;
+        if([scanner scanLongLong:&seconds]&&scanner.isAtEnd&&seconds>=0)
+            info[VIMInstallerRetryAfterKey]=[NSDate dateWithTimeIntervalSinceNow:MIN((double)seconds,86400.*365)];
+        else {
+            NSDateFormatter *formatter=[NSDateFormatter new];formatter.locale=[[NSLocale alloc] initWithLocaleIdentifier:@"en_US_POSIX"];
+            formatter.timeZone=[NSTimeZone timeZoneForSecondsFromGMT:0];formatter.dateFormat=@"EEE, dd MMM yyyy HH:mm:ss z";
+            NSDate *date=[formatter dateFromString:value];if(date)info[VIMInstallerRetryAfterKey]=date;
+        }
+    }
+    return info;
+}
++ (NSURL *)transportURLForSourceURL:(NSURL *)URL retryAttempt:(NSUInteger)retry {
+    if(![self isMavericksRecoveryAsset:URL]||retry%2==0)return URL;
+    NSURLComponents *candidate=[NSURLComponents componentsWithURL:URL resolvingAgainstBaseURL:NO];
+    candidate.host=@"oscdn.apple.com.edgesuite.net";return candidate.URL;
+}
++ (BOOL)isRecoveryTransportURL:(NSURL *)URL forSourceURL:(NSURL *)source {
+    return [self isMavericksRecoveryAsset:source]&&[URL.scheme isEqual:@"http"]&&
+        [@[@"oscdn.apple.com",@"oscdn.apple.com.edgesuite.net"] containsObject:URL.host?:@""]&&
+        !URL.user&&!URL.password&&!URL.port&&!URL.query&&!URL.fragment&&
+        [[NSURLComponents componentsWithURL:URL resolvingAgainstBaseURL:NO].percentEncodedPath
+            isEqual:[NSURLComponents componentsWithURL:source resolvingAgainstBaseURL:NO].percentEncodedPath];
+}
 + (BOOL)shouldExplainArchiveFailure:(NSError *)error source:(NSURL *)URL guest:(NSString *)guest
     region:(NSString *)region timeZone:(NSString *)timeZone {
     if(![@[@"tiger",@"leopard",@"snowleopard"] containsObject:guest]||
@@ -82,7 +123,13 @@ static NSData *RecoveryRequest(NSURLSession *session,NSMutableURLRequest *reques
     return NO;
 }
 + (NSDictionary<NSString *,NSString *> *)headersForURL:(NSURL *)URL error:(NSError **)error {
+    return [self headersForURL:URL cancelled:nil error:error];
+}
++ (NSDictionary<NSString *,NSString *> *)headersForURL:(NSURL *)URL cancelled:(BOOL (^)(void))cancelled error:(NSError **)error {
     NSAssert(!NSThread.isMainThread,@"Recovery authorization is worker-only");
+    if(cancelled&&cancelled()) {
+        if(error)*error=[NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorCancelled userInfo:nil];return nil;
+    }
     if(![self isApprovedURL:URL]){SourceFailure(error,VIMLocalized(@"installersource.this-installer-download-location-is-not-supported", @"This installer download location is not supported."));return nil;}
     if(![self isMavericksRecoveryAsset:URL])return @{};
     NSURLSessionConfiguration *config=NSURLSessionConfiguration.ephemeralSessionConfiguration;
@@ -94,7 +141,7 @@ static NSData *RecoveryRequest(NSURLSession *session,NSMutableURLRequest *reques
     NSURL *sessionURL=[NSURL URLWithString:recovery[@"SessionURL"]?:@""],*payloadURL=[NSURL URLWithString:recovery[@"PayloadURL"]?:@""];
     if(!sessionURL||!payloadURL){[session invalidateAndCancel];SourceFailure(error,VIMLocalized(@"installersource.the-installer-catalog-has-no-recovery-service-for-this-download", @"The installer catalog has no recovery service for this download."));return nil;}
     NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:sessionURL];
-    if(!RecoveryRequest(session,request,&response,error)){[session invalidateAndCancel];return nil;}
+    if(!RecoveryRequest(session,request,&response,cancelled,error)){[session invalidateAndCancel];return nil;}
     NSString *server=nil;
     for(NSHTTPCookie *cookie in [NSHTTPCookie cookiesWithResponseHeaderFields:response.allHeaderFields forURL:request.URL])
         if([cookie.name isEqual:@"session"])server=cookie.value;
@@ -113,7 +160,7 @@ static NSData *RecoveryRequest(NSURLSession *session,NSMutableURLRequest *reques
     request.HTTPMethod=@"POST";[request setValue:@"text/plain" forHTTPHeaderField:@"Content-Type"];
     [request setValue:[@"session=" stringByAppendingString:server] forHTTPHeaderField:@"Cookie"];
     request.HTTPBody=[[NSString stringWithFormat:@"cid=%@\nsn=%@\nbid=%@\nk=%@",Hex(client),serial,board,Hex(SHA(key))] dataUsingEncoding:NSUTF8StringEncoding];
-    NSData *data=RecoveryRequest(session,request,NULL,error);[session finishTasksAndInvalidate];if(!data)return nil;
+    NSData *data=RecoveryRequest(session,request,NULL,cancelled,error);[session finishTasksAndInvalidate];if(!data)return nil;
     NSString *body=[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     NSMutableDictionary *fields=[NSMutableDictionary new];
     for(NSString *line in [body componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {

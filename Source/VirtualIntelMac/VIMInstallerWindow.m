@@ -119,6 +119,14 @@ static VIMInstallerWindow *installerController;
     if(!self.transfer) { [self setBusy:NO];self.status.stringValue=error.localizedDescription;return; }
     self.status.stringValue=[NSString stringWithFormat:VIMLocalized(@"installerwindow.downloading-lu-of-lu", @"Downloading %@ (%lu of %lu)…"),source.lastPathComponent,self.index+1,self.files.count];
     __weak VIMInstallerWindow *weakSelf=self;
+    self.transfer.stateChanged=^(VIMDownloadState state,NSTimeInterval delay){
+        VIMInstallerWindow *controller=weakSelf;if(!controller)return;
+        if(state==VIMDownloadStateWaitingToRetry)
+            controller.status.stringValue=[NSString stringWithFormat:VIMLocalized(@"download.recovery-countdown-pause", @"Reconnecting in %ld s. You can pause while waiting."),(long)MAX(1,ceil(delay))];
+        else if(state==VIMDownloadStateVerifying)
+            controller.status.stringValue=[VIMInstallerCatalog fileForURL:source][@"SHA256"]?VIMLocalized(@"download.checking-sha256", @"Checking SHA-256…"):VIMLocalized(@"download.checking-download", @"Checking download…");
+        else if(state==VIMDownloadStateAuthorizing)controller.status.stringValue=VIMLocalized(@"download.connecting-server", @"Connecting to the download server…");
+    };
     self.transfer.progress=^(int64_t received,int64_t total){
         VIMInstallerWindow *controller=weakSelf;
         controller.progress.indeterminate=total<=0;
