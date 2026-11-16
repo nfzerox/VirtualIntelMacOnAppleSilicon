@@ -14,10 +14,8 @@
 
 #if __has_feature(objc_arc)
 #define VIM_AUTORELEASE(x) (x)
-#define VIM_RELEASE(x) do {} while (0)
 #else
 #define VIM_AUTORELEASE(x) [(x) autorelease]
-#define VIM_RELEASE(x) [(x) release]
 #endif
 
 static BOOL VIMRegionalFail(NSError **error, NSInteger code, NSString *reason) {
@@ -109,8 +107,6 @@ static NSArray *VIMRegionalResourceLanguages(NSString *bundlePath, NSMutableDict
         if (VIMRegionalCanonical(native)) [languages addObject:native];
     }
     NSArray *sorted=[languages sortedArrayUsingSelector:@selector(compare:)];
-    [evidence setObject:bundlePath forKey:@"BundlePath"];
-    if (resources) [evidence setObject:resources forKey:@"ResourcesPath"];
     [evidence setObject:sorted forKey:@"Languages"];
     return sorted;
 }
@@ -133,9 +129,9 @@ static NSString *VIMRegionalAccountVersion(id value) {
     return [value compare:@"10.9" options:NSNumericSearch]!=NSOrderedAscending?value:nil;
 }
 NSDictionary *VIMGuestRegionalCapabilities(void) {
-    NSMutableDictionary *finderEvidence=[NSMutableDictionary dictionary], *appKitEvidence=[NSMutableDictionary dictionary], *loginEvidence=[NSMutableDictionary dictionary];
+    NSMutableDictionary *finderEvidence=[NSMutableDictionary dictionary], *appKitEvidence=[NSMutableDictionary dictionary];
     NSString *finderPath=@"/System/Library/CoreServices/Finder.app", *appKitPath=@"/System/Library/Frameworks/AppKit.framework", *loginPath=@"/System/Library/CoreServices/loginwindow.app";
-    NSArray *finder=VIMRegionalResourceLanguages(finderPath,finderEvidence), *appKit=VIMRegionalResourceLanguages(appKitPath,appKitEvidence), *login=VIMRegionalResourceLanguages(loginPath,loginEvidence);
+    NSArray *finder=VIMRegionalResourceLanguages(finderPath,finderEvidence), *appKit=VIMRegionalResourceLanguages(appKitPath,appKitEvidence), *login=VIMRegionalResourceLanguages(loginPath,nil);
     NSMutableArray *desktop=[NSMutableArray array]; unsigned index;
     for (index=0; index<[finder count]; index++) {
         NSString *native=[finder objectAtIndex:index];
@@ -193,7 +189,7 @@ NSDictionary *VIMGuestRegionalCapabilities(void) {
         nativeFormat?@"native":@"canonical",@"LanguagePreferenceFormat",directions,@"LoginTextDirections",directions,@"DesktopTextDirections",
         [NSNumber numberWithBool:userSetter],@"UserDefaultsSetterAvailable",[NSNumber numberWithBool:languageSetter],@"LoginLanguageSetterAvailable",
         [NSNumber numberWithBool:zoneSetter],@"TimeZoneSetterAvailable",
-        [NSDictionary dictionaryWithObjectsAndKeys:finderEvidence,@"Finder",appKitEvidence,@"AppKit",loginEvidence,@"LoginWindow",nil],@"ResourceEvidence",nil];
+        [NSDictionary dictionaryWithObjectsAndKeys:finderEvidence,@"Finder",appKitEvidence,@"AppKit",nil],@"ResourceEvidence",nil];
     NSString *version=[systemVersion objectForKey:@"ProductVersion"], *build=[systemVersion objectForKey:@"ProductBuildVersion"];
     if (version) [result setObject:version forKey:@"Version"]; if (build) [result setObject:build forKey:@"Build"];
     // A new native account originates on this OS. Without loginwindow’s
@@ -553,38 +549,28 @@ static BOOL VIMRegionalValidSteps(NSArray *steps, NSDictionary *resolved) {
             for(field=0;field<[mappingKeys count];field++)if(!VIMRegionalCanonical([row objectForKey:[mappingKeys objectAtIndex:field]]))return NO;
         }
     }
-    NSArray *names=[NSArray arrayWithObjects:@"UserSystemVersion",@"UserSystemVersionNumber",@"UserLanguages",@"UserLanguageEncoding",@"UserTextDirection",@"UserLocale",@"LoginLanguage",@"LoginTextDirection",@"TimeZone",nil];
-    NSArray *keys=[NSArray arrayWithObjects:@"UserSystemVersion",@"UserSystemVersionNumber",@"UserLanguages",@"UserLanguageArguments",@"UserTextDirection",@"LocaleIdentifier",@"LoginLanguage",@"LoginTextDirection",@"TimeZoneIdentifier",nil];
-    NSMutableDictionary *targets=[NSMutableDictionary dictionary];NSMutableArray *order=[NSMutableArray array];
-    for(index=0;index<[names count];index++) {
-        NSString *name=[names objectAtIndex:index]; id target=[resolved objectForKey:[keys objectAtIndex:index]];
-        if(!target || ([target isKindOfClass:[NSArray class]]&&![target count]))continue;
-        if([name isEqual:@"LoginLanguage"]) {
-            NSString *native=[resolved objectForKey:@"LoginNativeLanguage"];
-            if(![target isKindOfClass:[NSString class]] || ![target isEqual:VIMRegionalCanonical(native)] ||
-               ([resolved objectForKey:@"LoginLanguageArgument"]&&![[resolved objectForKey:@"LoginLanguageArgument"] isEqual:native]))return NO;
-            target=[NSArray arrayWithObject:target];
-        }
-        NSDictionary *record=VIMRegionalValue(target);
-        if(!VIMRegionalValidValueRecord(record,name,YES))return NO;
-        [targets setObject:record forKey:name];
-        [order addObject:name];
+    NSString *login=[resolved objectForKey:@"LoginLanguage"];
+    if(login) {
+        NSString *native=[resolved objectForKey:@"LoginNativeLanguage"];
+        if(![login isEqual:VIMRegionalCanonical(native)] ||
+           ([resolved objectForKey:@"LoginLanguageArgument"]&&![[resolved objectForKey:@"LoginLanguageArgument"] isEqual:native]))return NO;
     }
-    if([resolved objectForKey:@"UserLanguageArguments"]&&!VIMRegionalSameLanguageValues([resolved objectForKey:@"UserLanguageArguments"],[resolved objectForKey:@"UserLanguages"]))return NO;
+    NSArray *targets=VIMRegionalStepsForPlan(resolved);
     if([targets count]!=[steps count])return NO;
     for(index=0;index<[steps count];index++) {
+        NSDictionary *target=[targets objectAtIndex:index];
+        NSString *name=[target objectForKey:@"Name"];
+        NSDictionary *expected=[target objectForKey:@"After"];
+        if(!VIMRegionalValidValueRecord(expected,name,YES))return NO;
         id step=[steps objectAtIndex:index]; if(![step isKindOfClass:[NSDictionary class]])return NO;
-        NSString *name=[step objectForKey:@"Name"], *phase=[step objectForKey:@"Phase"];
-        if(![name isKindOfClass:[NSString class]] || ![phase isKindOfClass:[NSString class]])return NO;
-        if(![name isEqual:[order objectAtIndex:index]])return NO;
-        id expected=[targets objectForKey:name];
-        if(!expected || ![expected isEqual:[step objectForKey:@"After"]])return NO;
+        NSString *phase=[step objectForKey:@"Phase"];
+        if(![phase isKindOfClass:[NSString class]] || ![name isEqual:[step objectForKey:@"Name"]] ||
+           ![expected isEqual:[step objectForKey:@"After"]])return NO;
         if([phase isEqual:@"planned"]) { if([step objectForKey:@"Before"])return NO; }
         else if(([phase isEqual:@"intent"]||[phase isEqual:@"verified"]) && VIMRegionalValidValueRecord([step objectForKey:@"Before"],name,NO)) {}
         else return NO;
-        [targets removeObjectForKey:name];
     }
-    return [targets count]==0;
+    return ![resolved objectForKey:@"UserLanguageArguments"]||VIMRegionalSameLanguageValues([resolved objectForKey:@"UserLanguageArguments"],[resolved objectForKey:@"UserLanguages"]);
 }
 static BOOL VIMRegionalUpgradePlan(NSMutableDictionary *regional, NSDictionary *request, NSDictionary *capabilities,
     id<VIMGuestRegionalBackend> backend, NSString *user, NSError **error) {
@@ -728,12 +714,8 @@ BOOL VIMGuestApplyRegionalSettingsWithBackend(NSDictionary *request, NSString *u
     NSMutableArray *steps=[NSMutableArray arrayWithArray:rawSteps]; [regional setObject:steps forKey:@"Steps"];
     unsigned index;
     for(index=0;index<[steps count];index++) {
-        id rawStep=[steps objectAtIndex:index];
-        if(![rawStep isKindOfClass:[NSDictionary class]])return VIMRegionalFail(error,14,@"The regional recovery step is malformed.");
-        NSMutableDictionary *step=VIM_AUTORELEASE([rawStep mutableCopy]); [steps replaceObjectAtIndex:index withObject:step];
+        NSMutableDictionary *step=VIM_AUTORELEASE([[steps objectAtIndex:index] mutableCopy]); [steps replaceObjectAtIndex:index withObject:step];
         NSString *name=[step objectForKey:@"Name"], *phase=[step objectForKey:@"Phase"];
-        if (![[NSArray arrayWithObjects:@"UserSystemVersion",@"UserSystemVersionNumber",@"UserLanguages",@"UserLanguageEncoding",@"UserTextDirection",@"UserLocale",@"LoginLanguage",@"LoginTextDirection",@"TimeZone",nil] containsObject:name] ||
-            ![[step objectForKey:@"After"] isKindOfClass:[NSDictionary class]])return VIMRegionalFail(error,14,@"The regional recovery target is malformed.");
         if ([phase isEqual:@"verified"]) {
             if(!VIMRegionalVerifyStep(backend,step,user,error))return NO;
             continue;
@@ -744,7 +726,7 @@ BOOL VIMGuestApplyRegionalSettingsWithBackend(NSDictionary *request, NSString *u
         if ([phase isEqual:@"planned"]) {
             [step setObject:observed forKey:@"Before"]; [step setObject:@"intent" forKey:@"Phase"];
             if(!VIMRegionalSave(accountJournal,journalPath,error))return NO;
-        } else if (![phase isEqual:@"intent"] || ![[step objectForKey:@"Before"] isKindOfClass:[NSDictionary class]])return VIMRegionalFail(error,14,@"The regional recovery intent is malformed.");
+        }
         if (![observed isEqual:[step objectForKey:@"After"]]) {
             if (![observed isEqual:[step objectForKey:@"Before"]])return VIMRegionalFail(error,16,@"A regional preference changed after an uncertain apply; refusing to overwrite it.");
             if(!VIMRegionalWriteSetting(backend,step,resolved,user,error))return NO;

@@ -6,12 +6,12 @@ static unsigned checks, failures;
 static void Check(BOOL ok, const char *message) { checks++; if (!ok) { failures++; fprintf(stderr,"FAIL: %s\n", message); } }
 static NSData *Plist(id value) { return [NSPropertyListSerialization dataFromPropertyList:value format:NSPropertyListXMLFormat_v1_0 errorDescription:NULL]; }
 @interface FixtureBackend : NSObject <VIMGuestRegionalBackend> {
-@public NSMutableDictionary *userDomain, *systemDomain, *versionDomain; NSMutableArray *commands; NSString *zone; NSString *journalPath; NSString *periodVersion; NSString *expectedLanguageArgument; BOOL failLanguageWrite; BOOL destructiveLanguageSetter, changeLanguagesAfterLogin, directionSupported, changeLocaleAfterLogin, changeVersionAfterLogin; BOOL failWrite, wrongReadback, exportUnavailable, changedAfterWrite, settersUnavailable, malformedDefaults, openStepDefaults, legacyResources, migrationAware, wrongMigrationReadback, tigerLanguageArgument, failAfterEffect, breakJournalAfterWrite; unsigned writes, failCommand; id invalidStatus;
+@public NSMutableDictionary *userDomain, *systemDomain, *versionDomain; NSMutableArray *commands; NSString *zone; NSString *journalPath; NSString *periodVersion; BOOL failLanguageWrite; BOOL changeLanguagesAfterLogin, directionSupported, changeLocaleAfterLogin, changeVersionAfterLogin; BOOL failWrite, wrongReadback, exportUnavailable, changedAfterWrite, settersUnavailable, malformedDefaults, openStepDefaults, legacyResources, migrationAware, wrongMigrationReadback, failAfterEffect, breakJournalAfterWrite; unsigned writes, failCommand; id invalidStatus;
 }
 @end
 @implementation FixtureBackend
 - (id)init { if ((self=[super init])) { userDomain=[[NSMutableDictionary alloc] init]; systemDomain=[[NSMutableDictionary alloc] init]; versionDomain=[[NSMutableDictionary alloc] init]; commands=[[NSMutableArray alloc] init]; zone=@"Europe/London"; } return self; }
-- (NSDictionary *)regionalCapabilities { NSMutableDictionary *capabilities=[NSMutableDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithInt:1],@"FormatVersion",(legacyResources?[NSArray arrayWithObjects:@"English",@"French",@"zh_TW",@"zh_CN",nil]:[NSArray arrayWithObjects:@"en",@"fr",@"zh-Hant-TW",nil]),@"DesktopLanguages",(legacyResources?[NSArray arrayWithObjects:@"English",@"French",@"zh_TW",@"zh_CN",nil]:[NSArray arrayWithObjects:@"en",@"fr",@"zh-Hant-TW",nil]),@"LoginLanguages",[NSArray arrayWithObjects:@"en_US",@"fr_FR",@"zh_Hans_CN",nil],@"LocaleIdentifiers",[NSArray arrayWithObjects:@"Europe/London",@"Asia/Shanghai",nil],@"TimeZoneIdentifiers",[NSNumber numberWithBool:!settersUnavailable],@"UserDefaultsSetterAvailable",[NSNumber numberWithBool:!settersUnavailable],@"LoginLanguageSetterAvailable",[NSNumber numberWithBool:!settersUnavailable],@"TimeZoneSetterAvailable",nil]; if(periodVersion)[capabilities setObject:periodVersion forKey:@"Version"]; if(legacyResources||tigerLanguageArgument)[capabilities setObject:@"native" forKey:@"LanguagePreferenceFormat"]; if(tigerLanguageArgument)[capabilities setObject:@"10.4.11" forKey:@"Version"]; if(migrationAware)[capabilities setObject:@"10.14.6" forKey:@"AccountSystemVersion"]; if(directionSupported){NSDictionary *directions=[NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithInt:0],@"fr",[NSNumber numberWithInt:0],@"French",nil];[capabilities setObject:directions forKey:@"LoginTextDirections"];[capabilities setObject:directions forKey:@"DesktopTextDirections"];} return capabilities; }
+- (NSDictionary *)regionalCapabilities { NSMutableDictionary *capabilities=[NSMutableDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithInt:1],@"FormatVersion",(legacyResources?[NSArray arrayWithObjects:@"English",@"French",@"zh_TW",@"zh_CN",nil]:[NSArray arrayWithObjects:@"en",@"fr",@"zh-Hant-TW",nil]),@"DesktopLanguages",(legacyResources?[NSArray arrayWithObjects:@"English",@"French",@"zh_TW",@"zh_CN",nil]:[NSArray arrayWithObjects:@"en",@"fr",@"zh-Hant-TW",nil]),@"LoginLanguages",[NSArray arrayWithObjects:@"en_US",@"fr_FR",@"zh_Hans_CN",nil],@"LocaleIdentifiers",[NSArray arrayWithObjects:@"Europe/London",@"Asia/Shanghai",nil],@"TimeZoneIdentifiers",[NSNumber numberWithBool:!settersUnavailable],@"UserDefaultsSetterAvailable",[NSNumber numberWithBool:!settersUnavailable],@"LoginLanguageSetterAvailable",[NSNumber numberWithBool:!settersUnavailable],@"TimeZoneSetterAvailable",nil]; if(periodVersion)[capabilities setObject:periodVersion forKey:@"Version"]; if(legacyResources)[capabilities setObject:@"native" forKey:@"LanguagePreferenceFormat"]; if(migrationAware)[capabilities setObject:@"10.14.6" forKey:@"AccountSystemVersion"]; if(directionSupported){NSDictionary *directions=[NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithInt:0],@"fr",[NSNumber numberWithInt:0],@"French",nil];[capabilities setObject:directions forKey:@"LoginTextDirections"];[capabilities setObject:directions forKey:@"DesktopTextDirections"];} return capabilities; }
 - (NSDictionary *)runExecutable:(NSString *)path arguments:(NSArray *)arguments environment:(NSDictionary *)environment error:(NSError **)error {
     (void)error;
     [commands addObject:[NSArray arrayWithObjects:path,arguments,environment,nil]];
@@ -26,15 +26,8 @@ static NSData *Plist(id value) { return [NSPropertyListSerialization dataFromPro
         if ([[args objectAtIndex:0] isEqual:@"-gettimezone"]) output=[[NSString stringWithFormat:@"Time Zone: %@\n",zone] dataUsingEncoding:NSUTF8StringEncoding];
         else { writes++; if (!wrongReadback) zone=[args objectAtIndex:1]; }
     } else if ([path isEqual:@"/usr/sbin/languagesetup"]) {
-        writes++;
-        if(failLanguageWrite)status=1;
-        else if(expectedLanguageArgument&&![[args objectAtIndex:1] isEqual:expectedLanguageArgument])status=1;
-        else if (!expectedLanguageArgument&&tigerLanguageArgument&&![[args objectAtIndex:1] isEqual:@"French"])status=1;
-        else if (!expectedLanguageArgument&&!tigerLanguageArgument&&![[NSArray arrayWithObjects:@"en",@"fr",@"zh-Hant-TW",nil] containsObject:[args objectAtIndex:1]])status=1;
-        else if (!wrongReadback) {
-            if(destructiveLanguageSetter)[systemDomain removeAllObjects];
-            [systemDomain setObject:[NSArray arrayWithObject:[args objectAtIndex:1]] forKey:@"AppleLanguages"];
-        }
+        Check(NO,"regional setup must never invoke the destructive languagesetup command");
+        status=1;
     } else if([[args objectAtIndex:0] isEqual:@"read-type"]) {
         id value=[domain objectForKey:[args objectAtIndex:2]];
         output=[([value isKindOfClass:[NSNumber class]]?@"Type is integer\n":@"Type is string\n") dataUsingEncoding:NSUTF8StringEncoding];
@@ -230,16 +223,12 @@ static void LongNativePreferenceTests(void) {
     j=[NSMutableDictionary dictionaryWithContentsOfFile:path];b->failLanguageWrite=NO;
     Check(Apply(j,path,b,&error),"a captured native Before list longer than the request limit remains recoverable");Remove(path);
 }
-int main(int argc, const char **argv) {
+int main(void) {
 #if __has_feature(objc_arc)
     @autoreleasepool {
 #else
     NSAutoreleasePool *pool=[[NSAutoreleasePool alloc] init];
 #endif
-    if (argc>1 && !strcmp(argv[1],"--capabilities")) {
-        NSDictionary *caps=VIMGuestRegionalCapabilities();
-        NSData *bytes=Plist(caps); fwrite([bytes bytes],1,[bytes length],stdout); return bytes?0:1;
-    }
     NSError *error=nil;
     NativePlanTests();
     RecoveryUpgradeTests();
@@ -248,7 +237,6 @@ int main(int argc, const char **argv) {
     CommandRecoveryTests();
     LongNativePreferenceTests();
     NSMutableDictionary *j=Journal(); NSString *path=SaveFixture(j); FixtureBackend *b=[[FixtureBackend alloc] init];
-    b->destructiveLanguageSetter=YES;
     [b->systemDomain setObject:@"retain installed regional defaults" forKey:@"UnrelatedPreference"];
     Check(Apply(j,path,b,&error),"fresh owned account applies regional request");
     Check([[b->systemDomain objectForKey:@"UnrelatedPreference"] isEqual:@"retain installed regional defaults"],"initial login language preserves every non-target global preference on destructive legacy systems");
@@ -320,12 +308,12 @@ int main(int argc, const char **argv) {
     [badEvidence setObject:[NSNumber numberWithInt:104] forKey:@"Version"];
     Check(VIMGuestRegionalPlan(Request(),badEvidence,&error)!=nil,"malformed optional product version cannot crash native regional planning");
     j=Journal(); path=SaveFixture(j); b=[[FixtureBackend alloc] init]; b->legacyResources=YES;
-    b->periodVersion=@"10.6.7";b->expectedLanguageArgument=@"zh_CN";
+    b->periodVersion=@"10.6.7";
     NSMutableDictionary *snow=[NSMutableDictionary dictionaryWithDictionary:Request()];
     [snow setObject:[NSArray arrayWithObject:@"zh-Hans-CN"] forKey:@"PreferredLanguages"];[snow setObject:@"CN" forKey:@"RegionCode"];b->journalPath=path;
     Check(VIMGuestApplyRegionalSettingsWithBackend(snow,@"alice",501,j,path,b,&error),"Snow Leopard initializes the Chinese login preference through the per-key writer");
     Check([[b->userDomain objectForKey:@"AppleLanguages"] isEqual:[NSArray arrayWithObject:@"zh_CN"]],"period desktop preferences use resource-compatible native language IDs"); Remove(path);
-    j=Journal(); path=SaveFixture(j); b=[[FixtureBackend alloc] init];b->legacyResources=YES;b->periodVersion=@"10.6.7";b->expectedLanguageArgument=@"French";b->failLanguageWrite=YES;
+    j=Journal(); path=SaveFixture(j); b=[[FixtureBackend alloc] init];b->legacyResources=YES;b->periodVersion=@"10.6.7";b->failLanguageWrite=YES;
     Check(!Apply(j,path,b,&error),"interrupted period login setter retains its pending intent");
     NSMutableDictionary *oldRegional=[j objectForKey:@"RegionalSettings"];
     NSMutableDictionary *oldResolution=[NSMutableDictionary dictionaryWithDictionary:[oldRegional objectForKey:@"Resolved"]];
@@ -337,7 +325,7 @@ int main(int argc, const char **argv) {
     Check(Apply(j,path,b,&error)&&b->writes==old+3,"old pending Snow Leopard journal corrects equivalent language spelling and resumes without replaying the verified locale");
     Check([[b->userDomain objectForKey:@"AppleLanguages"] isEqual:[NSArray arrayWithObject:@"French"]],"old canonical preference journal gains a durable native encoding step");
     Check([[[j objectForKey:@"RegionalSettings"] objectForKey:@"Requested"] isEqual:Request()],"period argument correction preserves immutable user intent"); Remove(path);
-    j=Journal(); path=SaveFixture(j); b=[[FixtureBackend alloc] init];b->legacyResources=YES;b->periodVersion=@"10.6.7";b->expectedLanguageArgument=@"French";b->failLanguageWrite=YES;
+    j=Journal(); path=SaveFixture(j); b=[[FixtureBackend alloc] init];b->legacyResources=YES;b->periodVersion=@"10.6.7";b->failLanguageWrite=YES;
     Apply(j,path,b,&error);
     oldRegional=[j objectForKey:@"RegionalSettings"];oldResolution=[NSMutableDictionary dictionaryWithDictionary:[oldRegional objectForKey:@"Resolved"]];
     [oldResolution removeObjectForKey:@"UserLanguageArguments"];[oldRegional setObject:oldResolution forKey:@"Resolved"];legacySteps=[NSMutableArray array];
@@ -345,7 +333,7 @@ int main(int argc, const char **argv) {
     [oldRegional setObject:legacySteps forKey:@"Steps"];[b->userDomain setObject:[NSArray arrayWithObject:@"de"] forKey:@"AppleLanguages"];
     [Plist(j) writeToFile:path atomically:YES];chmod([path fileSystemRepresentation],0600);old=b->writes;b->failLanguageWrite=NO;
     Check(!Apply(j,path,b,&error)&&b->writes==old&&[[b->userDomain objectForKey:@"AppleLanguages"] isEqual:[NSArray arrayWithObject:@"de"]],"native encoding upgrade refuses to replace a changed language choice"); Remove(path);
-    j=Journal(); path=SaveFixture(j); b=[[FixtureBackend alloc] init]; b->legacyResources=YES; b->tigerLanguageArgument=YES;
+    j=Journal(); path=SaveFixture(j); b=[[FixtureBackend alloc] init]; b->legacyResources=YES; b->periodVersion=@"10.4.11";
     Check(Apply(j,path,b,&error),"Tiger initializes its native login preference without the destructive legacy command"); Remove(path);
     j=Journal(); path=SaveFixture(j); b=[[FixtureBackend alloc] init]; b->legacyResources=YES;
     Check(Apply(j,path,b,&error),"period login resources survive typed canonical readback"); Remove(path);

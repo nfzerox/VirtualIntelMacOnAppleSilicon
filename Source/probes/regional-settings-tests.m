@@ -10,18 +10,12 @@
 #import "VIMNewMachineWindow.h"
 #import "AppDelegate.h"
 
-@interface VIMRegionalSettings (DefaultsTests)
-+ (NSDictionary *)defaultRequestInPreferences:(NSUserDefaults *)preferences error:(NSError **)error;
-+ (BOOL)saveDefaultRequest:(NSDictionary *)request preferences:(NSUserDefaults *)preferences error:(NSError **)error;
-@end
 @interface VIMRegionalSettingsView (ModeTests)
-- (NSInteger)configurationMode;
-- (void)setConfigurationMode:(NSInteger)mode;
 - (void)controlTextDidEndEditing:(NSNotification *)notification;
 @end
 @interface AppDelegate (RegionalDefaultsTests)
 - (NSView *)regionalDefaultsSection;
-- (void)reloadRegionalDefaults:(id)sender;
+- (void)reloadRegionalDefaults;
 - (void)regionalDefaultsModeChanged:(NSPopUpButton *)sender;
 - (BOOL)windowShouldClose:(NSWindow *)window;
 - (void)windowDidResignKey:(NSNotification *)notification;
@@ -63,9 +57,6 @@
 
 @interface VIMOpenGLSetup (RegionalTests)
 - (void)runAccountToolForSharingRepair:(BOOL)repair input:(NSData *)input completion:(void (^)(NSDictionary *,NSError *))completion;
-@end
-@interface VIMRegionalSettings (PreflightTests)
-+ (void)preflightRequest:(NSDictionary *)request agent:(VIMGuestAgent *)agent executable:(NSString *)executable packageURL:(NSURL *)package completion:(void (^)(NSError *))completion;
 @end
 @interface RegionalAgent : VIMGuestAgent
 @property NSDictionary *reply;
@@ -114,7 +105,6 @@ static VIMMachine *Fixture(NSURL *root, NSString *guest) {
 }
 
 static void DefaultPolicyTests(NSDictionary *regional) {
-    Check([VIMRegionalSettings respondsToSelector:@selector(defaultRequestInPreferences:error:)],@"New-machine regional defaults are not implemented");
     NSString *suite=[@"com.virtualintelmac.regional-tests." stringByAppendingString:NSUUID.UUID.UUIDString];
     NSUserDefaults *preferences=[[NSUserDefaults alloc] initWithSuiteName:suite];NSError *error=nil;
     @try {
@@ -180,7 +170,6 @@ static void DefaultPolicyTests(NSDictionary *regional) {
         AppDelegate *app=[AppDelegate new];[app setValue:preferences forKey:@"regionalPreferences"];
         RegionalOptionsParent *parent=[[RegionalOptionsParent alloc] initWithContentRect:NSMakeRect(0,0,640,330) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
         [app setValue:parent forKey:@"settingsWindow"];
-        Check([app respondsToSelector:@selector(regionalDefaultsSection)],@"Regional defaults must be editable directly in the settings page");
         NSView *section=[app regionalDefaultsSection];
         [section.widthAnchor constraintEqualToConstant:576].active=YES;
         [parent.contentView addSubview:section];section.frame=NSMakeRect(0,0,576,section.fittingSize.height);
@@ -197,8 +186,7 @@ static void DefaultPolicyTests(NSDictionary *regional) {
         [defaultsEditor restoreRequest:regional];[mode selectItemAtIndex:2];[app regionalDefaultsModeChanged:mode];
         Check(!defaultsEditor.hidden,@"Custom mode did not reveal its editors inline");
         Check([[VIMRegionalSettings defaultRequestInPreferences:preferences error:NULL] isEqual:regional],@"Selecting custom defaults did not save immediately");
-        fprintf(stderr,"Inline regional defaults fitting height: %.0f collapsed, %.0f custom\n",compactHeight,section.fittingSize.height);
-        [app reloadRegionalDefaults:nil];
+        [app reloadRegionalDefaults];
         Check(mode.indexOfSelectedItem==2&&[[defaultsEditor requestWithError:NULL] isEqual:regional],@"Reopening settings lost automatically saved changes");
         NSComboBox *zone=[defaultsEditor valueForKey:@"zone"];
         zone.stringValue=@"Europe/London";
@@ -236,7 +224,6 @@ static void DefaultPolicyTests(NSDictionary *regional) {
         Check([app windowShouldClose:parent]&&[[[VIMRegionalSettings defaultRequestInPreferences:preferences error:NULL] objectForKey:@"PreferredLanguages"] isEqual:@[@"ja"]],@"Closing settings lost the final uncommitted language token");
         [parent makeFirstResponder:zone];fieldEditor=zone.currentEditor;
         Check(fieldEditor!=nil,@"Cannot exercise pending edit before switching windows");fieldEditor.string=@"Europe/Rome";
-        Check([app respondsToSelector:@selector(windowDidResignKey:)],@"Switching away from Settings must commit pending edits before creating a new Mac");
         [app windowDidResignKey:[NSNotification notificationWithName:NSWindowDidResignKeyNotification object:parent]];
         Check([[[VIMRegionalSettings defaultRequestInPreferences:preferences error:NULL] objectForKey:@"TimeZoneIdentifier"] isEqual:@"Europe/Rome"],@"Switching windows left a newer default unapplied");
         [mode selectItemAtIndex:1];[app regionalDefaultsModeChanged:mode];
@@ -246,7 +233,7 @@ static void DefaultPolicyTests(NSDictionary *regional) {
         Check(![VIMRegionalSettings defaultRequestInPreferences:preferences error:NULL],@"Off mode did not disable defaults");
         [mode selectItemAtIndex:2];[app regionalDefaultsModeChanged:mode];
         [languages.delegate tokenField:languages shouldAddObjects:@[@"de"] atIndex:0];languages.objectValue=@[@"de"];
-        [preferences setObject:@"damaged" forKey:@"VIMNewMachineRegionalSettings"];[app reloadRegionalDefaults:nil];
+        [preferences setObject:@"damaged" forKey:@"VIMNewMachineRegionalSettings"];[app reloadRegionalDefaults];
         [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
         Check([[preferences objectForKey:@"VIMNewMachineRegionalSettings"] isEqual:@"damaged"],@"Programmatic reload unexpectedly saved or discarded damaged preferences");
     } @finally { [preferences removePersistentDomainForName:suite]; }
@@ -291,7 +278,6 @@ int main(void) { @autoreleasepool {
         [options setValue:[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,600) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO] forKey:@"automaticSheet"];
         NSButton *accept=[NSButton new];accept.tag=1;[options finishAutomaticOptions:accept];
         Check(optionsParent.acceptedOptions,@"Advanced options cannot be accepted while the experimental feature is disabled");
-        fprintf(stderr,"Advanced regional section fitting size: %.0f x %.0f\n",advanced.fittingSize.width,advanced.fittingSize.height);
         NSArray *globalLanguages=CFBridgingRelease(CFPreferencesCopyValue(CFSTR("AppleLanguages"),kCFPreferencesAnyApplication,kCFPreferencesCurrentUser,kCFPreferencesAnyHost));
         NSDictionary *host=[VIMRegionalSettings hostSnapshotWithError:NULL];
         Check([host[@"Source"] isEqual:@"host"]&&[host[@"PreferredLanguages"] count], @"Host snapshot is missing ordered preferences");
@@ -415,14 +401,13 @@ int main(void) { @autoreleasepool {
             VIMOpenGLSetup *setup=[[VIMOpenGLSetup alloc] initWithMachine:machine agent:agent control:[[VIMQMPConnection alloc] initWithSocketPath:@"/unused-qmp"]];[setup setValue:@"boot-a" forKey:@"bootUUID"];
             __block NSError *failure=nil;
             [setup runAccountToolForSharingRepair:NO input:NSData.data completion:^(NSDictionary *reply,NSError *error){failure=error;}];
-            BOOL period=YES;
-            NSArray *firstCommands=period?@[@"0700",@"--regional-plan",@"--create"]:@[@"--regional-plan",@"--create"];
+            NSArray *firstCommands=@[@"0700",@"--regional-plan",@"--create"];
             Check(!failure&&[agent.commands isEqual:firstCommands], @"Legacy account dispatch did not prepare and probe the tool before account creation");
-            if(period)Check(agent.stages==1&&[agent.lastProgram hasPrefix:@"/private/var/tmp/VirtualIntelMac.CurrentRegional/"], @"An unfinished period setup reused the installed account tool instead of the current bundled correction");
+            Check(agent.stages==1&&[agent.lastProgram hasPrefix:@"/private/var/tmp/VirtualIntelMac.CurrentRegional/"], @"An unfinished period setup reused the installed account tool instead of the current bundled correction");
             [agent.commands removeAllObjects];
             [setup runAccountToolForSharingRepair:NO input:NSData.data completion:^(NSDictionary *reply,NSError *error){failure=error;}];
             Check(!failure&&[agent.commands isEqual:@[@"--create"]], @"Legacy coordinator polled regional capabilities within the same boot");
-            if(period)Check(agent.stages==1,@"The same boot restaged a current period account tool");
+            Check(agent.stages==1,@"The same boot restaged a current period account tool");
         }
         VIMMachine *legacy=Fixture(root,@"mojave");
         Check([legacy saveAutomaticSetup:base error:NULL], @"Profiles created before regional settings must remain supported");

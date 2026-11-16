@@ -26,13 +26,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Changes are saved automatically. Automatic Setup is required. Only new virtual Macs use this policy; existing Macs and setups in progress keep their settings."
+            "value": "Requires Automatic Setup."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "更改会自动保存。此功能需要自动设置，且仅用于新建的虚拟 Intel Mac。已有虚拟机和正在安装的任务保留原设置。"
+            "value": "需要启用自动设置。"
           }
         }
       }
@@ -44,13 +44,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The default regional settings could not be read. Review them in Settings."
+            "value": "Couldn’t read the default language and region settings. Check Settings."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "无法读取默认语言与地区设置，请在软件设置中重新配置。"
+            "value": "无法读取默认语言与地区，请在软件设置中检查。"
           }
         }
       }
@@ -62,13 +62,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Language and region will not be applied while Automatic Setup is off."
+            "value": "Language and region: Automatic Setup is off"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "自动设置已关闭，本次不会应用语言与地区设置。"
+            "value": "语言与地区：自动设置未启用"
           }
         }
       }
@@ -116,13 +116,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Language and region: disabled for this virtual Mac"
+            "value": "Language and region: off"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "语言与地区：已对此虚拟 Intel Mac 禁用"
+            "value": "语言与地区：关闭"
           }
         }
       }
@@ -134,13 +134,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Regional settings require Automatic Setup"
+            "value": "Automatic Setup Required"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "语言与地区设置需要启用自动设置"
+            "value": "需要启用自动设置"
           }
         }
       }
@@ -152,13 +152,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Automatic Setup is off, so the selected language, region and time zone cannot be applied. Enable Automatic Setup, or skip regional settings for this virtual Mac."
+            "value": "Enable Automatic Setup to set the language, region and time zone, or skip these settings for this Mac."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "自动设置已关闭，无法应用所选语言、地区和时区。请启用自动设置，或对此虚拟 Intel Mac 跳过语言与地区设置。"
+            "value": "启用自动设置以设置语言、地区和时区，或跳过本次设置。"
           }
         }
       }
@@ -188,13 +188,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Skip Regional Settings This Time"
+            "value": "Skip This Time"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "本次跳过语言与地区设置"
+            "value": "本次跳过"
           }
         }
       }
@@ -213,60 +213,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "新建虚拟 Intel Mac 的语言与地区（实验性）"
-          }
-        }
-      }
-    },
-    "regional.defaults-status-off": {
-      "comment": "Default regional policy for future virtual Macs; experimental and explicitly enabled.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Off. New virtual Macs use the guest’s defaults."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已关闭。新建的虚拟 Intel Mac 将使用客户机默认设置。"
-          }
-        }
-      }
-    },
-    "regional.defaults-status-host": {
-      "comment": "Default regional policy for future virtual Macs; experimental and explicitly enabled.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "New virtual Macs automatically follow this Mac’s language, region and time zone."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "新建的虚拟 Intel Mac 将自动跟随此 Mac 的语言、地区和时区。"
-          }
-        }
-      }
-    },
-    "regional.defaults-status-custom": {
-      "comment": "Default regional policy for future virtual Macs; experimental and explicitly enabled.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "New virtual Macs automatically use your custom language, region and time zone settings."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "新建的虚拟 Intel Mac 将自动使用自定义的语言、地区和时区设置。"
           }
         }
       }
@@ -332,13 +278,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The saved defaults are invalid. Choose a new policy to replace them."
+            "value": "The saved settings aren’t valid. Choose them again."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "保存的默认设置无效，请选择新策略替换。"
+            "value": "保存的设置无效，请重新选择。"
           }
         }
       }
@@ -21122,13 +21068,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "This experimental feature may prevent initial setup from completing on some macOS versions. Leave it disabled to use the guest’s defaults."
+            "value": "May prevent setup from completing on some macOS versions."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "此实验性功能可能导致部分 macOS 版本无法完成首次设置。保持禁用可使用虚拟机的默认设置。"
+            "value": "部分 macOS 版本可能无法完成首次设置。"
           }
         }
       }
@@ -21158,13 +21104,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Use supported alternatives when needed"
+            "value": "Use supported alternatives"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "必要时使用受支持的替代设置"
+            "value": "使用受支持的替代设置"
           }
         }
       }
@@ -21230,13 +21176,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Applied once before the first desktop login. Add languages in preference order, using names or language IDs separated by commas. Support depends on the guest’s macOS version. Later changes inside the virtual Mac are preserved."
+            "value": "Enter language names or IDs in preference order, separated by commas."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "在首次登录桌面前应用一次。请按偏好顺序添加语言，可输入语言名称或标识符，并以逗号分隔。支持情况取决于客户机的 macOS 版本。之后在虚拟 Intel Mac 中所做的更改会保留。"
+            "value": "按偏好顺序输入语言名称或代码，以逗号分隔。"
           }
         }
       }
@@ -21266,13 +21212,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The guest’s regional setup result could not be confirmed."
+            "value": "Couldn’t confirm the language and region settings."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "无法确认客户机的初始语言与地区设置结果。"
+            "value": "无法确认语言与地区设置是否成功。"
           }
         }
       }
@@ -21284,13 +21230,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "This guest’s setup tools do not support regional settings. Rebuild or update the guest tools, or allow supported alternatives."
+            "value": "Automatic language and region setup is unavailable. Update Virtual Intel Mac or turn this option off."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "此客户机的设置工具不支持语言与地区设置。请重新构建或更新客户机工具，或允许使用支持的替代设置。"
+            "value": "暂无法自动设置语言与地区。请更新 Virtual Intel Mac，或关闭此选项。"
           }
         }
       }
@@ -21302,13 +21248,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "This macOS version does not support all requested regional settings. Choose other settings or allow supported alternatives."
+            "value": "Some selections aren’t supported by this macOS version. Choose different settings or allow alternatives."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "此 macOS 版本无法支持所有请求的语言与地区设置。请选择其他设置，或允许使用支持的替代设置。"
+            "value": "此 macOS 版本不支持部分选项，请更改设置或允许使用替代设置。"
           }
         }
       }
@@ -21320,13 +21266,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The installed guest’s regional capabilities could not be confirmed. Try setup again after the installed system has started."
+            "value": "Couldn’t check language and region support. Try again once macOS has started."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "无法确认已安装客户机支持的语言与地区设置。请在已安装系统启动后重试设置。"
+            "value": "无法检查语言与地区支持情况，请在 macOS 启动后重试。"
           }
         }
       }

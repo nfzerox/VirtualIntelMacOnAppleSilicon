@@ -310,11 +310,6 @@ int main(int argc,char **argv) {@autoreleasepool {
         NSData *json=[NSJSONSerialization dataWithJSONObject:receipt options:0 error:NULL];
         if(!json)return 65;fwrite([json bytes],1,[json length],stdout);puts("");return 0;
     }
-    if(argc==2&&!strcmp(argv[1],"--regional-capabilities")){
-        NSDictionary *capabilities=VIMGuestRegionalCapabilities();
-        NSData *json=[NSJSONSerialization dataWithJSONObject:capabilities options:0 error:NULL];
-        if(!json)return 65;fwrite([json bytes],1,[json length],stdout);puts("");return 0;
-    }
 #ifdef VIM_MODERN_ACCOUNT_SETUP
     BOOL status=argc==2&&!strcmp(argv[1],"--status"),finish=argc==2&&!strcmp(argv[1],"--finish-first-login");
     if(argc!=2||(!status&&!finish&&strcmp(argv[1],"--preflight")&&strcmp(argv[1],"--create")))return 64;

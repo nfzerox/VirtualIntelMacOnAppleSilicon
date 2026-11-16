@@ -617,12 +617,12 @@ static VIMNewMachineWindow *creationController;
 - (void)updateRegionalNotice {
     VIMRegionalConfigurationMode mode=self.regionalView.configurationMode;
     NSString *text=@"";
-    if(self.regionalDefaultsError)text=VIMLocalized(@"regional.defaults-invalid", @"The default regional settings could not be read. Review them in Settings.");
+    if(self.regionalDefaultsError)text=VIMLocalized(@"regional.defaults-invalid", @"Couldn’t read the default language and region settings. Check Settings.");
     else if(mode!=VIMRegionalConfigurationOff&&self.automaticSwitch.state!=NSControlStateValueOn)
-        text=VIMLocalized(@"regional.creation-inactive", @"Language and region will not be applied while Automatic Setup is off.");
+        text=VIMLocalized(@"regional.creation-inactive", @"Language and region: Automatic Setup is off");
     else if(mode==VIMRegionalConfigurationHost)text=VIMLocalized(@"regional.creation-host", @"Language and region: follow this Mac (Experimental)");
     else if(mode==VIMRegionalConfigurationCustom)text=VIMLocalized(@"regional.creation-custom", @"Language and region: custom settings (Experimental)");
-    else if(self.hasRegionalDefaults)text=VIMLocalized(@"regional.creation-disabled", @"Language and region: disabled for this virtual Mac");
+    else if(self.hasRegionalDefaults)text=VIMLocalized(@"regional.creation-disabled", @"Language and region: off");
     NSString *guest=CreationGuests()[self.system.indexOfSelectedItem];
     self.regionalNotice.stringValue=text;
     self.regionalNotice.hidden=!text.length||self.downloadOnly||![VIMAutomaticSetup supportsGuest:guest];
@@ -673,7 +673,7 @@ static VIMNewMachineWindow *creationController;
     }];
 }
 - (void)finishAutomaticOptions:(NSButton *)sender {
-    if(sender.tag&&self.automaticSwitch.state==NSControlStateValueOn&&!self.regionalView.hidden){
+    if(sender.tag&&self.automaticSwitch.state==NSControlStateValueOn){
         NSError *error=nil;[self.regionalView requestWithError:&error];if(error){VIMPresentError(error,self.automaticSheet);return;}
     }
     [self.window endSheet:self.automaticSheet returnCode:sender.tag?NSModalResponseOK:NSModalResponseCancel];
@@ -839,7 +839,7 @@ static VIMNewMachineWindow *creationController;
     self.diskField.integerValue=DefaultDiskGiB(VIMLibraryLocation.currentURL);
     for(NSSwitch *control in @[self.automaticSwitch,self.automaticSharing,self.automaticRemoteLogin,self.automaticLogin])
         control.state=NSControlStateValueOn;
-    self.regionalView.frozen=NO;self.regionalView.hidden=NO;
+    self.regionalView.frozen=NO;
     [self restoreRegionalDefaults];
     self.guestUsername.stringValue=VIMAutomaticSetup.defaultUsername;
     self.guestPassword.stringValue=@"";self.visibleGuestPassword.stringValue=@"";
@@ -957,13 +957,13 @@ static VIMNewMachineWindow *creationController;
     NSString *password=self.visibleGuestPassword.hidden?self.guestPassword.stringValue:self.visibleGuestPassword.stringValue;
     BOOL automatic=!self.downloadOnly&&[VIMAutomaticSetup supportsGuest:guest]&&self.automaticSwitch.state==NSControlStateValueOn;
     if(!self.downloadOnly&&![self isResumingSelectedGuest]&&[VIMAutomaticSetup supportsGuest:guest]&&self.regionalDefaultsError) {
-        [self presentCreationError:VIMLocalized(@"regional.defaults-invalid", @"The default regional settings could not be read. Review them in Settings.")];return;
+        [self presentCreationError:VIMLocalized(@"regional.defaults-invalid", @"Couldn’t read the default language and region settings. Check Settings.")];return;
     }
     if([self regionalAutomaticSetupRequired]) {
-        NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"regional.automatic-required", @"Regional settings require Automatic Setup");
-        alert.informativeText=VIMLocalized(@"regional.automatic-required-detail", @"Automatic Setup is off, so the selected language, region and time zone cannot be applied. Enable Automatic Setup, or skip regional settings for this virtual Mac.");
+        NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"regional.automatic-required", @"Automatic Setup Required");
+        alert.informativeText=VIMLocalized(@"regional.automatic-required-detail", @"Enable Automatic Setup to set the language, region and time zone, or skip these settings for this Mac.");
         [alert addButtonWithTitle:VIMLocalized(@"regional.enable-automatic", @"Enable Automatic Setup")];
-        [alert addButtonWithTitle:VIMLocalized(@"regional.skip-once", @"Skip Regional Settings This Time")];
+        [alert addButtonWithTitle:VIMLocalized(@"regional.skip-once", @"Skip This Time")];
         [alert addButtonWithTitle:VIMLocalized(@"common.cancel", @"Cancel")];
         __weak typeof(self) weakSelf=self;VIMPresentAlert(alert,self.window,^(NSModalResponse response){[weakSelf resolveRegionalAutomaticSetup:response];});return;
     }
@@ -1000,7 +1000,7 @@ static VIMNewMachineWindow *creationController;
     } else {
         if(self.job[@"AutomaticSetup"]&&!self.job[@"Machine"])[VIMAutomaticSetup removePasswordForIdentifier:self.job[@"Identifier"] error:NULL];
         [self.job removeObjectForKey:@"AutomaticSetup"];
-        if(!self.job[@"Machine"]){self.regionalView.frozen=NO;self.regionalView.hidden=NO;}
+        if(!self.job[@"Machine"])self.regionalView.frozen=NO;
     }
     if(!self.downloadOnly&&!self.installer&&!self.job[@"SourceInstaller"]&&!self.job[@"Media"]) {
         NSDictionary *retained=[VIMInstallerAssembly retainedInstallerForGuest:guest library:[NSURL fileURLWithPath:self.job[@"Library"]]];

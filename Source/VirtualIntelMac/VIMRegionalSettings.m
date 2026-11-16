@@ -37,7 +37,7 @@ static BOOL VIMRegionalGuestPlan(id value, NSDictionary *requested) {
     return YES;
 }
 static BOOL VIMRegionalInvalidResult(NSError **error) {
-    if(error&&!*error)*error=[NSError errorWithDomain:@"VirtualIntelMac.RegionalSettings" code:1 userInfo:@{NSLocalizedDescriptionKey:VIMLocalized(@"regional.invalid-result", @"The guest’s regional setup result could not be confirmed.")}];
+    if(error&&!*error)*error=[NSError errorWithDomain:@"VirtualIntelMac.RegionalSettings" code:1 userInfo:@{NSLocalizedDescriptionKey:VIMLocalized(@"regional.invalid-result", @"Couldn’t confirm the language and region settings.")}];
     return NO;
 }
 
@@ -126,7 +126,7 @@ static BOOL VIMRegionalInvalidResult(NSError **error) {
                 NSError *saveError=nil;BOOL saved=[self storeResult:result requested:normalized packageURL:package error:&saveError];
                 completion(saved?nil:saveError);return;
             }
-            message=VIMLocalized(@"regional.tools-required", @"This guest’s setup tools do not support regional settings. Rebuild or update the guest tools, or allow supported alternatives.");
+            message=VIMLocalized(@"regional.tools-required", @"Automatic language and region setup is unavailable. Update Virtual Intel Mac or turn this option off.");
         }else if([reply[@"exitcode"] isEqual:@0]){
             id data=reply[@"stdout"];
             id envelope=[data isKindOfClass:NSData.class]&&[data length]<=4*1024*1024?[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;
@@ -134,9 +134,9 @@ static BOOL VIMRegionalInvalidResult(NSError **error) {
                 completion(nil);return;
             }
         }else if([reply[@"exitcode"] isEqual:@65]) {
-            message=VIMLocalized(@"regional.unsupported", @"This macOS version does not support all requested regional settings. Choose other settings or allow supported alternatives.");
+            message=VIMLocalized(@"regional.unsupported", @"Some selections aren’t supported by this macOS version. Choose different settings or allow alternatives.");
         }
-        completion([NSError errorWithDomain:@"VirtualIntelMac.RegionalSettings" code:2 userInfo:@{NSLocalizedDescriptionKey:message?:VIMLocalized(@"regional.capabilities-unconfirmed", @"The installed guest’s regional capabilities could not be confirmed. Try setup again after the installed system has started.")}]);
+        completion([NSError errorWithDomain:@"VirtualIntelMac.RegionalSettings" code:2 userInfo:@{NSLocalizedDescriptionKey:message?:VIMLocalized(@"regional.capabilities-unconfirmed", @"Couldn’t check language and region support. Try again once macOS has started.")}]);
     }];
 }
 + (BOOL)storeResult:(id)result requested:(NSDictionary *)request packageURL:(NSURL *)package error:(NSError **)error {

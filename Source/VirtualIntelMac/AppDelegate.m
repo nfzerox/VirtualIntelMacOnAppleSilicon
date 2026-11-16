@@ -67,8 +67,6 @@
 @property BOOL quitApproved;
 @property VIMMenuController *menuController;
 @property(nonatomic) NSUserDefaults *regionalPreferences;
-@property NSTextField *regionalDefaultsStatus;
-@property NSStackView *regionalDefaultsContent;
 @property NSStackView *advancedSettingsContent;
 @property VIMRegionalSettingsView *regionalDefaultsView;
 @property NSPopUpButton *regionalDefaultsMode;
@@ -423,15 +421,10 @@
         [self.settingsWindow setContentSize:fitting];[self.settingsWindow center];
     }
     [self refreshLibraryLocationPopup];
-    if(!self.settingsWindow.visible)[self reloadRegionalDefaults:nil];else [self refreshRegionalDefaultsStatus];
+    if(!self.settingsWindow.visible)[self reloadRegionalDefaults];else [self fitAdvancedSettingsPage];
     [self.settingsWindow makeKeyAndOrderFront:nil];
 }
-- (void)refreshRegionalDefaultsStatus {
-    NSError *error=nil;NSDictionary *request=[VIMRegionalSettings defaultRequestInPreferences:self.regionalPreferences error:&error];
-    if(error)self.regionalDefaultsStatus.stringValue=VIMLocalized(@"regional.defaults-invalid", @"The default regional settings could not be read. Review them in Settings.");
-    else if(!request)self.regionalDefaultsStatus.stringValue=VIMLocalized(@"regional.defaults-status-off", @"Off. New virtual Macs use the guest’s defaults.");
-    else if([request[@"Source"] isEqual:@"host"])self.regionalDefaultsStatus.stringValue=VIMLocalized(@"regional.defaults-status-host", @"New virtual Macs automatically follow this Mac’s language, region and time zone.");
-    else self.regionalDefaultsStatus.stringValue=VIMLocalized(@"regional.defaults-status-custom", @"New virtual Macs automatically use your custom language, region and time zone settings.");
+- (void)fitAdvancedSettingsPage {
     VIMSettingsTabs *tabs=(id)self.settingsWindow.contentViewController;
     if([tabs isKindOfClass:VIMSettingsTabs.class]&&tabs.tabViewItems.count>1) {
         NSViewController *advanced=tabs.tabViewItems[1].viewController;
@@ -440,7 +433,6 @@
     }
 }
 - (NSView *)regionalDefaultsSection {
-    if(self.regionalDefaultsContent)return self.regionalDefaultsContent;
     NSTextField *title=[NSTextField labelWithString:VIMLocalized(@"regional.defaults-title", @"Language and Region for New Virtual Macs (Experimental)")];
     title.font=[NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
     self.regionalDefaultsMode=[NSPopUpButton new];
@@ -449,27 +441,25 @@
     self.regionalDefaultsMode.accessibilityLabel=title.stringValue;
     self.regionalDefaultsView=[[VIMRegionalSettingsView alloc] initWithRequest:nil];self.regionalDefaultsView.showsModeControls=NO;
     self.regionalDefaultsHelp=[NSTextField wrappingLabelWithString:@""];self.regionalDefaultsHelp.textColor=NSColor.secondaryLabelColor;
-    self.regionalDefaultsStatus=[NSTextField wrappingLabelWithString:@""];self.regionalDefaultsStatus.textColor=NSColor.secondaryLabelColor;
-    self.regionalDefaultsContent=[NSStackView stackViewWithViews:@[title,self.regionalDefaultsMode,self.regionalDefaultsHelp,self.regionalDefaultsView,self.regionalDefaultsStatus]];
-    NSStackView *content=self.regionalDefaultsContent;
+    NSStackView *content=[NSStackView stackViewWithViews:@[title,self.regionalDefaultsMode,self.regionalDefaultsHelp,self.regionalDefaultsView]];
     content.orientation=NSUserInterfaceLayoutOrientationVertical;content.alignment=NSLayoutAttributeLeading;content.spacing=12;
-    for(NSView *view in @[title,self.regionalDefaultsHelp,self.regionalDefaultsView,self.regionalDefaultsStatus])[view.widthAnchor constraintEqualToAnchor:content.widthAnchor].active=YES;
+    for(NSView *view in @[title,self.regionalDefaultsHelp,self.regionalDefaultsView])[view.widthAnchor constraintEqualToAnchor:content.widthAnchor].active=YES;
     __weak typeof(self) weakSelf=self;self.regionalDefaultsView.onChange=^{[weakSelf saveRegionalDefaults];};
-    [self reloadRegionalDefaults:nil];return content;
+    [self reloadRegionalDefaults];return content;
 }
-- (void)reloadRegionalDefaults:(id)sender {
+- (void)reloadRegionalDefaults {
     [self.regionalDefaultsView.window makeFirstResponder:nil];
     NSError *error=nil;NSDictionary *request=[VIMRegionalSettings defaultRequestInPreferences:self.regionalPreferences error:&error];
     [self.regionalDefaultsView restoreRequest:request];
     [self.regionalDefaultsMode selectItemAtIndex:self.regionalDefaultsView.configurationMode];
     [self updateRegionalDefaultsPresentation];
-    if(error)self.regionalDefaultsHelp.stringValue=VIMLocalized(@"regional.defaults-repair", @"The saved defaults are invalid. Choose a new policy to replace them.");
-    [self refreshRegionalDefaultsStatus];
+    if(error)self.regionalDefaultsHelp.stringValue=VIMLocalized(@"regional.defaults-repair", @"The saved settings aren’t valid. Choose them again.");
+    [self fitAdvancedSettingsPage];
 }
 - (void)updateRegionalDefaultsPresentation {
     self.regionalDefaultsView.configurationMode=self.regionalDefaultsMode.indexOfSelectedItem;
     self.regionalDefaultsView.hidden=self.regionalDefaultsMode.indexOfSelectedItem!=VIMRegionalConfigurationCustom;
-    self.regionalDefaultsHelp.stringValue=VIMLocalized(@"regional.defaults-inline-help", @"Changes are saved automatically. Automatic Setup is required. Only new virtual Macs use this policy; existing Macs and setups in progress keep their settings.");
+    self.regionalDefaultsHelp.stringValue=VIMLocalized(@"regional.defaults-inline-help", @"Requires Automatic Setup.");
     self.regionalDefaultsHelp.textColor=NSColor.secondaryLabelColor;
 }
 - (void)regionalDefaultsModeChanged:(NSPopUpButton *)sender {
@@ -480,9 +470,9 @@
     if(error||![VIMRegionalSettings saveDefaultRequest:request preferences:self.regionalPreferences error:&error]) {
         self.regionalDefaultsHelp.stringValue=[NSString stringWithFormat:VIMLocalized(@"regional.defaults-unsaved", @"Not saved: %@"),error.localizedDescription];
         self.regionalDefaultsHelp.textColor=NSColor.systemRedColor;
-        [self refreshRegionalDefaultsStatus];return;
+        [self fitAdvancedSettingsPage];return;
     }
-    [self updateRegionalDefaultsPresentation];[self refreshRegionalDefaultsStatus];
+    [self updateRegionalDefaultsPresentation];[self fitAdvancedSettingsPage];
 }
 - (BOOL)windowShouldClose:(NSWindow *)window {
     if(window==self.settingsWindow)[window makeFirstResponder:nil];

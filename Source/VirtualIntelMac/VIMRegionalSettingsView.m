@@ -28,10 +28,10 @@
     if((self=[super initWithFrame:NSZeroRect])){
         _enabled=YES;_showsModeControls=YES;self.languages=VIMRegionalSettings.languageChoices;self.regions=VIMRegionalSettings.regionChoices;self.zones=VIMRegionalSettings.timeZoneChoices;
         self.experimental=[NSButton checkboxWithTitle:VIMLocalized(@"regional.experimental", @"Set language, region and time zone (Experimental)") target:self action:@selector(updateEnabled:)];
-        NSTextField *experimentalDetail=[NSTextField wrappingLabelWithString:VIMLocalized(@"regional.experimental-explanation", @"This experimental feature may prevent initial setup from completing on some macOS versions. Leave it disabled to use the guest’s defaults.")];
+        NSTextField *experimentalDetail=[NSTextField wrappingLabelWithString:VIMLocalized(@"regional.experimental-explanation", @"May prevent setup from completing on some macOS versions.")];
         experimentalDetail.textColor=NSColor.secondaryLabelColor;experimentalDetail.font=[NSFont systemFontOfSize:11];
         self.followHost=[NSButton checkboxWithTitle:VIMLocalized(@"regional.follow-host", @"Use this Mac’s language, region and time zone") target:self action:@selector(updateEnabled:)];
-        self.allowFallback=[NSButton checkboxWithTitle:VIMLocalized(@"regional.allow-fallback", @"Use supported alternatives when needed") target:self action:@selector(preferencesChanged:)];
+        self.allowFallback=[NSButton checkboxWithTitle:VIMLocalized(@"regional.allow-fallback", @"Use supported alternatives") target:self action:@selector(preferencesChanged:)];
         NSString *language=VIMLocalized(@"regional.language", @"Preferred languages:"),*region=VIMLocalized(@"regional.region", @"Region:"),*zone=VIMLocalized(@"regional.time-zone", @"Time zone:");
         self.language=[NSTokenField new];self.language.delegate=self;self.language.accessibilityLabel=language;
         self.language.target=self;self.language.action=@selector(preferencesChanged:);
@@ -40,7 +40,7 @@
         self.region=[self combo:self.regions label:region];self.zone=[self combo:self.zones label:zone];
         NSGridView *grid=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:language],self.language],@[[NSTextField labelWithString:region],self.region],@[[NSTextField labelWithString:zone],self.zone]]];
         grid.rowSpacing=12;grid.columnSpacing=12;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
-        NSTextField *detail=[NSTextField wrappingLabelWithString:VIMLocalized(@"regional.explanation", @"Applied once before the first desktop login. Add languages in preference order, using names or language IDs separated by commas. Support depends on the guest’s macOS version. Later changes inside the virtual Mac are preserved.")];
+        NSTextField *detail=[NSTextField wrappingLabelWithString:VIMLocalized(@"regional.explanation", @"Enter language names or IDs in preference order, separated by commas.")];
         detail.textColor=NSColor.secondaryLabelColor;detail.font=[NSFont systemFontOfSize:11];
         NSStackView *stack=[NSStackView stackViewWithViews:@[self.experimental,experimentalDetail,self.followHost,grid,self.allowFallback,detail]];
         stack.orientation=NSUserInterfaceLayoutOrientationVertical;stack.alignment=NSLayoutAttributeLeading;stack.spacing=12;

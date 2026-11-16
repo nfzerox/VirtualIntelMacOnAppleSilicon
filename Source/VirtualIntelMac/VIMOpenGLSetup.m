@@ -589,7 +589,7 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
     if(account[@"RegionalSettings"]&&self.profile[@"RegionalSettings"]){
         NSError *regionalError=nil;
         if(![VIMRegionalSettings storeResult:account[@"RegionalSettings"] requested:self.profile[@"RegionalSettings"] packageURL:self.machine.URL error:&regionalError]){
-            completion(nil,regionalError?:SetupError(VIMLocalized(@"regional.invalid-result", @"The guest’s regional setup result could not be confirmed.")));return;
+            completion(nil,regionalError?:SetupError(VIMLocalized(@"regional.invalid-result", @"Couldn’t confirm the language and region settings.")));return;
         }
     }
     BOOL automatic=[self.profile[@"Enabled"] boolValue];NSString *phase=account[@"Phase"];
