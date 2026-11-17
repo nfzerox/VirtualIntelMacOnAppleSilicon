@@ -14,6 +14,7 @@
 
 u32 *tr_cc;
 bool tr_precise_flags, tr_has_tzcnt, tr_hybrid, tr_no_bulk_rep;
+bool tr_fpcr_merges_scalar;
 bool tr_profile_shift_helpers;
 bool tr_inline_shr8;
 bool tr_page_rep;
@@ -1061,6 +1062,10 @@ static TrResult do_translate(int key, int view, u64 cr3, int cpl, u64 rip, bool 
         }
     }
 
+    // Finish instruction-cache maintenance before publishing this body in
+    // any lookup or in the monitor's address-to-block directory.
+    sys_icache_invalidate(start, (u8 *)tr_cc - (u8 *)start);
+
     // Registers the block.
     u32 idx = BLOCK_BASE(cur_part) + hblock_count[cur_part]++;
     HostBlock *hb = &hblocks[idx];
@@ -1092,7 +1097,6 @@ static TrResult do_translate(int key, int view, u64 cr3, int cpl, u64 rip, bool 
     ctx_ptr->block_count = hblock_count[0];
     ctx_ptr->block_count_private = hblock_count[1];
     cc_cursor[cur_part] = tr_cc;
-    sys_icache_invalidate(start, (u8 *)tr_cc - (u8 *)start);
     stats.blocks++;
     stats.words += tr_cc - start;
     stats.exit_words += (u64)(tr_cc - tail);
@@ -1468,6 +1472,7 @@ void tr_init(const TrConfig *config) {
 
 TrResult tr_translate(int view, uint64_t cr3, int cpl, bool compat, uint64_t rip, bool single) {
     tr_compat = compat; // the asking vCPU's: ctx_ptr is the first vCPU's, whatever it is running
+    tr_fpcr_merges_scalar = ctx_ptr->fpcr_merges_scalar != 0;
     if (view > view_high)
         view_high = view;
     int key = block_key(view, cr3, cpl, rip);

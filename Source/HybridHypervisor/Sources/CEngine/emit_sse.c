@@ -1,5 +1,4 @@
-// SSE and SSE2 to NEON. FPCR runs with AH=1 and NEP=1 (FEAT_AFP, measured available in the guest): min/max and NaN handling
-// follow x86, and scalar operations keep the upper lanes of their first source, so most instructions map one to one.
+// SSE and SSE2 to NEON. Where supported, FPCR.AH selects alternate FP behavior for min/max and NaNs.
 // MXCSR status lives in FPSR. Unmasked FP exceptions cannot be trapped on this hardware, so the monitor stops on them.
 #include "engine_api.h"
 #include "tr_internal.h"
@@ -65,6 +64,15 @@ static void ins_elem(int rd, int di, int rn, int si, int bytes) {
     u32 imm4 = (u32)si << ls;
     E(0x6E000400u | imm5 << 16 | imm4 << 11 | rn << 5 | rd);
 }
+
+// Legacy scalar SSE replaces only the low lane. On hosts without FEAT_AFP
+// (including M1), NEP reads as zero and a scalar ARM result clears upper lanes.
+static void scalar_fp_result(u32 opcode, int dest, int src, int bytes) {
+    RR(opcode, tr_fpcr_merges_scalar ? dest : V_S0, src);
+    if (!tr_fpcr_merges_scalar)
+        ins_elem(dest, 0, V_S0, 0, bytes);
+}
+
 static void umov_d(int rd, int rn, int lane) { E(0x4E083C00u | (u32)lane << 20 | rn << 5 | rd); }
 
 static void bad(const Insn *in, const char *why) { emit_stop(in->rip, why); }
@@ -84,7 +92,9 @@ static void fp_arith(const Insn *in, FpOp op) {
         RRR(enc, in->reg, in->reg, s);
     } else {
         u32 enc = kind == 3 ? op.scalar | 1u << 22 : op.scalar;
-        RRR(enc, in->reg, in->reg, s);
+        RRR(enc, tr_fpcr_merges_scalar ? in->reg : V_S0, in->reg, s);
+        if (!tr_fpcr_merges_scalar)
+            ins_elem(in->reg, 0, V_S0, 0, 1 << kind);
     }
 }
 
@@ -791,7 +801,8 @@ void emit_sse(const Insn *in, int live) {
                 ldst(1, x ? 8 : 4, S0, addr_prepare(in, x ? 8 : 4));
                 s = S0;
             }
-            RR((x ? 0x9E220000u : 0x1E220000u) | (pfx == 0xF2 ? 1u << 22 : 0), d, s);
+            bool dbl = pfx == 0xF2;
+            scalar_fp_result((x ? 0x9E220000u : 0x1E220000u) | (dbl ? 1u << 22 : 0), d, s, dbl ? 8 : 4);
             break;
         }
         case 0x2B:
@@ -862,7 +873,7 @@ void emit_sse(const Insn *in, int live) {
             if (kind == 4)
                 RR(pfx == 0x66 ? 0x6EE1F800u : 0x6EA1F800u, d, s);
             else
-                RR(kind == 3 ? 0x1E61C000u : 0x1E21C000u, d, s);
+                scalar_fp_result(kind == 3 ? 0x1E61C000u : 0x1E21C000u, d, s, 1 << kind);
             break;
         }
         case 0x52:
@@ -918,10 +929,10 @@ void emit_sse(const Insn *in, int live) {
         case 0x5A:
             if (pfx == 0xF3) {
                 int s = src_op(in, 2, false);
-                RR(0x1E22C000u, d, s);
+                scalar_fp_result(0x1E22C000u, d, s, 8);
             } else if (pfx == 0xF2) {
                 int s = src_op(in, 3, false);
-                RR(0x1E624000u, d, s);
+                scalar_fp_result(0x1E624000u, d, s, 4);
             } else if (pfx == 0) {
                 int s = src_op(in, 3, false);
                 RR(0x0E617800u, d, s); // fcvtl

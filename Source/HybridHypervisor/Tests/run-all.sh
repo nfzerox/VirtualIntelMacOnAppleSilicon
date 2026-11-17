@@ -72,6 +72,7 @@ check_same x87-loads t_x87_loads
 "$engine" "$images/t_x87_loads" 1 || fail=1
 check_same shr16 t_shr16
 "$engine" "$images/t_shr16" 1 || fail=1
+"$engine" "$images/t_sse_scalar_lanes" || fail=1
 check_same corpus-O0 t_corpus_O0
 check_same corpus-O1 t_corpus_O1
 check_same corpus-O2 t_corpus_O2

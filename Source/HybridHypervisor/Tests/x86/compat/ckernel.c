@@ -435,10 +435,13 @@ static void test_far(void) {
 
 static void test_segments(void) {
     volatile u32 *gs = (volatile u32 *)GS_AREA;
+    // Only real QEMU supplies a TCG fallback for a based user ES. The
+    // standalone engine's fixture port does not read as all ones.
+    bool qemu_fallback = inl(0x510) == ~0u;
     gs[0] = 0xC0DE0000;
     gs[1] = 0xC0DE0001;
     gs[2] = 0xC0DE0002;
-    u64 r = run32(T_SEGMENTS, 0);
+    u64 r = run32(T_SEGMENTS, qemu_fallback);
     CHECK(r == 0, "segments status %x", r);
     // A new thread's descriptor under the same selector takes effect at the kernel's next load, as XNU's context switch relies on.
     u64 frame = frame_alloc();
@@ -447,7 +450,7 @@ static void test_segments(void) {
     *(volatile u32 *)(GS_AREA + 0x100000) = 0xC0DE0000;
     *(volatile u32 *)(GS_AREA + 0x100004) = 0xC0DE0001;
     *(volatile u32 *)(GS_AREA + 0x100008) = 0xC0DE0002;
-    r = run32(T_SEGMENTS, 0);
+    r = run32(T_SEGMENTS, qemu_fallback);
     CHECK(r == 0, "segments on a second base: status %x", r);
     CHECK(*(volatile u32 *)(GS_AREA + 8) == 0xC0DE0004 && *(volatile u32 *)(GS_AREA + 0x100008) == 0xC0DE0004, "gs writes went astray: %x %x", (u64)*(volatile u32 *)(GS_AREA + 8), (u64)*(volatile u32 *)(GS_AREA + 0x100008));
     ldt[6] = descriptor(GS_AREA, 1, 0xF2ULL << 40 | 0xCULL << 52);

@@ -158,6 +158,7 @@ bool insn_is_terminator(const Insn *in);
 // ---- emit state ----
 extern u32 *tr_cc; // write cursor
 extern bool tr_precise_flags, tr_has_tzcnt, tr_hybrid, tr_no_bulk_rep;
+extern bool tr_fpcr_merges_scalar;
 extern bool tr_profile_shift_helpers;
 extern bool tr_inline_shr8;
 extern bool tr_page_rep;

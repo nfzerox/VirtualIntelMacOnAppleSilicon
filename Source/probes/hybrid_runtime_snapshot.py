@@ -94,6 +94,10 @@ def snapshot(debugger, command, result, internal_dict):
             context = target.CreateValueFromAddress('cpu' + str(index),
                 lldb.SBAddress(address + index * CTX_SLOT, target), context_type)
             cpus.append(fields(context, CPU_FIELDS))
+            # Architectural/last-trap state is a stopped-process observation,
+            # not a counter or proof that this instruction consumed the run.
+            cpus[-1]['State'] = fields(context, ('cr0', 'cr3', 'cr4', 'cpl',
+                'compat', 'seg_bad', 'mxcsr', 'view', 'elr', 'far', 'esr'))
             # Optional appended diagnostics: old qualified binaries remain readable.
             for name in ('profile_shift_helpers', 'stat_shift_helpers_unclassified', 'stat_shift_helpers',
                          'profile_x87_helpers', 'stat_x87_helpers_unclassified', 'stat_x87_helpers',

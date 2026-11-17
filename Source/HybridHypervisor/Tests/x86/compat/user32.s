@@ -487,6 +487,7 @@ from_64_entry:
 
 // ---- segments ----
 t_segments:
+    movl %ebx, %edi // real QEMU can exercise based user ES via TCG
     movl %gs:0, %eax
     EQ %eax, $0xC0DE0000, 1
     movl $0xFFFFFFF8, %ebx
@@ -525,6 +526,20 @@ t_segments:
     EQ %gs:8, $0xC0DE0003, 11
     lock incl %gs:8
     EQ %gs:8, $0xC0DE0004, 12
+    testl %edi, %edi
+    jz pass
+    movl $512, %ecx
+1:  movl $USER_CTHREAD, %eax
+    movw %ax, %es
+    movl %ecx, %es:12
+    lock incl %es:12
+    leal 1(%ecx), %edx
+    EQ %es:12, %edx, 13
+    movl $USER_DS, %eax
+    movw %ax, %es
+    EQ %gs:12, %edx, 14
+    decl %ecx
+    jnz 1b
     jmp pass
 
 // ---- code that changes ----

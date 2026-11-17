@@ -199,6 +199,7 @@ enum {
     HC_PARK, // out of the code cache for a moment, in case another vCPU is resetting it
     HC_VIEW_FORGET, // a[0] view: empty its lookup table, as a slot above a shared directory changed
     HC_CALL_TAIL, // a[0] a cross-key call/jump site, a[1] its x86 target: use a view lookup without repeatedly entering the monitor
+    HC_CODE_FETCH_RETRY, // a[0] ARM pc, a[1] x86 block entry, a[2] attempt number
 };
 
 // Stop reasons for HC_STOP.
@@ -360,6 +361,8 @@ typedef struct {
     // Enabled only with the existing explicit MMU-observation diagnostic.
     // Append only: preserve earlier assembly/emitter offsets and slot size.
     EngineNoteRescanRing note_rescans;
+    // vCPU zero publishes the VM's effective FPCR.NEP before translating.
+    uint32_t fpcr_merges_scalar;
 } EngineCtx;
 _Static_assert(sizeof(EngineCtx) <= CTX_SLOT, "EngineCtx must fit its existing per-vCPU slot");
 

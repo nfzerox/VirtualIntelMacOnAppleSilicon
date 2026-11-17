@@ -16,7 +16,7 @@ link() { # name objects...
 }
 
 clang "${flags[@]}" -c "$here/flatlibc.c" -o "$out/flatlibc.o"
-for prog in t_sanity t_smc t_callret t_rep t_x87 t_x87_loads t_shr16; do
+for prog in t_sanity t_smc t_callret t_rep t_x87 t_x87_loads t_shr16 t_sse_scalar_lanes; do
     clang "${flags[@]}" -c "$here/$prog.c" -o "$out/$prog.o"
     link "$prog" "$out/$prog.o" "$out/flatlibc.o"
 done

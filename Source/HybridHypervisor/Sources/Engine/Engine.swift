@@ -753,6 +753,10 @@ public final class Engine {
             }
         case Int(HC_STOP):
             return try stopReport()
+        case Int(HC_CODE_FETCH_RETRY):
+            let a = c.pointee.req_a
+            let message = "hvdbt: vCPU \(cpuIndex) synchronizing translated block entry after Unknown instruction; arm-pc \(hex(a.0)) x86-rip \(hex(a.1)) retry \(a.2)\n"
+            FileHandle.standardError.write(Data(message.utf8))
         default:
             throw EngineError.stop("unknown host call \(code)")
         }
@@ -800,7 +804,9 @@ public final class Engine {
             throw EngineError.stop("\(why) at x86 rip \(hex(rip)): \(bytes(at: rip))")
         case Int(STOP_MONITOR_FAULT):
             // In any dump that follows, the registers are the monitor's at the fault, and the rip is the last boundary or fallback.
-            throw EngineError.stop("monitor fault: esr \(hex(a.2)) far \(hex(a.3)) elr \(hex(a.4)), the registers below are the monitor's, not the guest's")
+            let instruction = a.5 & (1 << 32) != 0 ?
+                String(format: " arm-word 0x%08x", UInt32(truncatingIfNeeded: a.5)) : ""
+            throw EngineError.stop("monitor fault: esr \(hex(a.2)) far \(hex(a.3)) elr \(hex(a.4))\(instruction), the registers below are the monitor's, not the guest's")
         case Int(STOP_UNSUPPORTED):
             throw EngineError.stop("unsupported case \(a.2) at x86 rip \(hex(rip)): \(hex(a.3)) \(hex(a.4))")
         case Int(STOP_TRIPLE_FAULT):

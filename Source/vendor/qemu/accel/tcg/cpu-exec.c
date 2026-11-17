@@ -1164,10 +1164,24 @@ cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
                 uint64_t generation;
                 bool reused;
 #ifndef CONFIG_USER_ONLY
-                if (unlikely(tcg_handoff) && s.cflags == curr_cflags(cpu) &&
-                    tcg_handoff->want_engine(cpu, s.pc, s.flags)) {
-                    cpu->exception_index = EXCP_HANDOFF;
-                    break;
+                if (unlikely(tcg_handoff) && s.cflags == curr_cflags(cpu)) {
+                    if (tcg_handoff->want_engine(cpu, s.pc, s.flags)) {
+                        cpu->exception_index = EXCP_HANDOFF;
+                        break;
+                    }
+                    /* Admission can arm guarded TCG on this miss. The
+                     * first block needs the same guard as every later one. */
+                    bool handoff = false;
+                    uint32_t selected = tcg_handoff->select_cflags(
+                        cpu, s.pc, s.flags, s.cflags, exact, &handoff);
+                    if (handoff) {
+                        cpu->exception_index = EXCP_HANDOFF;
+                        break;
+                    }
+                    if (selected != s.cflags) {
+                        s.cflags = selected;
+                        goto retry_handoff_lookup;
+                    }
                 }
 #endif
 

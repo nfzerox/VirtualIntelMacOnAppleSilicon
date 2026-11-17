@@ -2124,7 +2124,11 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         if(sample&&(![pid isKindOfClass:NSNumber.class]||pid.longLongValue<2||pid.longLongValue>INT_MAX)){
             finish(@{@"Error":@"Choose a guest process identifier greater than one."});return;
         }
-        NSArray *arguments=sample?@[pid.stringValue,@"1",@"-file",@"/dev/stdout"]:@[@"-axo",@"pid,ppid,state,etime,time,comm"];
+        // Tiger's native ps implements neither etime nor comm. With -c,
+        // command is the executable name only; it never includes argv.
+        NSArray *processes=[self.machine.guest isEqual:@"tiger"]?
+            @[@"-axc",@"-o",@"pid,ppid,state,time,command"]:@[@"-axo",@"pid,ppid,state,etime,time,comm"];
+        NSArray *arguments=sample?@[pid.stringValue,@"1",@"-file",@"/dev/stdout"]:processes;
         [self.guestAgent connectWithCompletion:^(NSError *failure){
             if(failure){finish(@{@"Error":failure.localizedDescription});return;}
             [self.guestAgent runExecutable:sample?@"/usr/bin/sample":@"/bin/ps" arguments:arguments timeout:0

@@ -69,7 +69,7 @@ typedef struct {
     bool tcg_ran; /* normal TBs have been generated: engine writes may have made them stale, and nothing tells TCG */
     bool fallback_quantum;
     unsigned fallback_left;
-    bool transition_guard; /* temporary i386 kernel selectors, checked at every TB */
+    bool transition_guard; /* i386 selector fallback, checked at every TB */
     /* Pages TCG wrote since DIRTY_MEMORY_CODE was last cleared for them. Only the vCPU thread touches this. */
     HvdbtWriteSpan written;
     bool protect_all;
@@ -809,7 +809,7 @@ static bool hvdbt_want_engine(CPUState *cs, vaddr pc, uint32_t flags)
         } else if (cseg->base || cseg->limit != 0xffffffff || sseg->base || sseg->limit != 0xffffffff || (sseg->flags & DESC_E_MASK) ||
                    engine_compat_segments_bad(hvdbt_seg_bad(env),flags & HF_CPL_MASK)) {
             snprintf(why, sizeof why, "refused: compatibility mode, non-flat segments");
-            selector_transition = !(flags & HF_CPL_MASK);
+            selector_transition = true;
         }
     }
     if (why[0]) {
@@ -829,9 +829,10 @@ static bool hvdbt_want_engine(CPUState *cs, vaddr pc, uint32_t flags)
     }
     ok = !why[0];
     if (!ok) {
-        /* i386 XNU's copyin/out temporarily installs a based ES descriptor.
-         * TCG must implement those segment semantics, but it need not leave
-         * ordinary unguarded blocks behind. The existing hand-off guard
+        /* i386 XNU's copyin/out and user-space selector changes can both
+         * leave the engine's flat segment model. TCG must implement those
+         * semantics, but it need not leave ordinary unguarded blocks behind.
+         * The existing hand-off guard
          * validates actual decoded bytes before every unchained execution.
          * Keep this ownership through the temporary state, then return to
          * the engine without a global TB flush/exclusive stop on every copy. */

@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include "engine_abi.h"
 #include "compat_segments.h"
+#include "monitor-code-fault.h"
 
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -56,6 +57,8 @@ typedef struct {
     u32 xfl;
     u32 lock_site;
     u64 lock_from;
+    u64 code_retry_pc;
+    u32 code_retry_count;
     u8 fx_area[512] __attribute__((aligned(16))); // the x87 save formats, one at a time
 } MonCpu;
 _Static_assert(sizeof(MonCpu) <= CTX_SLOT / 2, "the rest of the slot is the stack");
@@ -528,6 +531,8 @@ static u64 rip_here(u64 pc) {
 // before an instruction's last access. Stops with no rip are about the engine's own limits, and stay final.
 static void irq_deliver_now(u64 rip, u32 apic_vector);
 _Noreturn static void stop(u64 reason, u64 rip, u64 a, u64 b, u64 d) {
+    if (reason == STOP_MONITOR_FAULT)
+        c->req_a[5] = engine_capture_code_fault(d, PRIV_VA + OFF_CC, PRIV_VA + OFF_CC2, CC_SIZE);
     mon_unlock_all();
     bool resumable = c->hybrid && rip && (reason == STOP_UNTRANSLATED || reason == STOP_UNSUPPORTED || reason == STOP_FALLBACK);
     // A vector already taken from QEMU's APIC goes first. The instruction restarts on return from the handler, and the host never sits on
@@ -979,7 +984,7 @@ static u64 view_lookup(u64 rip) {
 }
 
 static inline void code_changed(u32 *word) {
-    __asm__ volatile("dc cvau, %0\n dsb ish\n ic ivau, %0\n dsb ish\n isb" : : "r"(word));
+    __asm__ volatile("dc cvau, %0\n dsb ish\n ic ivau, %0\n dsb ish\n isb" : : "r"(word) : "memory");
 }
 
 // tr_link, for a target this view already knows, with no way out of the VM. Half of all host calls in a fork loop did only this.
@@ -3510,8 +3515,36 @@ static void rep_page_service(bool movs) {
 // ---- End experimental page REP service ----
 
 #define HLT_POLL_TICKS 2400 // 100 us of the 24 MHz counter
+static bool retry_unknown_code_fetch(void) {
+    // A reported Unknown instruction at the SMP entry NOP may mean that
+    // the instruction and data views of the translated code diverged.
+    // Re-synchronize the actual execution VA and retry this exact ARM PC.
+    // Unrecognized words, non-entry addresses and repeated faults are fatal.
+    if (!c->hybrid || !smp || c->esr != ENGINE_ARM_UNKNOWN_A64 ||
+        pt_step_slot || me->shadow_stepping || me->smc_held)
+        return false;
+    u64 pc = c->elr;
+    BlockEntry *block = find_block(pc);
+    bool entry = block && pc == PRIV_VA + OFF_CC + ((u64)block->arm_off << 2);
+    if (!entry)
+        return false;
+    u64 word = engine_capture_code_fault(pc, PRIV_VA + OFF_CC, PRIV_VA + OFF_CC2, CC_SIZE);
+    if (!engine_code_fetch_can_retry(c->esr, word, entry, pc,
+                                    me->code_retry_pc, me->code_retry_count))
+        return false;
+    me->code_retry_pc = pc;
+    c->req_a[0] = pc;
+    c->req_a[1] = block->rip;
+    c->req_a[2] = ++me->code_retry_count;
+    hostcall(HC_CODE_FETCH_RETRY);
+    code_changed((u32 *)pc);
+    return true;
+}
+
 void mon_sync(void) {
     u32 ec = (u32)(c->esr >> 26);
+    if (ec == 0 && retry_unknown_code_fetch())
+        return;
     bool page_movs = false;
     bool page_rep = ec == 0x15 && ((u32)c->esr & 0xffff) == SVC_REP_PAGE;
     if (page_rep && !rep_page_site(c->elr - 4, &page_movs))
@@ -3912,6 +3945,11 @@ void mon_init(void) {
     WSR(ttbr1_el1, v->ttbr1);
     __asm__ volatile("isb");
     mxcsr_apply(c->hybrid ? c->resume_mxcsr : 0x1F80);
+    if (!cpu_index()) {
+        // Measure the FPCR Hypervisor actually exposes, not the host model.
+        // All vCPUs in this VM use that feature set and mxcsr_apply's policy.
+        c->fpcr_merges_scalar = (RSR(S3_3_C4_C4_0) & 4) != 0;
+    }
     if (!c->hybrid && !c->fcw)
         c->fcw = 0x37F;
     fp_trap_sync();
