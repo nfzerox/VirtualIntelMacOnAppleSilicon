@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""Measure a real Chess board held outside its camera-drag dead zone.
+
+Choose a visible wooden border point from the app's captured guest frame and
+pass its normalized 0..32767 coordinates. The unchanged Chess app then rotates
+using its own periodic tracking events, without a stream of mouse motions.
+Uses the real app's existing diagnostic/input owner, never a second QMP client.
+"""
+import argparse
+import json
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("diagnostics", type=Path)
+    parser.add_argument("--origin", nargs=2, type=int, required=True, metavar=("X", "Y"))
+    parser.add_argument("--offset", type=int, default=3000, help="horizontal normalized deflection")
+    parser.add_argument("--seconds", type=float, default=6)
+    args = parser.parse_args()
+    x, y = args.origin
+    if not (0 <= x <= 32767 and 0 <= y <= 32767 and
+            0 <= x + args.offset <= 32767 and args.offset and 0 < args.seconds <= 30):
+        parser.error("use valid normalized coordinates, a nonzero deflection and at most 30 seconds")
+    adapter = Path(__file__).with_name("app-guest-command.py")
+
+    def request(*arguments):
+        result = subprocess.run([sys.executable, str(adapter), str(args.diagnostics), *arguments],
+                                capture_output=True, text=True)
+        if result.returncode:
+            raise RuntimeError(result.stderr or result.stdout)
+        reply = json.loads(result.stdout)
+        if reply.get("Error"):
+            raise RuntimeError(reply["Error"])
+        return reply
+
+    def pointer(position, down):
+        events = [{"type": "abs", "data": {"axis": axis, "value": value}}
+                  for axis, value in zip(("x", "y"), position)]
+        events.append({"type": "btn", "data": {"button": "left", "down": down}})
+        return request("--input-json", json.dumps(events))
+
+    initial = request("--display-state")
+    already_measuring = initial["Frame"].get("DistinctPresentationTiming", {}).get("Enabled", False)
+    held = measuring = False
+    try:
+        if not already_measuring:
+            request("--display-fingerprint", "on")
+            measuring = True
+        pointer((x, y), False)
+        # Mark ownership before submitting so cleanup also releases an input
+        # whose acknowledgement was interrupted after the app accepted it.
+        held = True
+        pointer((x, y), True)
+        pointer((x + args.offset, y), True)
+        before = request("--display-state")["Frame"]
+        time.sleep(args.seconds)
+        after = request("--display-state")["Frame"]
+    finally:
+        try:
+            if held:
+                pointer((x + args.offset, y), False)
+        finally:
+            if measuring:
+                request("--display-fingerprint", "off")
+
+    # Fingerprint timestamps are always available for this measurement.
+    # PresentationTiming is a separate opt-in diagnostic, not a prerequisite.
+    first_trace = before["DistinctPresentationTiming"].get("Trace", [])
+    last_trace = after["DistinctPresentationTiming"].get("Trace", [])
+    if not first_trace or not last_trace:
+        raise RuntimeError("no presented-pixel timestamps were captured")
+    begin, end = first_trace[-1][0], last_trace[-1][0]
+    timing = after["DistinctPresentationTiming"]
+    if end <= begin or timing.get("Failures") or timing.get("TraceDropped"):
+        raise RuntimeError("the presented-pixel interval was not captured completely")
+    rows = [row for row in timing["Trace"] if begin < row[0] <= end]
+    changed = sum(bool(row[2]) for row in rows)
+    print(json.dumps({"Origin": [x, y], "Offset": args.offset, "SecondsRequested": args.seconds,
+                      "PresentationStart": begin, "PresentationEnd": end,
+                      "ObservedSeconds": end - begin, "PresentedFrames": len(rows),
+                      "DistinctFrames": changed, "DistinctFramesPerSecond": changed / (end - begin),
+                      "Before": before, "After": after,
+                      "Caution": "Whole-frame visible RGB changes, not GL draw rate or HID latency. "
+                                 "Chess still snaps near cardinal angles. Check that a wooden border "
+                                 "was picked and no other windows animate."}, indent=2))
+
+
+if __name__ == "__main__":
+    main()

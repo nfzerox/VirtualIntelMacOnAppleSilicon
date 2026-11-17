@@ -1,0 +1,176 @@
+diff --git a/Source/scripts/generate-guest-install-targets.py b/Source/scripts/generate-guest-install-targets.py
+index 489b30a5..bab45f8b 100644
+--- a/Source/scripts/generate-guest-install-targets.py
++++ b/Source/scripts/generate-guest-install-targets.py
+@@ -12,7 +12,10 @@ for guest, filename in [('Catalina', 'install-targets.txt'), ('Mojave', 'install
+     assert targets and len(targets) == len(set(targets))
+     assert all((p.startswith(('/System/Library/', '/Library/Extensions/', '/Library/GPUBundles/')) or
+                 p in ('/usr/lib/PVGGLIOKit.dylib', '/Library/Preferences/com.apple.Aperture.plist',
+-                      '/Library/Preferences/com.apple.iPhoto.plist'))
++                      '/Library/Preferences/com.apple.iPhoto.plist',
++                      '/Library/Preferences/com.apple.iWork.Keynote.plist',
++                      '/Library/Preferences/com.apple.iWork.Pages.plist',
++                      '/Library/Preferences/com.apple.iWork.Numbers.plist'))
+                and '..' not in Path(p).parts for p in targets)
+     lines.append(f'static NSArray<NSString *> *VIM{guest}InstallTargets(void) {{ return @[')
+     lines.extend('@' + json.dumps(p[1:]) + ',' for p in targets)
+diff --git a/Source/scripts/pvg-stage-guest b/Source/scripts/pvg-stage-guest
+index 4b264c04..c180ec87 100755
+--- a/Source/scripts/pvg-stage-guest
++++ b/Source/scripts/pvg-stage-guest
+@@ -38,7 +38,7 @@ done
+ mkdir -p "$payload${core:h}" "$payload${output_compiler:h}" "$payload${service:h}"
+ if [[ $pvg_target == 10.14 ]]; then
+     native=$(mktemp -d /private/var/tmp/pvg-native-mojave.XXXXXX)
+-    for app in Aperture iPhoto; do
++    for app in Aperture iPhoto iWork.Keynote iWork.Pages iWork.Numbers; do
+         policy=/Library/Preferences/com.apple.$app.plist
+         mkdir -p "$payload${policy:h}"
+         "$repo/prebuilt/tools/guest-prepare" --aperture-policy "$guest$policy" "$native/$app.plist"
+diff --git a/Source/scripts/refresh-mojave-opengl-policy.py b/Source/scripts/refresh-mojave-opengl-policy.py
+index 14e6d27a..1de6f9c0 100644
+--- a/Source/scripts/refresh-mojave-opengl-policy.py
++++ b/Source/scripts/refresh-mojave-opengl-policy.py
+@@ -40,7 +40,7 @@ def main():
+     policy = subprocess.check_output(['codesign', '-d', '--entitlements', ':-', str(cvms)], stderr=subprocess.DEVNULL)
+     if plistlib.loads(policy) != plistlib.loads(entitlements.read_bytes()):
+         raise ValueError('CVMServer did not retain the exact original Apple JIT policy')
+-    for app in ('Aperture', 'iPhoto'):
++    for app in ('Aperture', 'iPhoto', 'iWork.Keynote', 'iWork.Pages', 'iWork.Numbers'):
+         preference = payload / f'Library/Preferences/com.apple.{app}.plist'
+         preference.parent.mkdir(parents=True, exist_ok=True)
+         # Canonical guest staging merges the real guest's existing preferences;
+@@ -57,7 +57,7 @@ def main():
+     revision = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip()
+     with (args.output / 'RELEASE.txt').open('a') as stream:
+         stream.write(f'\nGL compatibility policy refresh: {revision} (plus working-tree policy refresh script).\n'
+-                     'Restored exact Apple CVMServer JIT entitlements; enabled Aperture/iPhoto AppKit root layer backing.\n'
++                     'Restored exact Apple CVMServer JIT entitlements; enabled Aperture/iPhoto/iWork AppKit root layer backing.\n'
+                      'Guest-native staging still merges preferences and re-signs its universal OpenGL framework.\n')
+     print(f'Refreshed release: {args.output}\nInspection scratch retained: {work}')
+ 
+diff --git a/Source/scripts/test-mojave-staging.py b/Source/scripts/test-mojave-staging.py
+index 48fadb2a..24639777 100644
+--- a/Source/scripts/test-mojave-staging.py
++++ b/Source/scripts/test-mojave-staging.py
+@@ -16,6 +16,7 @@ sky = 'System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight'
+ ioaccel = 'System/Library/PrivateFrameworks/IOAccelerator.framework/Versions/A/IOAccelerator'
+ vpa = 'System/Library/PrivateFrameworks/AppleVPA.framework/Versions/A/Resources/Info.plist'
+ aperture = 'Library/Preferences/com.apple.Aperture.plist'
++iwork = 'Library/Preferences/com.apple.iWork.Keynote.plist'
+ compiler = 'System/Library/PrivateFrameworks/MTLCompiler.framework/Versions/3902/MTLCompiler'
+ service = 'System/Library/Frameworks/Metal.framework/Versions/A/XPCServices/MTLCompilerService.xpc/Contents/MacOS/MTLCompilerService'
+ compiler_strings = (b'\0AppleIntelHD4000GraphicsMTLDriver.bundle/Contents/MacOS/libMTLIntelCompilerPlugin.dylib\0'
+@@ -36,6 +37,8 @@ for bad, seedless, passthrough in ((False, False, False), (False, True, False),
+         if not seedless:
+             files[aperture]=plistlib.dumps({'UnrelatedPreference': 'preserve me',
+                                           'NSViewAllowsRootLayerBacking': False})
++            files[iwork]=plistlib.dumps({'UnrelatedPreference': 'preserve me',
++                                        'NSViewAllowsRootLayerBacking': False})
+         other=struct.pack('<7I',0xfeedface,7,3,6,0,0,0)+b'original i386 client'
+         other_offset=(4096+len(raw)+4095)&~4095
+         header=struct.pack('>12I',0xcafebabe,2,0x1000007,3,4096,len(raw),12,
+@@ -97,6 +100,9 @@ for bad, seedless, passthrough in ((False, False, False), (False, True, False),
+             assert app_policy==({'NSViewAllowsRootLayerBacking': True} if seedless else
+                                 {'NSViewAllowsRootLayerBacking': True, 'UnrelatedPreference': 'preserve me'})
+             assert plistlib.loads((payload/'Library/Preferences/com.apple.iPhoto.plist').read_bytes())=={'NSViewAllowsRootLayerBacking': True}
++            assert plistlib.loads((payload/iwork).read_bytes())==app_policy
++            for app in ('Pages', 'Numbers'):
++                assert plistlib.loads((payload/f'Library/Preferences/com.apple.iWork.{app}.plist').read_bytes())=={'NSViewAllowsRootLayerBacking': True}
+             assert b'/usr/lib/PVGGLIOKit.dylib\0' in (payload/sky).read_bytes()
+             assert helper.is_file()
+             capabilities=plistlib.loads((payload/vpa).read_bytes())
+diff --git a/Source/support/install-targets-mojave.txt b/Source/support/install-targets-mojave.txt
+index 75a7c272..77c7a3fb 100644
+--- a/Source/support/install-targets-mojave.txt
++++ b/Source/support/install-targets-mojave.txt
+@@ -25,3 +25,6 @@
+ /Library/Extensions/VoodooHDA.kext
+ /Library/Preferences/com.apple.Aperture.plist
+ /Library/Preferences/com.apple.iPhoto.plist
++/Library/Preferences/com.apple.iWork.Keynote.plist
++/Library/Preferences/com.apple.iWork.Pages.plist
++/Library/Preferences/com.apple.iWork.Numbers.plist
+diff --git a/Source/tools/guest-aperture-policy.h b/Source/tools/guest-aperture-policy.h
+index 62fe990f..8f9c472a 100644
+--- a/Source/tools/guest-aperture-policy.h
++++ b/Source/tools/guest-aperture-policy.h
+@@ -1,21 +1,21 @@
+ // Mojave's AppKit admits root layer backing through this per-application
+-// preference. Aperture predates that default and otherwise presents through
+-// the incompatible legacy direct-window GL surface path. No injection,
++// preference. Aperture/iPhoto and iWork '09 predate that default and otherwise
++// use an incompatible direct-window composition path on PVG. No injection,
+ // executable patch, global AppKit preference, or per-frame work is needed.
+-static void PrepareAperturePolicy(NSString *input,NSString *output) {
++static void PrepareAppKitRootLayerPolicy(NSString *input,NSString *output) {
+     NSMutableDictionary *policy=[NSMutableDictionary dictionary];
+     struct stat st;
+     if(lstat(input.fileSystemRepresentation,&st)==0) {
+         Check(S_ISREG(st.st_mode)&&st.st_size>0&&st.st_size<=1024*1024,
+-              @"Aperture compatibility preferences have an unsafe type or size");
++              @"AppKit compatibility preferences have an unsafe type or size");
+         NSDictionary *original=[NSDictionary dictionaryWithContentsOfFile:input];
+-        Check(original!=nil,@"Aperture compatibility preferences are invalid; no preferences were replaced");
++        Check(original!=nil,@"AppKit compatibility preferences are invalid; no preferences were replaced");
+         [policy addEntriesFromDictionary:original];
+-    } else Check(errno==ENOENT,@"Cannot read Aperture compatibility preferences");
++    } else Check(errno==ENOENT,@"Cannot read AppKit compatibility preferences");
+     policy[@"NSViewAllowsRootLayerBacking"]=@YES;
+     NSError *error=nil;
+     NSData *data=[NSPropertyListSerialization dataWithPropertyList:policy
+         format:NSPropertyListBinaryFormat_v1_0 options:0 error:&error];
+     Check(data&&[data writeToFile:output options:NSDataWritingAtomic error:&error],error.localizedDescription);
+-    Check(chmod(output.fileSystemRepresentation,0644)==0,@"Cannot secure Aperture compatibility preferences");
++    Check(chmod(output.fileSystemRepresentation,0644)==0,@"Cannot secure AppKit compatibility preferences");
+ }
+diff --git a/Source/tools/guest-install.m b/Source/tools/guest-install.m
+index 1f914b0d..533fde5c 100644
+--- a/Source/tools/guest-install.m
++++ b/Source/tools/guest-install.m
+@@ -82,11 +82,15 @@
+ static BOOL TransactionTargetsMatchPolicy(NSArray *actual,NSString *guest,BOOL passthroughOpenGL) {
+     NSArray *current=InstallTargets(guest,passthroughOpenGL);
+     if([actual isEqual:current])return YES;
+-    // Continue to inspect/restore already saved Mojave graphics transactions.
+-    // This exact prior policy predates the additive Aperture preference. New
+-    // plans always include it; arbitrary target subsets remain forbidden.
+-    if(![guest isEqual:@"mojave"]||passthroughOpenGL)return NO;
++    // Continue to inspect/restore exact prior Mojave policies after additive
++    // AppKit defaults. New plans include every current preference; arbitrary
++    // subsets or missing graphics targets remain forbidden.
++    if(![guest isEqual:@"mojave"])return NO;
+     NSMutableArray *previous=[current mutableCopy];
++    for(NSString *app in @[@"Keynote",@"Pages",@"Numbers"])
++        [previous removeObject:[NSString stringWithFormat:@"Library/Preferences/com.apple.iWork.%@.plist",app]];
++    if([actual isEqual:previous])return YES;
++    if(passthroughOpenGL)return NO;
+     [previous removeObject:@"Library/Preferences/com.apple.Aperture.plist"];
+     [previous removeObject:@"Library/Preferences/com.apple.iPhoto.plist"];
+     return [actual isEqual:previous];
+diff --git a/Source/tools/guest-prepare.m b/Source/tools/guest-prepare.m
+index b4499211..68032310 100644
+--- a/Source/tools/guest-prepare.m
++++ b/Source/tools/guest-prepare.m
+@@ -45,7 +45,7 @@ int main(int argc,const char **argv) {@autoreleasepool {
+     @try {
+         if(!strcmp(argv[1],"--aperture-policy")) {
+             Check(![NSFileManager.defaultManager fileExistsAtPath:@(argv[3])],@"Aperture policy output already exists");
+-            PrepareAperturePolicy(@(argv[2]),@(argv[3]));return 0;
++            PrepareAppKitRootLayerPolicy(@(argv[2]),@(argv[3]));return 0;
+         }
+         if(!strcmp(argv[1],"--vpa")) {
+             Check(![NSFileManager.defaultManager fileExistsAtPath:@(argv[3])],@"VPA output already exists");
+@@ -174,10 +174,10 @@ int main(int argc,const char **argv) {@autoreleasepool {
+         for(NSString *relative in @[core,compiler,serviceBinary])Check([fm fileExistsAtPath:source(relative)],[@"Missing native guest file: " stringByAppendingString:relative]);
+         patchFile(mojave?@"mojave-coredisplay":@"coredisplay",source(core),core);
+         if(mojave) {
+-            for(NSString *app in @[@"Aperture",@"iPhoto"]) {
++            for(NSString *app in @[@"Aperture",@"iPhoto",@"iWork.Keynote",@"iWork.Pages",@"iWork.Numbers"]) {
+                 NSString *policy=[NSString stringWithFormat:@"Library/Preferences/com.apple.%@.plist",app];
+                 Directory(destination(policy).stringByDeletingLastPathComponent);
+-                PrepareAperturePolicy(source(policy),destination(policy));
++                PrepareAppKitRootLayerPolicy(source(policy),destination(policy));
+             }
+             NSString *vpa=@"System/Library/PrivateFrameworks/AppleVPA.framework/Versions/A/Resources/Info.plist";
+             Directory(destination(vpa).stringByDeletingLastPathComponent);

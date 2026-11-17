@@ -6,6 +6,10 @@
 
 int main(void) { @autoreleasepool {
     assert(NSEqualSizes(VIMRequestedGuestPixelSize(NSMakeSize(1149,719),1,YES,NO,NO),NSMakeSize(1149,719)));
+    // A width limit lowers density, keeping the shape and even pixels.
+    assert(NSEqualSizes(VIMRequestedGuestPixelSizeWithin(NSMakeSize(1280,800),2,NO,YES,NO,2048),NSMakeSize(2048,1280)));
+    assert(NSEqualSizes(VIMRequestedGuestPixelSizeWithin(NSMakeSize(1000,700),2,NO,YES,NO,2048),NSMakeSize(2000,1400)));
+    assert(NSEqualSizes(VIMRequestedGuestPixelSizeWithin(NSMakeSize(1280,800),2,NO,YES,NO,0),NSMakeSize(2560,1600)));
     assert(NSEqualSizes(VIMRequestedGuestPixelSize(NSMakeSize(1149,719),2,YES,NO,NO),NSMakeSize(2298,1438)));
     assert(NSEqualSizes(VIMRequestedGuestPixelSize(NSMakeSize(1149,719),2,YES,YES,NO),NSMakeSize(2298,1438)));
     assert(NSEqualSizes(VIMRequestedGuestPixelSize(NSMakeSize(641,401),1,YES,NO,NO),NSMakeSize(800,600)));

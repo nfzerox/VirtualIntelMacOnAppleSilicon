@@ -48,6 +48,7 @@
 #include "system/address-spaces.h"
 #include "hw/core/boards.h"
 #include "hw/i386/sgx-epc.h"
+#include "exec/icount.h"
 #endif
 #include "system/qtest.h"
 #include "tcg/tcg-cpu.h"
@@ -8609,6 +8610,18 @@ uint32_t cpu_x86_virtual_addr_width(CPUX86State *env)
     }
 }
 
+static bool tcg_has_cpuid_clock(X86CPU *cpu)
+{
+#if defined(__APPLE__) && defined(__aarch64__) && !defined(CONFIG_USER_ONLY)
+    /* cpu_get_tsc scales Darwin ARM nanosecond ticks at this explicit rate. */
+    return tcg_enabled() && cpu->expose_tcg && cpu->vmware_cpuid_freq &&
+           !icount_enabled() && cpu->env.user_tsc_khz > 0 &&
+           cpu->env.user_tsc_khz <= UINT32_MAX;
+#else
+    return false;
+#endif
+}
+
 void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
                    uint32_t *eax, uint32_t *ebx,
                    uint32_t *ecx, uint32_t *edx)
@@ -8619,6 +8632,7 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
     uint32_t signature[3];
     X86CPUTopoInfo *topo_info = &env->topo_info;
     uint32_t threads_per_pkg;
+    bool tcg_clock = tcg_has_cpuid_clock(cpu);
 
     threads_per_pkg = x86_threads_per_pkg(topo_info);
 
@@ -8628,7 +8642,7 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
     } else if (index >= 0x80000000) {
         limit = env->cpuid_xlevel;
     } else if (index >= 0x40000000) {
-        limit = 0x40000001;
+        limit = tcg_clock ? 0x40000010 : 0x40000001;
     } else {
         limit = env->cpuid_level;
     }
@@ -8639,6 +8653,11 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
          * (Intel SDM Vol. 2A - Instruction Set Reference - CPUID)
          */
         index = env->cpuid_level;
+    }
+
+    if (tcg_clock && index >= 0x40000002 && index < 0x40000010) {
+        *eax = *ebx = *ecx = *edx = 0;
+        return;
     }
 
     switch(index) {
@@ -9077,7 +9096,7 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
          */
         if (tcg_enabled() && cpu->expose_tcg) {
             memcpy(signature, "TCGTCGTCGTCG", 12);
-            *eax = 0x40000001;
+            *eax = tcg_clock ? 0x40000010 : 0x40000001;
             *ebx = signature[0];
             *ecx = signature[1];
             *edx = signature[2];
@@ -9091,6 +9110,13 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
     case 0x40000001:
         *eax = 0;
         *ebx = 0;
+        *ecx = 0;
+        *edx = 0;
+        break;
+    case 0x40000010:
+        *eax = tcg_clock ? env->user_tsc_khz : 0;
+        /* The software local APIC counts virtual nanoseconds before divide. */
+        *ebx = tcg_clock ? 1000000 : 0;
         *ecx = 0;
         *edx = 0;
         break;

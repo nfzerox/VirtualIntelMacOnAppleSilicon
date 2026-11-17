@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>CFBundleExecutable</key><string>welcome-view</string>
+    <key>CFBundleIdentifier</key><string>com.mac.virtualintelmac.probe.welcome-view</string>
+    <key>CFBundleName</key><string>Welcome View Probe</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>ProbeTransparent</key><true/>
+    <key>ProbeOriginalView</key><true/>
+    <key>LSEnvironment</key><dict>
+        <key>VIM_GLI_CHECK_ERRORS</key><string>1</string>
+        <key>VIM_GLI_TRACE_TEXTURES</key><string>1</string>
+    </dict>
+</dict></plist>

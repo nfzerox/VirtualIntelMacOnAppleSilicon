@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>White</key><string>Camera Test</string>
+    <key>Black</key><string>Camera Test</string>
+    <key>WhiteType</key><string>human</string>
+    <key>BlackType</key><string>human</string>
+    <key>Variant</key><string>normal</string>
+    <key>Position</key><string>rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1</string>
+    <key>Holding</key><string></string>
+    <key>Moves</key><string></string>
+    <key>MBCBoardAngle</key><real>45</real>
+    <key>MBCBoardSpin</key><real>180</real>
+    <key>MBCBoardStyle</key><string>Wood</string>
+    <key>MBCPieceStyle</key><string>Wood</string>
+    <key>MBCSpeakMoves</key><false/>
+    <key>MBCSpeakHumanMoves</key><false/>
+    <key>MBCListenForMoves</key><false/>
+    <key>MBCShowGameLog</key><false/>
+</dict></plist>

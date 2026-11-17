@@ -6,13 +6,13 @@ qemu_image="${1:-$(command -v qemu-img || true)}"
 work=$(mktemp -d "${TMPDIR:-/tmp}/vim-disk-maintenance.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter \
-    -mmacosx-version-min=15.0 -arch arm64 -arch x86_64 \
+    -mmacosx-version-min=11.0 -arch arm64 -arch x86_64 \
     -fmodules-cache-path="$work/Modules" -I "$source_dir/VirtualIntelMac" \
     "$source_dir/probes/disk-maintenance-tests.m" "$source_dir/VirtualIntelMac/VIMDiskMaintenance.m" \
     -framework Foundation -o "$work/disk-maintenance-tests"
 "$work/disk-maintenance-tests" "$qemu_image"
 xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter \
-    -mmacosx-version-min=15.0 -arch arm64 -arch x86_64 \
+    -mmacosx-version-min=11.0 -arch arm64 -arch x86_64 \
     -fmodules-cache-path="$work/Modules" -I "$source_dir/VirtualIntelMac" \
     "$source_dir/probes/disk-maintenance-modal.m" "$source_dir/VirtualIntelMac/VIMDiskMaintenance.m" \
     -framework Cocoa -o "$work/disk-maintenance-modal"

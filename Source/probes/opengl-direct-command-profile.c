@@ -38,7 +38,7 @@ int main(int argc,char **argv)
         DGPacketFree(&p);
     }
     if(good&&read){
-        good=report->version==1&&report->numer&&report->denom&&report->ended>=report->started;
+        good=report->version==2&&report->numer&&report->denom&&report->ended>=report->started;
         if(good){
             double us=(double)report->numer/report->denom/1000.0;
             printf("PROFILE generation=%llu duration_ms=%.3f excluded_boundary_spans=%llu\n",
@@ -56,6 +56,16 @@ int main(int argc,char **argv)
                 (unsigned long long)report->batches.calls,report->batches.ticks*us,report->batches.maximum*us,(unsigned long long)report->batches.bytes);
             printf("FAST_READS calls=%llu inclusive_us=%.3f maximum_us=%.3f bytes=%llu\n",
                 (unsigned long long)report->fast_reads.calls,report->fast_reads.ticks*us,report->fast_reads.maximum*us,(unsigned long long)report->fast_reads.bytes);
+            printf("HOST_SPANS total=%llu overwritten=%llu threshold_us=500; outer batches/fast reads only, overlap possible\n",
+                (unsigned long long)report->span_count,(unsigned long long)(report->span_count>DG_PROFILE_SPANS?report->span_count-DG_PROFILE_SPANS:0));
+            puts("SPAN sequence kind start_mach_seconds duration_ms bytes");
+            uint64_t first=report->span_count>DG_PROFILE_SPANS?report->span_count-DG_PROFILE_SPANS+1:1;
+            for(uint64_t sequence=first;sequence<=report->span_count;++sequence){
+                const struct DGCommandProfileSpan *s=&report->spans[(sequence-1)%DG_PROFILE_SPANS];
+                if(s->sequence!=sequence){good=0;break;}
+                printf("SPAN %llu %u %.9f %.6f %u\n",(unsigned long long)sequence,s->kind,
+                    s->started*us/1000000.0,s->ticks*us/1000.0,s->bytes);
+            }
         }
     }
     if(!good)fputs("Explicit research command profiling unavailable, active, or rejected; no rendering policy changed.\n",stderr);

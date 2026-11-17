@@ -333,6 +333,27 @@ bool bitmap_test_and_clear_atomic(unsigned long *map, long start, long nr)
     return dirty != 0;
 }
 
+/* Count and clear exactly the requested bits, using one atomic operation per
+ * affected word. Bits outside the range retain concurrent updates. */
+unsigned long bitmap_count_and_clear_atomic(unsigned long *map, long start,
+                                           long nr)
+{
+    unsigned long count = 0;
+
+    assert(start >= 0 && nr >= 0);
+    while (nr) {
+        long bits = MIN(nr, BITS_PER_LONG - (start % BITS_PER_LONG));
+        unsigned long mask = BITMAP_FIRST_WORD_MASK(start) &
+                             BITMAP_LAST_WORD_MASK(start + bits);
+        unsigned long old = qatomic_fetch_and(map + BIT_WORD(start), ~mask);
+
+        count += ctpopl(old & mask);
+        start += bits;
+        nr -= bits;
+    }
+    return count;
+}
+
 void bitmap_copy_and_clear_atomic(unsigned long *dst, unsigned long *src,
                                   long nr)
 {

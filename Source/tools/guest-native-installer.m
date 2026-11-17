@@ -39,15 +39,16 @@ static NSDictionary *Request(void) {
     id value=[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
     Require([value isKindOfClass:NSDictionary.class]&&[value[@"FormatVersion"] isEqual:@1]&&
         UUID(value[@"MachineIdentifier"])&&UUID(value[@"VolumeUUID"])&&
-        [@[@"mojave",@"catalina",@"bigsur"] containsObject:value[@"Guest"]?:@""],
+        [VIMModernGuests() containsObject:value[@"Guest"]?:@""],
         @"The new virtual Mac or its installation target could not be identified.");
     return value;
 }
 static NSString *Installer(NSString *guest) {
-    NSString *name=@{@"mojave":@"Install macOS Mojave.app",@"catalina":@"Install macOS Catalina.app",
-        @"bigsur":@"Install macOS Big Sur.app"}[guest];
+    NSString *release=VIMAssistantReleaseName(guest);
+    NSString *name=release?[NSString stringWithFormat:@"Install macOS %@.app",release]:
+        @{@"mojave":@"Install macOS Mojave.app",@"catalina":@"Install macOS Catalina.app"}[guest];
     NSString *identifier=[@"com.apple.InstallAssistant." stringByAppendingString:
-        [guest isEqual:@"bigsur"]?@"macOSBigSur":([guest isEqual:@"mojave"]?@"Mojave":@"Catalina")];
+        release?[@"macOS" stringByAppendingString:[release stringByReplacingOccurrencesOfString:@" " withString:@""]]:([guest isEqual:@"mojave"]?@"Mojave":@"Catalina")];
     // Big Sur Recovery carries its own matching InstallAssistant at /. Older
     // recovery layouts can use the original app on the attached install media.
     NSMutableArray *roots=[NSMutableArray arrayWithObjects:@"/",@"/Applications",nil];
@@ -85,6 +86,17 @@ int main(int argc,const char **argv){@autoreleasepool{
         [mount.pathComponents count]==3&&[target[@"WritableVolume"] isEqual:@YES],@"The writable installation target could not be confirmed.");
     for(NSString *path in @[@"System/Library/CoreServices/SystemVersion.plist",@"macOS Install Data",@"OS X Install Data"])
         Require(![fm fileExistsAtPath:[mount stringByAppendingPathComponent:path]],@"Installation has already started on this disk; it was not repeated.");
+    // The installed system is identified later by the GPT partition behind
+    // its container. An HFS+ target's DiskUUID is that partition; an APFS
+    // target reports its own volume UUID there, so use its physical store.
+    NSString *partition=target[@"DiskUUID"];
+    NSArray *stores=target[@"APFSPhysicalStores"];
+    if([stores isKindOfClass:NSArray.class]&&stores.count) {
+        Require(stores.count==1&&[stores[0] isKindOfClass:NSDictionary.class],@"The installation disk's APFS container is not a single partition.");
+        partition=DiskInfo(stores[0][@"APFSPhysicalStore"])[@"DiskUUID"];
+        Require(UUID(partition),@"The installation disk's partition could not be identified.");
+        target=[target mutableCopy];((NSMutableDictionary *)target)[@"DiskUUID"]=partition;
+    }
     NSArray *arguments=@[@"--volume",mount,@"--agreetolicense",@"--nointeraction",@"--rebootdelay",@"0"];
     NSDictionary *plan=@{@"FormatVersion":@1,@"Guest":guest,@"MachineIdentifier":request[@"MachineIdentifier"],
         @"VolumeUUID":request[@"VolumeUUID"],@"MountPoint":mount,@"Executable":installer,@"Arguments":arguments,
@@ -103,6 +115,10 @@ int main(int argc,const char **argv){@autoreleasepool{
         @"TargetDiskUUID":target[@"DiskUUID"],@"Username":name} mutableCopy];
     for(NSString *key in @[@"FileSharing",@"RemoteLogin",@"AutomaticLogin"]){
         Require([request[key] isEqual:@YES]||[request[key] isEqual:@NO],@"The automatic service policy is invalid.");owner[key]=request[key];
+    }
+    // Development test installs only; absent for user installs.
+    if(request[@"ScreenSaverDisabled"]){
+        Require([request[@"ScreenSaverDisabled"] isEqual:@YES],@"The automatic service policy is invalid.");owner[@"ScreenSaverDisabled"]=@YES;
     }
     NSString *ownership=[mount stringByAppendingPathComponent:[VIMModernInstallerOwnership substringFromIndex:1]];
     NSDictionary *prior=[NSDictionary dictionaryWithContentsOfFile:ownership];

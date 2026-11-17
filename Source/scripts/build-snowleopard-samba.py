@@ -12,8 +12,10 @@ import tempfile
 SOURCE = Path(__file__).resolve().parents[1]
 VENDOR = SOURCE / 'vendor/source'
 GUEST = 'snowleopard'
-ARCHIVE = 'samba-235.6-source.tar.gz'
-COMMIT = 'ab8a41880c162af3f96c52e7e6fd84844e1fa146'
+ARCHIVE = 'samba-235.7-source.tar.gz'
+COMMIT = 'b291a85933eba214fcc2eae8fbc9412038891f1d'
+POLICY_VERSION = 2
+SECURITY_FIXES = ('CVE-2012-0870', 'CVE-2012-1182')
 EXECUTABLES = ('snowleopard-smbd', 'snowleopard-odsam.dylib')
 FILES = (*EXECUTABLES, 'Samba-COPYING.txt', 'SnowLeopardSMB.plist')
 
@@ -24,7 +26,8 @@ def run(*command, **kwargs):
 
 def verify(output):
     manifest = plistlib.loads((output / 'SnowLeopardSMB.plist').read_bytes())
-    if manifest.get('Guest') != GUEST or manifest.get('PolicyVersion') != 1:
+    if (manifest.get('Guest') != GUEST or manifest.get('PolicyVersion') != POLICY_VERSION or
+            manifest.get('SecurityFixes') != list(SECURITY_FIXES)):
         raise ValueError('Missing Snow Leopard SMB policy')
     for name in FILES:
         if not (output / name).is_file():
@@ -46,7 +49,13 @@ def build(sdk, compiler, output, jobs):
         for archive in (ARCHIVE, 'CF-550.42-samba-headers.tar.gz'):
             with tarfile.open(VENDOR / archive) as source:
                 source.extractall(work, filter='data')
-        upstream = work / 'samba-235.6'
+        upstream = work / 'samba-samba-235.7'
+        # Retain Apple's FD_SETSIZE hardening and the later Snow Leopard
+        # security fixes instead of installing the old 235.6 server unchanged.
+        for issue in SECURITY_FIXES:
+            security = SOURCE / 'probes/patches' / ('snowleopard-samba-'+issue+'.patch')
+            run('git', 'apply', '--check', security, cwd=upstream/'samba')
+            run('git', 'apply', security, cwd=upstream/'samba')
         patch = SOURCE / 'probes/patches/snowleopard-samba-spnego-mic.patch'
         run('git', 'apply', '--check', patch, cwd=upstream)
         run('git', 'apply', patch, cwd=upstream)
@@ -64,7 +73,8 @@ def build(sdk, compiler, output, jobs):
             run('codesign', '--force', '--sign', '-', '--digest-algorithm=sha1,sha256', binary)
         shutil.copyfile(upstream / 'samba/COPYING', output / 'Samba-COPYING.txt')
         (output / 'SnowLeopardSMB.plist').write_bytes(plistlib.dumps(
-            {'FormatVersion': 1, 'Guest': GUEST, 'PolicyVersion': 1, 'UpstreamCommit': COMMIT}))
+            {'FormatVersion': 1, 'Guest': GUEST, 'PolicyVersion': POLICY_VERSION,
+             'UpstreamCommit': COMMIT, 'SecurityFixes': list(SECURITY_FIXES)}))
         verify(output)
 
 

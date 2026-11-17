@@ -32,7 +32,12 @@ int main(void)
     CGLPixelFormatObj format=NULL;CGLContextObj native=NULL;GLint formats=0,screen=0,renderer=0;
     assert(!CGLChoosePixelFormat(attributes,&format,&formats) && format);
     assert(!CGLCreateContext(format,NULL,&native) && !CGLSetCurrentContext(native));
-    assert(strstr((const char *)glGetString(GL_RENDERER),"Intel"));
+#if defined(__arm64__)
+    const char *oracle="Apple";
+#else
+    const char *oracle="Intel";
+#endif
+    assert(strstr((const char *)glGetString(GL_RENDERER),oracle));
     assert(!CGLGetVirtualScreen(native,&screen) && !CGLDescribePixelFormat(format,screen,kCGLPFARendererID,&renderer));
     char selected[32];snprintf(selected,sizeof(selected),"0x%x",renderer);setenv("VIM_PASSTHROUGH_OPENGL_RENDERER_ID",selected,1);
     CGLSetCurrentContext(NULL);CGLDestroyContext(native);CGLDestroyPixelFormat(format);
@@ -52,7 +57,7 @@ int main(void)
     m=(struct DGMessage){.op=DG_CREATE,.flags=DG_REPLY};r=command(stream,&m,NULL);
     assert(!r.error && r.result);unsigned context=(unsigned)r.result;
     char name[4096]={0};m=(struct DGMessage){.op=DG_STRING,.context=context,.flags=DG_REPLY,.bytes=sizeof(name),.args={GL_RENDERER,1}};
-    r=command(stream,&m,name);assert(!r.error && strstr(name,"Intel"));printf("actual_wire_renderer=%s\n",name);
+    r=command(stream,&m,name);assert(!r.error && strstr(name,oracle));printf("actual_wire_renderer=%s\n",name);
     m=(struct DGMessage){.op=DG_RESIZE,.context=context,.flags=DG_REPLY,.args={32,32,1}};
     r=command(stream,&m,NULL);assert(!r.error);
     m=(struct DGMessage){.op=DG_OP_clear_color,.context=context};
@@ -67,7 +72,7 @@ int main(void)
     m=(struct DGMessage){.op=DG_ERROR,.context=context,.flags=DG_REPLY};r=command(stream,&m,NULL);
     assert(!r.error && !r.result);
     r=control(stream,2,0,NULL);assert(!r.error && r.result==first);
-    r=control(stream,3,0,report);assert(!r.error && report->version==1 && report->generation==first);
+    r=control(stream,3,0,report);assert(!r.error && report->version==2 && report->generation==first);
     assert(report->numer && report->denom && report->ended>report->started);
     assert(report->commands[DG_OP_clear].calls==1 && report->commands[DG_OP_read_pixels].calls==1);
     assert(report->commands[DGCommandProfileIndex(DG_CREATE)].calls==1);

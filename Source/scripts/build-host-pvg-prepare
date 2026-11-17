@@ -1,0 +1,37 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+out=${1:?usage: build-host-pvg-prepare NEW_OUTPUT_DIRECTORY [--graphics-only]}
+mode=${2:-}
+if [[ -n "$mode" && "$mode" != --graphics-only ]]; then
+    print -u2 -- "Unknown mode: $mode"
+    exit 64
+fi
+mkdir -m 700 -- "$out"
+# /usr/bin/codesign_allocate can be a developer-tool dispatch shim, not an
+# allocator accepted by codesign. Keep this universal Apple signature intact.
+cp "$root/vendor/host-codesign/codesign_allocate" "$out/codesign_allocate"
+for architecture in arm64 x86_64; do
+    /usr/bin/lipo "$out/codesign_allocate" -verify_arch "$architecture"
+done
+/usr/bin/codesign --verify --strict "$out/codesign_allocate"
+common=(-arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -fobjc-arc -O2 -Wall -Wextra -framework Foundation)
+for name in guest-macho guest-image-patch guest-prepare; do
+    extra=()
+    if [[ $name == guest-prepare ]]; then
+        extra=(-DVIM_HOST_PREPARE=1 -I "$root/vendor/xz-api" -framework Security -lz -llzma.5)
+    fi
+    xcrun clang "${common[@]}" "${extra[@]}" "$root/tools/$name.m" -o "$out/$name"
+    /usr/bin/codesign --force --sign - "$out/$name"
+    /usr/bin/codesign --verify --strict "$out/$name"
+done
+if [[ "$mode" == --graphics-only ]]; then exit 0; fi
+xcrun clang -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -O2 -Wall -Wextra \
+    "$root/tools/host-install-bigsur-digest.c" -o "$out/host-install-bigsur-digest"
+/usr/bin/codesign --force --sign - "$out/host-install-bigsur-digest"
+/usr/bin/codesign --verify --strict "$out/host-install-bigsur-digest"
+xcrun clang -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -O2 -Wall -Wextra \
+    -DVIM_PBZX_CLI=1 -I "$root/vendor/xz-api" -llzma.5 -lcompression -lAppleArchive \
+    "$root/tools/host-install-pbzx.c" "$root/tools/host-install-bigsur-seal.c" -o "$out/host-install-pbzx"
+/usr/bin/codesign --force --sign - "$out/host-install-pbzx"
+/usr/bin/codesign --verify --strict "$out/host-install-pbzx"

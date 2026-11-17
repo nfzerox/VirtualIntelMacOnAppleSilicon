@@ -8,6 +8,7 @@
 #import <objc/message.h>
 #include <stdint.h>
 #include <string.h>
+#include <mach/mach_vm.h>
 
 /* Local Intel-on-Apple-GPU compatibility experiment. Catalina's incremental
  * scanout passes can request DontCare while relying on untouched pixels.
@@ -71,6 +72,50 @@ static id preserving_render_encoder(id self, SEL cmd, MTLRenderPassDescriptor *p
 @implementation AppleGFXLegacyShadow
 - (void)dealloc { [baseline release]; [pages release]; [super dealloc]; }
 @end
+
+/* Older AGX rejects a CPU-read-only mapping even when that object permits
+ * writable aliases. Do not change the task view's requested protection. Metal
+ * gets a separately owned alias of the SAME pages, not a new data allocation. */
+@interface AppleGFXMetalAlias : NSObject {
+@public mach_vm_address_t address; mach_vm_size_t length;
+}
+- (void)releaseMapping;
+@end
+@implementation AppleGFXMetalAlias
+- (void)releaseMapping {
+    if (address) { mach_vm_deallocate(mach_task_self(), address, length); address = 0; }
+}
+- (void)dealloc { [self releaseMapping]; [super dealloc]; }
+@end
+
+static id<MTLBuffer> readonly_page_buffer(id<MTLDevice> device, const void *bytes, NSUInteger length)
+{
+    mach_vm_address_t source = (mach_vm_address_t)bytes, region = source;
+    mach_vm_size_t size = 0;
+    vm_region_basic_info_data_64_t info = {0};
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object = MACH_PORT_NULL;
+    kern_return_t status = mach_vm_region(mach_task_self(), &region, &size,
+        VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &count, &object);
+    if (object) mach_port_deallocate(mach_task_self(), object);
+    if (status || !length || region > source || source - region >= size ||
+        length > size - (source - region) || !(info.protection & VM_PROT_READ) ||
+        (info.protection & VM_PROT_WRITE) || !(info.max_protection & VM_PROT_WRITE)) return nil;
+    mach_vm_address_t alias = 0;
+    vm_prot_t current, maximum;
+    status = mach_vm_remap(mach_task_self(), &alias, length, 0, VM_FLAGS_ANYWHERE,
+        mach_task_self(), source, FALSE, &current, &maximum, VM_INHERIT_NONE);
+    if (status) return nil;
+    AppleGFXMetalAlias *owner = [AppleGFXMetalAlias new];
+    owner->address = alias; owner->length = length;
+    status = mach_vm_protect(mach_task_self(), alias, length, FALSE, VM_PROT_READ | VM_PROT_WRITE);
+    id<MTLBuffer> buffer = status ? nil : [device newBufferWithBytesNoCopy:(void *)alias length:length
+        options:MTLResourceStorageModeShared deallocator:^(void *pointer, NSUInteger size) {
+            [owner releaseMapping];
+        }];
+    [owner release];
+    return buffer;
+}
 
 static char shadow_key;
 static char order_key;
@@ -157,11 +202,27 @@ static id legacy_buffer(id self, SEL cmd, uint32_t page, uint64_t length)
         for (;;) {
             pageBuffer = [device newBufferWithBytesNoCopy:(char *)bytes + offset
                 length:chunk options:MTLResourceStorageModeShared deallocator:nil];
+            if (!pageBuffer) pageBuffer = readonly_page_buffer(device, (char *)bytes + offset, chunk);
             if (pageBuffer || chunk == 4096) break;
             chunk /= 2;
         }
-        if (!pageBuffer) [NSException raise:NSInternalInconsistencyException
-            format:@"PVG single-page Metal import failed"];
+        if (!pageBuffer) {
+            static unsigned failures;
+            if (__atomic_fetch_add(&failures, 1, __ATOMIC_RELAXED) < 8) {
+                mach_vm_address_t address = (mach_vm_address_t)bytes + offset;
+                mach_vm_size_t size = 0;
+                vm_region_basic_info_data_64_t info = {0};
+                mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+                mach_port_t object = MACH_PORT_NULL;
+                kern_return_t status = mach_vm_region(mach_task_self(), &address, &size,
+                    VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &count, &object);
+                if (object) mach_port_deallocate(mach_task_self(), object);
+                fprintf(stderr, "PVG page import failed: offset=0x%lx length=0x%lx VM=%d prot=%x max=%x region=0x%llx\n",
+                    (unsigned long)offset, (unsigned long)chunk, status, info.protection,
+                    info.max_protection, (unsigned long long)size);
+            }
+            [NSException raise:NSInternalInconsistencyException format:@"PVG single-page Metal import failed"];
+        }
         [pages addObject:pageBuffer];
         [pageBuffer release];
         offset += chunk;
@@ -448,6 +509,8 @@ static IMP replace(Class cls, const char *name, IMP replacement)
     return old;
 }
 
+#include "apple-gfx-classic-shadow.h"
+
 #ifdef APPLE_GFX_SHADOW_STANDALONE
 __attribute__((constructor))
 #endif
@@ -472,9 +535,10 @@ void apple_gfx_legacy_shadow_install(void)
         [queue release];
         [device release];
     }
-    /* The Metal hooks above apply to every framework. The shadow itself needs
-     * the task/resource classes of newer frameworks; macOS 13's has neither. */
+    /* The Metal hooks above apply to every framework. Older frameworks have
+     * a different native preparation/completion interface. */
     if (!task || !shared) {
+        if (classic_shadow_install()) return;
         fprintf(stderr, "PVG legacy shadow: framework has no legacy task classes; shadow disabled\n");
         return;
     }

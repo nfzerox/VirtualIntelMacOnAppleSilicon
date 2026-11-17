@@ -169,6 +169,7 @@ public:
 	IOReturn direct_gl_transfer(void const*,void*,size_t,size_t*);
 	IOReturn direct_gl_exchange(void const*,void*,size_t,size_t*);
 	IOReturn direct_gl_exchange_trap(void*,void*,void*,void*,void*,void*);
+	IOReturn surface_query_trap(void*,void*,void*,void*,void*,void*);
 	IOReturn surface_service_probe(void const*,void*,size_t,size_t*);
 	IOReturn materialize_surface(void const*,void*,size_t,size_t*);
 	IOReturn defer_surface(void const*,void*,size_t,size_t*);

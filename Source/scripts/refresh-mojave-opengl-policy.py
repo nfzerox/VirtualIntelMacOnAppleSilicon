@@ -57,7 +57,7 @@ def main():
     revision = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip()
     with (args.output / 'RELEASE.txt').open('a') as stream:
         stream.write(f'\nGL compatibility policy refresh: {revision} (plus working-tree policy refresh script).\n'
-                     'Restored exact Apple CVMServer JIT entitlements; enabled Aperture/iPhoto AppKit root layer backing.\n'
+                     'Restored exact Apple CVMServer JIT entitlements; removed obsolete AppKit root-layer overrides.\n'
                      'Guest-native staging still merges preferences and re-signs its universal OpenGL framework.\n')
     print(f'Refreshed release: {args.output}\nInspection scratch retained: {work}')
 

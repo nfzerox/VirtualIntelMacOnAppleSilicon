@@ -56,6 +56,14 @@ def main():
         binaries.update({'opengl-file-sharing':a.tools/'opengl-file-sharing',
                          'snowleopard-smbd':snow/'snowleopard-smbd',
                          'snowleopard-odsam.dylib':snow/'snowleopard-odsam.dylib'})
+    if a.guest in ('lion','yosemite','elcapitan','sierra'):
+        import runpy
+        native=a.tools/{'lion':'LionSMB','yosemite':'YosemiteSMB','elcapitan':'ElCapitanSMB','sierra':'SierraSMB'}[a.guest]
+        native_smb=runpy.run_path(str(source/'scripts/build-native-smb.py'))
+        native_smb['verify'](native,a.guest)
+        binaries['opengl-file-sharing']=native/'opengl-file-sharing'
+        if a.guest=='lion':
+            binaries['opengl-lion-smb-spnego.dylib']=native/'opengl-lion-smb-spnego.dylib'
     for name,binary in binaries.items():
         dual=name.startswith(('GLEngine','libVIM','VMsvga')) or (a.guest=='leopard' and name=='opengl-installer-automation.dylib')
         required={'i386'} if name in ('leopard-smbd','leopard-odsam.dylib','snowleopard-smbd','snowleopard-odsam.dylib') else {'x86_64','i386'} if dual else {'x86_64'}
@@ -80,6 +88,9 @@ def main():
     if a.guest=='snowleopard':
         for name in ('SnowLeopardSMB.plist','Samba-COPYING.txt'):
             shutil.copyfile(snow/name,a.output/name)
+    if a.guest in ('lion','yosemite','elcapitan','sierra'):
+        metadata=native_smb['METADATA'][a.guest]
+        shutil.copyfile(native/metadata,a.output/metadata)
     if a.guest=='leopard':
         for name in ('LeopardSMB.plist','Samba-COPYING.txt'):
             shutil.copyfile(a.tools/'LeopardSMB'/name,a.output/name)

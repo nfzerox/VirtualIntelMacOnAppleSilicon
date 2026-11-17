@@ -20,9 +20,13 @@ static NSUInteger requests;
 @end
 @interface TestChecker : VIMUpdateChecker
 @property NSString *title;
+@property NSString *detail;
+@property BOOL offersReleases;
 @end
 @implementation TestChecker
-- (void)showTitle:(NSString *)title detail:(NSString *)detail release:(BOOL)release { self.title = title; }
+- (void)showTitle:(NSString *)title detail:(NSString *)detail release:(BOOL)release {
+    self.title=title;self.detail=detail;self.offersReleases=release;
+}
 @end
 static void require(BOOL condition, NSString *description) {
     if (!condition) { fprintf(stderr, "FAIL: %s\n", description.UTF8String); exit(1); }
@@ -52,6 +56,10 @@ int main(void) { @autoreleasepool {
         while (checker.checking && deadline.timeIntervalSinceNow > 0)
             [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
         require(!checker.checking && [checker.title isEqual:item[2]], [NSString stringWithFormat:@"HTTP/JSON %@", item]);
+        if([checker.title isEqual:@"You’re Up to Date"]) {
+            require(checker.offersReleases,@"up-to-date checks must still offer release browsing");
+            require([checker.detail isEqual:@"You’re using Virtual Intel Mac 1.0."],@"up-to-date copy must not mention stable releases");
+        }
     }
     NSUInteger previous = requests;
     TestChecker *checker = [TestChecker new]; [checker checkManually:NO];

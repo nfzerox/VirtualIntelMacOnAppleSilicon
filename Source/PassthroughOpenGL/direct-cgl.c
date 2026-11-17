@@ -54,10 +54,11 @@ extern GLenum DGGetVertexAttribPointer(void *,GLuint,GLenum,void **);
 #define DG_CONTEXT_ROW_LENGTH 0x10
 #define DG_CONTEXT_VIM_DOUBLEBUFFER 0x56494d01
 #define DG_CONTEXT_VIM_PROFILE 0x56494d02
+#define DG_CONTEXT_VIM_ACCUMULATION 0x56494d03
 #define VIM_GL_SAMPLER 0x82e6
 #define VIM_GL_TRANSFORM_FEEDBACK 0x8e22
 
-struct _CGLPixelFormatObject { unsigned refs; GLint depth,stencil; int accelerated,double_buffer;CGLOpenGLProfile profile; };
+struct _CGLPixelFormatObject { unsigned refs; GLint depth,stencil,accumulation; int accelerated,double_buffer;CGLOpenGLProfile profile; };
 struct VIMSurface {
     GLuint texture;
     GLenum target,internal,format,type;
@@ -70,7 +71,7 @@ struct VIMSurface {
 };
 struct VIMAppleObject;
 struct VIMCGSTexture;
-struct VIMShareGroup { unsigned refs,surface_count,cgs_count; struct VIMSurface *surfaces; struct VIMCGSTexture *cgs_textures; struct VIMAppleObject *objects; pthread_mutex_t lock; uint64_t framebuffer_epoch __attribute__((aligned(8))); };
+struct VIMShareGroup { unsigned refs,surface_count,cgs_count; struct VIMSurface *surfaces; struct VIMCGSTexture *cgs_textures; struct VIMAppleObject *objects; pthread_mutex_t lock; uint64_t framebuffer_epoch __attribute__((aligned(8))); unsigned front_publication_required; };
 struct VIMFramebufferAttachment { GLuint framebuffer,texture;uint64_t epoch;int valid; };
 struct VIMPixelTransfer { GLint length,alignment;int pack,changed; };
 struct VIMCGSDrawable;
@@ -96,10 +97,8 @@ struct VIMContext {
     struct VIMCGSDrawable *drawable;
     struct VIMCGSDrawable *primary_drawable;
     struct VIMCGSDrawable *spare_drawables;
-#if defined(VIM_GLI_CONNECTION_REUSE_EXPERIMENT)
     mach_port_t idle_drawable_connections[2]; /* Unbound 2D clients, GLI-owned. */
     unsigned idle_drawable_connection_count;
-#endif
     struct VIMDeferRejections defer_rejections;
     unsigned debug_initialized,debug_messages;
     GLuint next_fence;
@@ -108,6 +107,10 @@ struct VIMContext {
     unsigned diagnostic_textures,diagnostic_texture_events;
     unsigned native_renderer_kind,native_renderer_screens,native_renderer_kinds;
     GLint pack_row_bytes,unpack_row_bytes,unpack_client_storage,transform_hint;
+#ifdef VIM_GLI_PLUGIN
+    void (*native_surface_flush)(int,int,int,const int32_t *,unsigned);
+    GLint swap_rectangle[4],swap_rectangle_enabled;
+#endif
 };
 static void VIMGetVertexAttribPointer(GLIContext opaque,GLuint index,GLenum pname,void **out)
 {
@@ -265,6 +268,14 @@ static void VIMRefreshCGSTexture(GLIContext,GLenum,GLuint);
 static void VIMForgetCGSTextures(GLIContext,GLsizei,const GLuint *);
 static void VIMDestroyCGSContext(struct VIMContext *);
 static void VIMDestroyGLIDrawables(struct VIMContext *);
+static void VIMRequireFrontPublication(GLIContext opaque)
+{
+    // A one-way share-group witness: even COMPILE-only display-list front
+    // selections count, since a later call may execute on another context.
+    // Never reset at Flush based on the current draw-buffer selection.
+    struct VIMContext *c=(void *)opaque;
+    __atomic_store_n(&c->group->front_publication_required,1,__ATOMIC_RELEASE);
+}
 static GLuint VIMCGSBeginRedefine(GLIContext,GLenum,GLint);
 static void VIMCGSEndRedefine(GLIContext,GLuint);
 static inline int VIMPrepareOrdinaryDrawing(GLIContext);
@@ -335,6 +346,10 @@ CGLError CGLChoosePixelFormat(const CGLPixelFormatAttribute *a,CGLPixelFormatObj
         switch(a[i]) {
         case kCGLPFADepthSize: p->depth=(GLint)a[++i]; break;
         case kCGLPFAStencilSize: p->stencil=(GLint)a[++i]; break;
+        case kCGLPFAAccumSize:
+            if((int)a[++i]<0 || a[i]>128)goto unsupported;
+            if(a[i]){if(DGSupportsAccumulation()!=1)goto unsupported;p->accumulation=128;}
+            break;
         case kCGLPFAColorSize: if((int)a[++i]>32) goto unsupported; break;
         case kCGLPFAAlphaSize: if((int)a[++i]>8) goto unsupported; break;
         case kCGLPFAOpenGLProfile:
@@ -355,6 +370,7 @@ CGLError CGLChoosePixelFormat(const CGLPixelFormatAttribute *a,CGLPixelFormatObj
         default: goto unsupported;
         }
     }
+    if(p->accumulation && p->profile!=kCGLOGLPVersion_Legacy)goto unsupported;
     *out=p; *count=1; return kCGLNoError;
 unsupported:
     free(p); return kCGLBadPixelFormat;
@@ -373,6 +389,7 @@ CGLError CGLDescribePixelFormat(CGLPixelFormatObj p,GLint screen,CGLPixelFormatA
     case kCGLPFAAlphaSize: *v=8; break;
     case kCGLPFADepthSize: *v=p->depth; break;
     case kCGLPFAStencilSize: *v=p->stencil; break;
+    case kCGLPFAAccumSize:*v=p->accumulation;break;
     case kCGLPFAVirtualScreenCount: case kCGLPFADisplayMask: *v=1; break;
     case kCGLPFAOpenGLProfile: *v=p->profile; break;
     case kCGLPFADoubleBuffer:*v=p->double_buffer;break;
@@ -396,6 +413,7 @@ CGLError CGLCreateContext(CGLPixelFormatObj pf,CGLContextObj share,CGLContextObj
         DG_CONTEXT_CONTEXT_MAJOR_VERSION,2,DG_CONTEXT_CONTEXT_MINOR_VERSION,1,
         DG_CONTEXT_VIM_DOUBLEBUFFER,pf->double_buffer,
         DG_CONTEXT_VIM_PROFILE,pf->profile,
+        DG_CONTEXT_VIM_ACCUMULATION,pf->accumulation,
         0};
     c->backend=DGCreateContext(attrs,share ? VIM(share)->backend : NULL);
     if(!c->backend) { free(c); return kCGLBadAlloc; }
@@ -565,11 +583,14 @@ CGLError CGLTexImageIOSurface2D(CGLContextObj ctx,GLenum target,GLenum internal,
     // The period IOSurface plane APIs also cover ordinary non-planar storage
     // at plane zero. Never interpret a planar buffer's metadata header as pixels.
     size_t stride=IOSurfaceGetBytesPerRowOfPlane(surface,plane);
+    /* CGLIOSurface.h explicitly permits a texture's format/type to
+     * reinterpret the plane's bytes, independently of its declared BPE.
+     * Video shaders use a half-width BGRA view of packed 16-bit storage.
+     * Row/height bounds still have to cover the requested texture. */
     if((target!=GL_TEXTURE_2D && target!=GL_TEXTURE_RECTANGLE_ARB) ||
        (element_bytes<4 && target!=GL_TEXTURE_RECTANGLE_ARB) ||
        !element_bytes || width<1 || height<1 || (packed&&(width&1)) ||
        (size_t)width>IOSurfaceGetWidthOfPlane(surface,plane) || (size_t)height>IOSurfaceGetHeightOfPlane(surface,plane) ||
-       (!packed&&IOSurfaceGetBytesPerElementOfPlane(surface,plane)!=element_bytes) ||
        stride<(uint64_t)width*element_bytes || stride%element_bytes ||
        stride/element_bytes>INT32_MAX) return kCGLBadValue;
     struct VIMSavedBinding previous=VIMSaveGLI(ctx->rend);

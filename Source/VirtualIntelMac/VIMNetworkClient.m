@@ -1,5 +1,6 @@
 #import "VIMLocalization.h"
 #import "VIMNetworkClient.h"
+#import "VIMPrivilegedConnection.h"
 #import "../NetworkHelper/VIMNetworkProtocol.h"
 #import <ServiceManagement/ServiceManagement.h>
 #import <Security/Authorization.h>
@@ -28,7 +29,7 @@ static void InstallNetworkHelper(BOOL terminal,void (^completion)(NSError *)) {
     });
 }
 @interface VIMNetworkClient ()
-@property NSXPCConnection *connection;
+@property VIMPrivilegedConnection *connection;
 @property NSFileHandle *socket;
 @property NSDictionary *details;
 @property BOOL stopped;
@@ -40,10 +41,8 @@ static void InstallNetworkHelper(BOOL terminal,void (^completion)(NSError *)) {
 }
 - (void)connect {
     [self.connection invalidate];
-    self.connection=[[NSXPCConnection alloc] initWithMachServiceName:VIM_NETWORK_SERVICE options:NSXPCConnectionPrivileged];
-    self.connection.remoteObjectInterface=[NSXPCInterface interfaceWithProtocol:@protocol(VIMNetworkHelperProtocol)];
     NSString *requirement=NSBundle.mainBundle.infoDictionary[@"SMPrivilegedExecutables"][VIM_NETWORK_SERVICE];
-    if(@available(macOS 13.0,*)){if(requirement.length)[self.connection setCodeSigningRequirement:requirement];}
+    self.connection=[[VIMPrivilegedConnection alloc] initWithMachServiceName:VIM_NETWORK_SERVICE requirement:requirement];
     [self.connection resume];
 }
 - (void)startMode:(NSString *)mode bridge:(NSString *)bridge completion:(void (^)(NSError *))completion {

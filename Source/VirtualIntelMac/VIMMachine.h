@@ -23,10 +23,26 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) BOOL requiresInstallerDisplay;
 /// Includes the last live observation of an in-place update for a new QEMU launch.
 @property(nonatomic, readonly) BOOL requiresInstallerDisplayForBoot;
+/// A native update boot or an update awaiting verified graphics recovery.
+/// Separate from adapter choice: published drivers can boot PVG before the
+/// new-build post-reboot verification completes.
+@property(nonatomic, readonly) BOOL hasPendingGuestUpdate;
 /// High Sierra's separate update OS needs the standard adapter while selected.
 @property(nonatomic, readonly) BOOL requiresStandardVGAForUpdate;
 /// Published transaction evidence, independent of ISO ownership/import state.
 @property(nonatomic, readonly) BOOL hasPublishedGuestGraphics;
+/// Narrow first-boot EFI admission for a host-assembled assistant disk.
+@property(nonatomic, readonly) BOOL hasHostStagedAssistantGraphics;
+@property(nonatomic, readonly) BOOL hasHostStagedPVGVerifier;
+@property(nonatomic, readonly) BOOL hasHostStagedInitialPreferences;
+/// Host preparation is published, but its first accelerated desktop is unverified.
+@property(nonatomic, readonly) BOOL hasPendingHostAssemblyVerification;
+/// Host-built systems have no in-guest installation transaction to reconcile.
+- (BOOL)hostAssemblyNeedsGraphicsVerificationWithGuestReport:(NSDictionary *)report;
+- (BOOL)recordHostAssemblyGraphicsVerification:(NSDictionary *)evidence guestReport:(NSDictionary *)report error:(NSError **)error;
+/// Widest display this guest survives, in pixels (0: no limit). The release's
+/// limit, lifted once post-boot verification found private window tiles.
+@property(nonatomic, readonly) CGFloat guestDisplayMaxWidth;
 /// Big Sur's own driver can accelerate Setup Assistant before GL patching.
 /// This evidence never marks installation/graphics verification complete.
 - (BOOL)prepareNativeBigSurDisplayWithGuestReport:(NSDictionary *)report error:(NSError **)error;
@@ -41,6 +57,15 @@ NS_ASSUME_NONNULL_BEGIN
 + (nullable instancetype)createGuest:(NSString *)guest name:(NSString *)name diskGiB:(NSUInteger)diskGiB
     library:(NSURL *)library firmware:(NSURL *)firmware nvram:(NSURL *)nvram
     bootMedia:(NSURL *)bootMedia installer:(NSURL *)installer qemuImage:(NSURL *)qemuImage error:(NSError **)error;
+/// Recover/publish only, under the worker ownership lock. Nil without an error
+/// means no completed disk yet; no installer, credential or scratch budget needed.
++ (nullable instancetype)recoverHostInstallJob:(NSURL *)job library:(NSURL *)library guest:(NSString *)guest
+    name:(NSString *)name cores:(NSUInteger)cores memoryMiB:(NSUInteger)memory error:(NSError **)error;
+/// Publish the worker's Prepared.vintelmac inside Machines/.host-install-UUID.
+/// The worker must have closed the disk and detached its mounts. A retry after
+/// publication returns the original Mac, even if its name has since changed.
++ (nullable instancetype)publishHostInstallJob:(NSURL *)job library:(NSURL *)library guest:(NSString *)guest
+    name:(NSString *)name cores:(NSUInteger)cores memoryMiB:(NSUInteger)memory error:(NSError **)error;
 - (BOOL)rename:(NSString *)name error:(NSError **)error;
 - (BOOL)saveSettings:(NSDictionary *)settings error:(NSError **)error;
 /// Pre-first-boot, non-secret policy only; credentials stay private on the host.

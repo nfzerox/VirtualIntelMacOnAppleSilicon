@@ -160,7 +160,12 @@ static NSError *DownloadError(NSString *message) {
     self.metadata[@"Length"]=@(self.total);
     NSError *error=nil;
     if(![self saveMetadata:&error]) { self.failure=error;completionHandler(NSURLSessionResponseCancel);return; }
-    self.accepted=YES;completionHandler(NSURLSessionResponseAllow);
+    self.accepted=YES;
+    // Publish the accepted size/resume offset before waiting for body bytes.
+    // Authentication and CDN headers can arrive well before a large payload.
+    int64_t received=self.received,total=self.total;
+    dispatch_async(dispatch_get_main_queue(),^{if(self.progress)self.progress(received,total);});
+    completionHandler(NSURLSessionResponseAllow);
 }
 - (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)task didReceiveData:(NSData *)data {
     if(!self.accepted||self.failure)return;

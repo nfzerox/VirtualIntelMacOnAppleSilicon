@@ -75,6 +75,7 @@ int main(void)
     puts(failed==before_migration?"PASS context migration and open Begin/End across native threads and batch fragments":
         "FAIL context migration or open Begin/End");
     DGDestroyContext(c);
+#ifdef VIM_PASSTHROUGH_OPENGL_INPROCESS_CLIENT
     if(dg_inprocess_api){
         for(unsigned i=0;i<400 && dg_inprocess_api->live_count();++i)usleep(5000);
         CHECK(!dg_inprocess_api->live_count());
@@ -84,6 +85,7 @@ int main(void)
             !get(VIM_GL_INPROCESS_ABI,sizeof(struct VIMGLInprocessAPI)-1));
         if(library)dlclose(library); // original client load still owns its reference
     }
+#endif
     puts(failed?"FAIL native interpreter transport":"PASS native values/errors, padded/cropped IOSurface rows, guards and retirement");
     return failed?1:0;
 }

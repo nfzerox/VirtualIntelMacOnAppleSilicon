@@ -16,6 +16,11 @@
 			path = VirtualIntelMac;
 			sourceTree = "<group>";
 		};
+		DAD3DDBA1122000000000002 /* HybridHypervisor */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = HybridHypervisor;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -31,6 +36,7 @@
 			isa = PBXGroup;
 			children = (
 				048FCBA3307E95CF00AECB5D /* VirtualIntelMac */,
+				DAD3DDBA1122000000000002 /* HybridHypervisor */,
 				048FCBA2307E95CF00AECB5D /* Products */,
 			);
 			sourceTree = "<group>";
@@ -169,7 +175,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				ARCHS = "arm64 x86_64";
-				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MACOSX_DEPLOYMENT_TARGET = 11.0;
 				__DIAGNOSE_INVALID_DEPLOYMENT_TARGET_AS_ERROR = NO;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
@@ -228,7 +234,7 @@
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				ARCHS = "arm64 x86_64";
 				ONLY_ACTIVE_ARCH = NO;
-				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MACOSX_DEPLOYMENT_TARGET = 11.0;
 				__DIAGNOSE_INVALID_DEPLOYMENT_TARGET_AS_ERROR = NO;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
@@ -248,7 +254,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 46;
 				ENABLE_APP_SANDBOX = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "VirtualIntelMac-Info.plist";
@@ -261,7 +267,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.1;
+				MARKETING_VERSION = 2.2;
 				INFOPLIST_FILE = "support/App-Info.plist";
 				PRODUCT_BUNDLE_IDENTIFIER = com.mac.virtualintelmac;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -282,7 +288,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 46;
 				ENABLE_APP_SANDBOX = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "VirtualIntelMac-Info.plist";
@@ -295,7 +301,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.1;
+				MARKETING_VERSION = 2.2;
 				INFOPLIST_FILE = "support/App-Info.plist";
 				PRODUCT_BUNDLE_IDENTIFIER = com.mac.virtualintelmac;
 				PRODUCT_NAME = "$(TARGET_NAME)";

@@ -5,6 +5,7 @@
 #import "opengl-guest-machine.h"
 #import "opengl-state-path.h"
 #import "opengl-boot-identity.h"
+#include "opengl-support-revision.h"
 #include "opengl-tiger-kernel-identity.h"
 #import <CommonCrypto/CommonDigest.h>
 #include <sys/stat.h>
@@ -217,6 +218,7 @@ int main(int argc,char **argv){
     [receipt setObject:(staged||preboot)?@"installed":@"candidate-installed" forKey:@"Phase"];
     [receipt setObject:[NSNumber numberWithBool:changed&&!preboot] forKey:@"ChangedThisBoot"];
     [receipt setObject:[NSNumber numberWithBool:preboot] forKey:@"PrebootInstall"];
+    [receipt setObject:[NSNumber numberWithUnsignedInt:VIM_OPENGL_SUPPORT_REVISION] forKey:@"GraphicsSupportRevision"];
     if(boot)[receipt setObject:boot forKey:@"InstalledBootSessionUUID"];
     if(!Write(receipt,receiptPath))return Fail("saving installation evidence");
     puts(preboot?"Native Tiger graphics installed locally before first boot. Desktop qualification is pending.":changed?"Native Tiger graphics installed with original recovery copy. Restart and desktop qualification are required.":

@@ -31,6 +31,11 @@ static void DGCommandProfileEnd(struct DGCommandProfileStamp stamp,uint32_t op,u
             // the outer span too would double-count actual GL execution.
             uint64_t ticks=kind==3?0:now-stamp.at;++r->calls;r->ticks+=ticks;r->bytes+=bytes;
             if(ticks>r->maximum)r->maximum=ticks;
+            if((kind==1 || kind==2) && ticks>=UINT64_C(500000)*dg_profile_report.denom/dg_profile_report.numer){
+                uint64_t sequence=++dg_profile_report.span_count;
+                dg_profile_report.spans[(sequence-1)%DG_PROFILE_SPANS]=
+                    (struct DGCommandProfileSpan){sequence,stamp.at,ticks,(uint32_t)kind,bytes};
+            }
         }else ++dg_profile_report.excluded;
         if(dg_profile_active && now>dg_profile_deadline){
             __atomic_store_n(&dg_profile_active,0,__ATOMIC_RELEASE);
@@ -61,7 +66,7 @@ static int DGCommandProfileControl(struct DGMessage *m,struct DGReply *reply)
             __atomic_store_n(&dg_profile_active,0,__ATOMIC_RELEASE);
             memset(&dg_profile_report,0,sizeof(dg_profile_report));
             mach_timebase_info_data_t t;mach_timebase_info(&t);
-            dg_profile_report.version=1;dg_profile_report.numer=t.numer;dg_profile_report.denom=t.denom;
+            dg_profile_report.version=2;dg_profile_report.numer=t.numer;dg_profile_report.denom=t.denom;
             dg_profile_report.generation=++dg_profile_serial;dg_profile_report.started=now;
             uint64_t delta=m->args[1]*UINT64_C(1000000)*t.denom/t.numer;
             dg_profile_deadline=now+delta;

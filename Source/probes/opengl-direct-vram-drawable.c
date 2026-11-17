@@ -19,6 +19,8 @@ static int vim_vram_copy_draw;
 #include "../PassthroughOpenGL/passthrough-opengl-host.c"
 #undef main
 #include <assert.h>
+/* Optional explicit GPU selection for dual-GPU correctness qualification. */
+static GLint test_renderer;
 static const char *completionName(void)
 {return vim_vram_completion_fence==2?"apple-fence":vim_vram_completion_fence?"fence":"finish";}
 static void DGVRAMOwnedContextDrawCopy(struct DGHostContext *c,const struct DGMessage *m,unsigned count)
@@ -82,7 +84,8 @@ static uint32_t patchPattern(unsigned x,unsigned y,unsigned round)
 static void exercisePatch(int flip,int ram)
 {
     enum {Width=640,Height=480,X=3,Y=7,W=251,H=197,Offset=65536};
-    CGLPixelFormatAttribute attrs[]={kCGLPFAAccelerated,kCGLPFANoRecovery,kCGLPFASupportsAutomaticGraphicsSwitching,0};
+    CGLPixelFormatAttribute attrs[]={kCGLPFAAccelerated,kCGLPFANoRecovery,kCGLPFASupportsAutomaticGraphicsSwitching,
+        test_renderer?kCGLPFARendererID:0,(CGLPixelFormatAttribute)test_renderer,0};
     CGLPixelFormatObj pf=NULL;GLint count=0;struct DGHostContext c={0};
     assert(!CGLChoosePixelFormat(attrs,&pf,&count) && pf && !CGLCreateContext(pf,NULL,&c.cgl));
     CGLDestroyPixelFormat(pf);CGLSetCurrentContext(c.cgl);
@@ -173,7 +176,8 @@ static GLuint sentinelProgram(void)
 }
 static void benchmark(int width,int height,int compareCopy,int compareWait)
 {
-    CGLPixelFormatAttribute attrs[]={kCGLPFAAccelerated,kCGLPFANoRecovery,kCGLPFASupportsAutomaticGraphicsSwitching,0};
+    CGLPixelFormatAttribute attrs[]={kCGLPFAAccelerated,kCGLPFANoRecovery,kCGLPFASupportsAutomaticGraphicsSwitching,
+        test_renderer?kCGLPFARendererID:0,(CGLPixelFormatAttribute)test_renderer,0};
     CGLPixelFormatObj pf=NULL;GLint count=0;struct DGHostContext c={0};
     assert(!CGLChoosePixelFormat(attrs,&pf,&count) && pf && !CGLCreateContext(pf,NULL,&c.cgl));
     CGLDestroyPixelFormat(pf);CGLSetCurrentContext(c.cgl);
@@ -234,7 +238,8 @@ static void benchmark(int width,int height,int compareCopy,int compareWait)
 static void exercise(int flip,int ram)
 {
     enum {Width=640,Height=480,X=3,Y=7,W=251,H=197,Offset=65536};
-    CGLPixelFormatAttribute attrs[]={kCGLPFAAccelerated,kCGLPFANoRecovery,kCGLPFASupportsAutomaticGraphicsSwitching,0};
+    CGLPixelFormatAttribute attrs[]={kCGLPFAAccelerated,kCGLPFANoRecovery,kCGLPFASupportsAutomaticGraphicsSwitching,
+        test_renderer?kCGLPFARendererID:0,(CGLPixelFormatAttribute)test_renderer,0};
     CGLPixelFormatObj pf=NULL;GLint count=0;struct DGHostContext c={0};
     assert(!CGLChoosePixelFormat(attrs,&pf,&count) && pf && !CGLCreateContext(pf,NULL,&c.cgl));
     CGLDestroyPixelFormat(pf);CGLSetCurrentContext(c.cgl);
@@ -370,7 +375,8 @@ static void exercise(int flip,int ram)
 static void exerciseBackingReuse(int ram)
 {
     enum {W=64,H=64,Bytes=W*H*4,Count=6,Offset=65536};
-    CGLPixelFormatAttribute attrs[]={kCGLPFAAccelerated,kCGLPFANoRecovery,kCGLPFASupportsAutomaticGraphicsSwitching,0};
+    CGLPixelFormatAttribute attrs[]={kCGLPFAAccelerated,kCGLPFANoRecovery,kCGLPFASupportsAutomaticGraphicsSwitching,
+        test_renderer?kCGLPFARendererID:0,(CGLPixelFormatAttribute)test_renderer,0};
     CGLPixelFormatObj pf=NULL;GLint count=0;struct DGHostContext c={0};
     assert(!CGLChoosePixelFormat(attrs,&pf,&count) && pf && !CGLCreateContext(pf,NULL,&c.cgl));
     CGLDestroyPixelFormat(pf);assert(!CGLSetCurrentContext(c.cgl));
@@ -450,7 +456,8 @@ static void exerciseBackingReuse(int ram)
 }
 static void benchmarkStagedRestore(int width,int height,int priority)
 {
-    CGLPixelFormatAttribute attrs[]={kCGLPFAAccelerated,kCGLPFANoRecovery,kCGLPFASupportsAutomaticGraphicsSwitching,0};
+    CGLPixelFormatAttribute attrs[]={kCGLPFAAccelerated,kCGLPFANoRecovery,kCGLPFASupportsAutomaticGraphicsSwitching,
+        test_renderer?kCGLPFARendererID:0,(CGLPixelFormatAttribute)test_renderer,0};
     CGLPixelFormatObj pf=NULL;GLint formats=0;struct DGHostContext c={0};
     assert(!CGLChoosePixelFormat(attrs,&pf,&formats) && pf && !CGLCreateContext(pf,NULL,&c.cgl));
     CGLDestroyPixelFormat(pf);assert(!CGLSetCurrentContext(c.cgl));
@@ -511,11 +518,18 @@ static void benchmarkStagedRestore(int width,int height,int priority)
 }
 int main(int argc,char **argv)
 {
+    alarm(60);
+    if(argc>=3 && !strcmp(argv[1],"--renderer")){
+        char *end=NULL;long renderer=strtol(argv[2],&end,0);
+        if(!end || *end || renderer<=0 || renderer>INT32_MAX)return 2;
+        test_renderer=(GLint)renderer;
+        memmove(argv+1,argv+3,(size_t)(argc-2)*sizeof(*argv));argc-=2;
+    }
     // Preserve the historical comparison modes; explicitly exercise the
-    // production publish-only path rather than silently changing --fence.
+    // production textured path rather than silently changing --fence.
     dg_vram_draw_publish=0;
-    int selected=1,compare=0,compareCopy=0,compareWait=0,patchOnly=argc==2 && !strcmp(argv[1],"--patch-only");
-    if(patchOnly){}
+    int selected=1,compare=0,compareCopy=0,compareWait=0,patchOnly=argc==2 && (!strcmp(argv[1],"--patch-only") || !strcmp(argv[1],"--production-patch"));
+    if(patchOnly){if(!strcmp(argv[1],"--production-patch"))dg_vram_draw_publish=1;}
     else if(argc==2 && !strcmp(argv[1],"--copytex")){
         dg_vram_copytex=1;dg_vram_draw_publish=1;dg_vram_direct_copy_wait=1;
     }
@@ -549,7 +563,7 @@ int main(int argc,char **argv)
     else if(argc==2 && !strcmp(argv[1],"--finish-object"))vim_vram_finish_object=1;
     else if(argc==2 && !strcmp(argv[1],"--compare")){selected=-1;compare=1;}
     else if(argc>2 || (argc==2 && strcmp(argv[1],"--fence"))){
-        fprintf(stderr,"Usage: %s [--compare-priority|--copytex|--staged-restore|--compare-staged-restore|--production-publish|--production-direct-wait|--compare-production-wait|--patch-only|--fence|--apple-fence|--finish|--finish-object|--compare|--cache-flush|--iosurface|--iosurface-flip-dest|--draw-source|--iosurface-draw-source|--draw-copy|--iosurface-draw-copy|--compare-copy|--owned-copy|--compare-owned]\n",argv[0]);return 2;
+        fprintf(stderr,"Usage: %s [--renderer ID] [--production-patch|--compare-priority|--copytex|--staged-restore|--compare-staged-restore|--production-publish|--production-direct-wait|--compare-production-wait|--patch-only|--fence|--apple-fence|--finish|--finish-object|--compare|--cache-flush|--iosurface|--iosurface-flip-dest|--draw-source|--iosurface-draw-source|--draw-copy|--iosurface-draw-copy|--compare-copy|--owned-copy|--compare-owned]\n",argv[0]);return 2;
     }
     assert(!mach_vm_allocate(mach_task_self(),&dg_vram.address,20*1024*1024,VM_FLAGS_ANYWHERE));
     dg_vram.bytes=20*1024*1024;

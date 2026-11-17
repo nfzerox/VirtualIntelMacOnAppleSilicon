@@ -2,17 +2,22 @@
 #import <Foundation/Foundation.h>
 #import <ImageIO/ImageIO.h>
 int main(int argc,const char **argv) {@autoreleasepool {
-    if(argc!=2)return 64;
-    const size_t w=512,h=384;
+    BOOL solid=argc==3&&!strcmp(argv[1],"--solid");
+    if(argc!=2&&!solid)return 64;
+    const size_t w=solid?128:512,h=solid?128:384;
     NSMutableData *data=[NSMutableData dataWithLength:w*h*4];uint8_t *p=data.mutableBytes;
     for(size_t y=0;y<h;y++)for(size_t x=0;x<w;x++) {
         size_t i=(y*w+x)*4;p[i]=(uint8_t)(x/2);p[i+1]=(uint8_t)(y*255/(h-1));
         p[i+2]=((x/32+y/32)%2)?240:16;p[i+3]=255;
+        // Small opaque PNG to exercise Aperture's own thumbnail generation,
+        // not a previously corrupted library thumbnail. One distinct corner
+        // prevents an existing solid wallpaper being treated as a duplicate.
+        if(solid){p[i]=224;p[i+1]=112;p[i+2]=(x||y)?124:0;}
     }
     CGDataProviderRef provider=CGDataProviderCreateWithCFData((__bridge CFDataRef)data);
     CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();
-    CGImageRef image=CGImageCreate(w,h,8,32,w*4,space,kCGImageAlphaLast,provider,NULL,NO,kCGRenderingIntentDefault);
-    NSURL *url=[NSURL fileURLWithPath:@(argv[1])];
+    CGImageRef image=CGImageCreate(w,h,8,32,w*4,space,(CGBitmapInfo)kCGImageAlphaLast,provider,NULL,NO,kCGRenderingIntentDefault);
+    NSURL *url=[NSURL fileURLWithPath:@(argv[argc-1])];
     CGImageDestinationRef dest=CGImageDestinationCreateWithURL((__bridge CFURLRef)url,CFSTR("public.png"),1,NULL);
     if(!image||!dest)return 1;
     CGImageDestinationAddImage(dest,image,NULL);BOOL ok=CGImageDestinationFinalize(dest);

@@ -94,6 +94,15 @@ uint64_t physical_memory_test_and_clear_dirty(ram_addr_t start,
                                               unsigned client,
                                               unsigned long *bmap);
 
+/* Local hybrid hand-off: sorted nonempty ranges in ONE RAMBlock. Clear only
+ * those bitmaps, then synchronize TCG TLBs once for their enclosing range. */
+typedef struct RAMDirtyRange {
+    ram_addr_t start, length;
+} RAMDirtyRange;
+uint64_t physical_memory_test_and_clear_dirty_ranges(const RAMDirtyRange *ranges,
+                                                    size_t count,
+                                                    unsigned client);
+
 DirtyBitmapSnapshot *
 physical_memory_snapshot_and_clear_dirty(MemoryRegion *mr, hwaddr offset,
                                          hwaddr length, unsigned client);

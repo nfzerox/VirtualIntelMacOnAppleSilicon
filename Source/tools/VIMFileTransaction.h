@@ -10,6 +10,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)publish:(NSError **)error;
 - (BOOL)rollback:(NSError **)error;
 - (BOOL)verifyPublished:(NSError **)error;
+/// Post-install checks may exclude explicitly retired mutable preferences.
+/// Publication and rollback still compare every transaction entry.
+- (BOOL)verifyPublishedExcludingPaths:(NSSet<NSString *> *)paths error:(NSError **)error;
 @property(nonatomic,readonly) NSDictionary *state;
 @end
 NS_ASSUME_NONNULL_END

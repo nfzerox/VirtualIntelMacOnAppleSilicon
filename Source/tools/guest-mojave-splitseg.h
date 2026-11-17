@@ -53,7 +53,13 @@ static void CoreFixSplitSeg(PVGCoreImage *image,NSArray<NSArray<NSNumber *> *> *
         if(lc.cmd==LC_CODE_SIGNATURE){Require(!signatureCommand,@"Duplicate signature");signatureCommand=p;memcpy(&signature,(const uint8_t *)image.data.bytes+p,sizeof(signature));}
         p+=lc.cmdsize;
     }
-    Require(splitCommand&&signatureCommand&&Bounds(split.dataoff,split.datasize,image.data.length)&&split.datasize>1,@"Missing split-segment metadata");
+    // Some earlier extracted guest libraries are already loose-only images.
+    // Mojave dyld3/MachOFile.cpp::canBePlacedInDyldCache excludes an image
+    // without this command. Keep it excluded: its segments receive one slide,
+    // so the injected RIP-relative references need no split-segment fixups.
+    // Do not invent a partial table, or accept a present but corrupt one.
+    if(!splitCommand)return;
+    Require(signatureCommand&&Bounds(split.dataoff,split.datasize,image.data.length)&&split.datasize>1,@"Missing split-segment metadata");
     const uint8_t *cursor=(const uint8_t *)image.data.bytes+split.dataoff,*end=cursor+split.datasize;
     if(*cursor!=0x7f) {
         // Mojave's x86_64 linker uses v1: kind followed by sorted offsets

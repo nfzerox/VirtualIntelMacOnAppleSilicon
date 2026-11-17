@@ -1,8 +1,14 @@
 /* Host transport tests only, not native GL/pixel or real-VM qualification. */
+#ifdef DG_MEMORY_STREAM_SOURCE
+#include DG_MEMORY_STREAM_SOURCE /* Compare a prior transport, not a shipping switch. */
+#else
 #include "../PassthroughOpenGL/passthrough-opengl-memory-stream.c"
+#endif
 #include "../vendor/qemu/include/hw/display/vim-passthrough-opengl-inprocess.h"
 #include <stdio.h>
 #include <unistd.h>
+#include <time.h>
+#include <signal.h>
 static int failed;
 #define CHECK(x) do { if(!(x)){fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#x);__sync_fetch_and_add(&failed,1);} } while(0)
 static int exact(struct DGMemoryStream *s,void *data,size_t bytes,int server,int writing)
@@ -177,12 +183,165 @@ static void expected_cancel(void)
     CHECK(!DGMemoryStreamShutdown(s));CHECK(!pthread_join(reader,NULL));
     CHECK(!DGMemoryStreamClose(s));CHECK(drained());
 }
-int main(void)
+enum {PIXEL_REPLY_BYTES=4*1024*1024,PIXEL_REPLY_ROUNDS=64};
+static unsigned long pixel_reply_writes;
+static void pixel_reply_worker(struct DGMemoryStream *s)
 {
+    unsigned char *pixels=malloc(PIXEL_REPLY_BYTES);CHECK(pixels);if(!pixels)return;
+    memset(pixels,0x79,PIXEL_REPLY_BYTES);
+    uint32_t ready=0x12345678;if(!exact(s,&ready,sizeof(ready),1,1)){free(pixels);return;}
+    for(unsigned frame=0;frame<PIXEL_REPLY_ROUNDS;++frame){
+        struct iovec vectors[]={{pixels,777},{NULL,0},{pixels+777,PIXEL_REPLY_BYTES-777}};
+        int count=3;struct iovec *v=vectors;
+        while(count){
+            ssize_t n=DGMemoryServerWritev(s,v,count);++pixel_reply_writes;
+            if(n<=0){free(pixels);return;}
+            while(count && (size_t)n>=v->iov_len){n-=(ssize_t)v->iov_len;++v;--count;}
+            if(count && n){v->iov_base=(char *)v->iov_base+n;v->iov_len-=(size_t)n;}
+        }
+    }
+    free(pixels);
+}
+static void pixel_replies(void)
+{
+    unsigned char *pixels=malloc(PIXEL_REPLY_BYTES+32);CHECK(pixels);if(!pixels)exit(2);
+    struct DGMemoryStream *s=DGMemoryStreamOpen(pixel_reply_worker);CHECK(s);if(!s)exit(2);
+    uint32_t ready=0;CHECK(exact(s,&ready,sizeof(ready),0,0) && ready==0x12345678);
+    struct timespec begin,end;clock_gettime(CLOCK_MONOTONIC,&begin);
+    for(unsigned frame=0;frame<PIXEL_REPLY_ROUNDS;++frame){
+        memset(pixels,0xa5,16);memset(pixels+16+PIXEL_REPLY_BYTES,0xa5,16);
+        struct iovec receive[]={{pixels+16,1003},{NULL,0},{pixels+1019,PIXEL_REPLY_BYTES-1003}};
+        CHECK(vector_exact(s,receive,3,0));
+        for(unsigned i=0;i<16;++i)CHECK(pixels[i]==0xa5 && pixels[16+PIXEL_REPLY_BYTES+i]==0xa5);
+        CHECK(pixels[16]==0x79 && pixels[1018]==0x79 && pixels[1019]==0x79 && pixels[15+PIXEL_REPLY_BYTES]==0x79);
+    }
+    clock_gettime(CLOCK_MONOTONIC,&end);CHECK(!DGMemoryStreamCloseAndWait(s));
+    double seconds=end.tv_sec-begin.tv_sec+(end.tv_nsec-begin.tv_nsec)/1e9;
+    printf("pixel reply stream: %u x %u bytes, %.3f ms, %.1f MiB/s, %lu server writes (transport only, not GPU/FPS)\n",
+        PIXEL_REPLY_ROUNDS,PIXEL_REPLY_BYTES,seconds*1000,256.0/seconds,pixel_reply_writes);
+    free(pixels);CHECK(!DGMemoryStreamLiveCount());
+}
+static ssize_t partial_pixel_write;
+static void partial_pixel_worker(struct DGMemoryStream *s)
+{
+    unsigned char *pixels=malloc(PIXEL_REPLY_BYTES);CHECK(pixels);if(!pixels)return;
+    memset(pixels,0x6c,PIXEL_REPLY_BYTES);
+    struct iovec send[]={{NULL,0},{pixels,5},{NULL,0},{pixels+5,PIXEL_REPLY_BYTES-5}};
+    partial_pixel_write=DGMemoryServerWritev(s,send,4);free(pixels);
+}
+static void cancel_pixel_reply(int shutdown)
+{
+    struct DGMemoryStream *s=DGMemoryStreamOpen(partial_pixel_worker);CHECK(s);if(!s)return;
+    unsigned char bytes[33];memset(bytes,0xa5,sizeof(bytes));
+    CHECK(DGMemoryClientRead(s,bytes+1,31)==31);
+    for(unsigned i=1;i<32;++i)CHECK(bytes[i]==0x6c);
+    CHECK(bytes[0]==0xa5 && bytes[32]==0xa5);
+    if(shutdown)CHECK(!DGMemoryStreamShutdown(s));
+    CHECK(!DGMemoryStreamCloseAndWait(s));CHECK(!DGMemoryStreamLiveCount());
+    /* The legacy ring may have accepted a 64-KB prefix. Either transport must
+     * report only its actual accepted bytes, not an unconsumed full reply. */
+    CHECK(partial_pixel_write>=31 && partial_pixel_write<PIXEL_REPLY_BYTES);
+}
+/* The real prepared upload sends a small command before a large gathered
+ * body. Its header must be consumed before borrowed vectors, even if the
+ * server has not begun reading when the body writer arrives. */
+static void queued_upload_worker(struct DGMemoryStream *s)
+{
+    pthread_mutex_lock(&drain_lock);
+    while(!start_drain)pthread_cond_wait(&drain_ready,&drain_lock);
+    pthread_mutex_unlock(&drain_lock);
+    struct Header h={0};CHECK(exact(s,&h,sizeof(h),1,0));
+    CHECK(h.bytes==PIXEL_REPLY_BYTES && h.seed==0x79);
+    unsigned char bytes[4093];size_t left=PIXEL_REPLY_BYTES;
+    while(left){
+        size_t n=left<sizeof(bytes)?left:sizeof(bytes);
+        if(!exact(s,bytes,n,1,0)){CHECK(0);return;}
+        for(size_t i=0;i<n;++i)CHECK(bytes[i]==0x79);
+        left-=n;
+    }
+}
+struct UploadWriter {struct DGMemoryStream *stream;unsigned char *pixels;ssize_t result;};
+static void *upload_writer(void *opaque)
+{
+    struct UploadWriter *w=opaque;
+    struct iovec v[]={{NULL,0},{w->pixels,5},{NULL,0},{w->pixels+5,PIXEL_REPLY_BYTES-5}};
+    w->result=DGMemoryClientWritev(w->stream,v,4);return NULL;
+}
+static void queued_upload(void)
+{
+    start_drain=0;
+    struct DGMemoryStream *s=DGMemoryStreamOpen(queued_upload_worker);CHECK(s);if(!s)return;
+    struct Header h={PIXEL_REPLY_BYTES,0x79};CHECK(exact(s,&h,sizeof(h),0,1));
+    struct UploadWriter w={.stream=s,.pixels=malloc(PIXEL_REPLY_BYTES)};
+    CHECK(w.pixels);if(!w.pixels)exit(2);memset(w.pixels,0x79,PIXEL_REPLY_BYTES);
+    pthread_t writer;CHECK(!pthread_create(&writer,NULL,upload_writer,&w));
+    pthread_mutex_lock(&s->lock);
+    while(!s->ring[0].borrowed)pthread_cond_wait(&s->readable[0],&s->lock);
+    CHECK(s->ring[0].used==sizeof(h) && s->ring[0].borrowed_remaining==PIXEL_REPLY_BYTES);
+    pthread_mutex_unlock(&s->lock);
+    pthread_mutex_lock(&drain_lock);start_drain=1;pthread_cond_signal(&drain_ready);pthread_mutex_unlock(&drain_lock);
+    CHECK(!pthread_join(writer,NULL));CHECK(w.result==PIXEL_REPLY_BYTES);
+    CHECK(!DGMemoryStreamCloseAndWait(s));free(w.pixels);CHECK(!DGMemoryStreamLiveCount());
+}
+static int abort_upload;
+static void partial_upload_worker(struct DGMemoryStream *s)
+{
+    unsigned char bytes[31];CHECK(exact(s,bytes,sizeof(bytes),1,0));
+    for(unsigned i=0;i<sizeof(bytes);++i)CHECK(bytes[i]==0x79);
+    if(abort_upload)CHECK(!DGMemoryStreamShutdown(s));
+    /* Otherwise worker retirement itself wakes the outstanding upload. */
+}
+static void cancel_upload(int shutdown)
+{
+    abort_upload=shutdown;
+    struct DGMemoryStream *s=DGMemoryStreamOpen(partial_upload_worker);CHECK(s);if(!s)return;
+    unsigned char *pixels=malloc(PIXEL_REPLY_BYTES);CHECK(pixels);if(!pixels)exit(2);
+    memset(pixels,0x79,PIXEL_REPLY_BYTES);
+    struct iovec v[]={{NULL,0},{pixels,5},{NULL,0},{pixels+5,PIXEL_REPLY_BYTES-5}};
+    CHECK(DGMemoryClientWritev(s,v,4)==31);
+    CHECK(!DGMemoryStreamCloseAndWait(s));free(pixels);CHECK(!DGMemoryStreamLiveCount());
+}
+static void pixel_upload_worker(struct DGMemoryStream *s)
+{
+    unsigned char *pixels=malloc(PIXEL_REPLY_BYTES);CHECK(pixels);if(!pixels)return;
+    for(unsigned frame=0;frame<PIXEL_REPLY_ROUNDS;++frame){
+        struct Header h={0};
+        if(!exact(s,&h,sizeof(h),1,0)||h.bytes!=PIXEL_REPLY_BYTES||h.seed!=frame){CHECK(0);break;}
+        if(!exact(s,pixels,PIXEL_REPLY_BYTES,1,0)){CHECK(0);break;}
+        CHECK(pixels[0]==0x79 && pixels[776]==0x79 && pixels[777]==0x79 && pixels[PIXEL_REPLY_BYTES-1]==0x79);
+        unsigned char ack=0x6b;if(!exact(s,&ack,1,1,1)){CHECK(0);break;}
+    }
+    free(pixels);
+}
+static void pixel_uploads(void)
+{
+    unsigned char *pixels=malloc(PIXEL_REPLY_BYTES);CHECK(pixels);if(!pixels)exit(2);
+    memset(pixels,0x79,PIXEL_REPLY_BYTES);
+    struct DGMemoryStream *s=DGMemoryStreamOpen(pixel_upload_worker);CHECK(s);if(!s)exit(2);
+    struct timespec begin,end;clock_gettime(CLOCK_MONOTONIC,&begin);
+    for(unsigned frame=0;frame<PIXEL_REPLY_ROUNDS;++frame){
+        struct Header h={PIXEL_REPLY_BYTES,frame};CHECK(exact(s,&h,sizeof(h),0,1));
+        struct iovec v[]={{pixels,777},{NULL,0},{pixels+777,PIXEL_REPLY_BYTES-777}};
+        CHECK(vector_exact(s,v,3,1));
+        unsigned char ack=0;CHECK(exact(s,&ack,1,0,0) && ack==0x6b);
+    }
+    clock_gettime(CLOCK_MONOTONIC,&end);CHECK(!DGMemoryStreamCloseAndWait(s));
+    double seconds=end.tv_sec-begin.tv_sec+(end.tv_nsec-begin.tv_nsec)/1e9;
+    printf("pixel upload stream: %u x %u bytes, %.3f ms, %.1f MiB/s (transport only, not GPU/FPS)\n",
+        PIXEL_REPLY_ROUNDS,PIXEL_REPLY_BYTES,seconds*1000,256.0/seconds);
+    free(pixels);CHECK(!DGMemoryStreamLiveCount());
+}
+int main(int argc,char **argv)
+{
+    alarm(30); /* Test watchdog only; production transfer waits are unchanged. */
+    if(argc==2 && !strcmp(argv[1],"--benchmark")){pixel_replies();return failed?1:0;}
+    if(argc==2 && !strcmp(argv[1],"--benchmark-uploads")){pixel_uploads();return failed?1:0;}
     CHECK(!DGMemoryStreamOpen(NULL) && errno==EINVAL);
     qualified_close(0);qualified_close(1);start_drain=0;
     expected_reply();
     expected_cancel();
+    pixel_replies();cancel_pixel_reply(0);cancel_pixel_reply(1);
+    queued_upload();cancel_upload(0);cancel_upload(1);pixel_uploads();
     pthread_t clients[4];
     for(unsigned i=0;i<4;++i)CHECK(!pthread_create(&clients[i],NULL,client,(void *)(uintptr_t)(i+1)));
     for(unsigned i=0;i<4;++i)CHECK(!pthread_join(clients[i],NULL));
@@ -202,6 +361,6 @@ int main(void)
     CHECK(!__atomic_load_n(&writer_done,__ATOMIC_ACQUIRE));
     CHECK(!DGMemoryStreamShutdown(s));CHECK(!DGMemoryStreamClose(s));CHECK(drained());
     CHECK(__atomic_load_n(&writer_done,__ATOMIC_ACQUIRE));
-    printf("%s concurrent independent streams, partial/vector I/O, bounded expected reads/EOF, wraparound, 1-MiB replies, guards, graceful drain, cancellation and synchronous worker retirement\n",failed?"FAIL":"PASS");
+    printf("%s concurrent independent streams, partial/vector I/O, bounded expected reads/EOF, wraparound, large vectors in both directions, queued-header ordering, guards, partial-transfer cancellation, graceful drain and synchronous worker retirement\n",failed?"FAIL":"PASS");
     return failed?1:0;
 }

@@ -1,0 +1,10 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+mkdir -p "$root/Build/Probes"
+for count in 757 974; do
+    xcrun clang -O2 -Wall -Wextra -Werror -Wno-unused-function \
+        -mmacosx-version-min=11.0 -DVIM_GLI_DISPATCH_COUNT=$count \
+        "$root/probes/opengl-idle-connections.c" -o "$root/Build/Probes/opengl-idle-connections-$count"
+    "$root/Build/Probes/opengl-idle-connections-$count"
+done

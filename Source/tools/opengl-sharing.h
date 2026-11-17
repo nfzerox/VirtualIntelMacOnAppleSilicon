@@ -47,7 +47,9 @@ static inline BOOL VIMOpenGLLionSharing(void){
 static inline BOOL VIMOpenGLPersistentJobSharing(void){
     char release[80]={0};size_t size=sizeof(release);
     if(sysctlbyname("kern.osrelease",release,&size,NULL,0)||size>=sizeof(release))return NO;
-    int kernel=atoi(release);return kernel>=14&&kernel<=20;
+    // Yosemite (Darwin 14) and every later release enable smbd through
+    // NetFSServer's SMJob-backed API; none writes EnabledServices again.
+    int kernel=atoi(release);return kernel>=14;
 }
 static inline BOOL VIMOpenGLLionSharingEnabled(void){
     // Native Lion SharingPref uses this persisted SFL policy directly; the

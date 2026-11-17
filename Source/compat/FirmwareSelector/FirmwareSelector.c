@@ -4,18 +4,17 @@
 #include <Protocol/LoadedImage.h>
 #include <Protocol/DevicePath.h>
 
-static const CHAR8 *const Profiles[]={"tiger","leopard","snowleopard","lion",
-  "mountainlion","mavericks","yosemite","elcapitan","sierra","highsierra",
-  "mojave","catalina","bigsur"};
 static BOOLEAN Equal(CONST CHAR8 *A,CONST CHAR8 *B) {
   while(*A&&*A==*B){++A;++B;}return *A==*B;
 }
 static BOOLEAN ProfilePath(CONST CHAR8 *Profile,CHAR16 Path[96]) {
-  UINTN I,J,Used=0;BOOLEAN Found=FALSE;
+  UINTN J,Used=0;
   CONST CHAR16 Prefix[]=L"\\EFI\\VIM\\",Suffix[]=L"\\OpenCore.efi";
-  for(I=0;I<sizeof(Profiles)/sizeof(Profiles[0]);++I)
-    if(Equal(Profile,Profiles[I]))Found=TRUE;
-  if(!Found)return FALSE;
+  // Any profile directory the image contains: lowercase letters and digits
+  // only, so the name stays one path component. A missing profile fails to load.
+  if(!Profile[0])return FALSE;
+  for(J=0;Profile[J];++J)
+    if(J>=31||!((Profile[J]>='a'&&Profile[J]<='z')||(Profile[J]>='0'&&Profile[J]<='9')))return FALSE;
   for(J=0;Prefix[J];++J)Path[Used++]=Prefix[J];
   for(J=0;Profile[J];++J)Path[Used++]=(CHAR16)Profile[J];
   for(J=0;Suffix[J];++J)Path[Used++]=Suffix[J];

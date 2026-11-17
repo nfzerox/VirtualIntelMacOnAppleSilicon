@@ -103,20 +103,27 @@
         [VIMUSBClient authorizeUsingTerminalWithCompletion:^(NSError *error){NSLog(@"USB helper authorization: %@",error.localizedDescription?:@"ready");}];
     if([arguments containsObject:@"--network-helper-authorize-stdin"])
         [VIMNetworkClient authorizeUsingTerminalWithCompletion:^(NSError *error){NSLog(@"Network helper authorization: %@",error.localizedDescription?:@"ready");}];
-    NSString *hostNotice=VIMHostUpdateNotice(NSProcessInfo.processInfo.operatingSystemVersion);
-    if(hostNotice) {
-        NSAlert *alert=[NSAlert new];alert.messageText=hostNotice;
-        alert.informativeText=VIMLocalized(@"app.check-the-virtual-intel-mac-releases-page-for-a-version", @"Check the Virtual Intel Mac releases page for a version compatible with this Mac.");
-        [alert addButtonWithTitle:VIMLocalized(@"app.check-for-updates", @"Check for Updates")];[alert addButtonWithTitle:VIMLocalized(@"ui.quit", @"Quit")];
-        VIMPresentAlert(alert,nil,^(NSModalResponse response){
-            if(response==NSAlertFirstButtonReturn)[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"https://github.com/nfzerox/VirtualIntelMacOnAppleSilicon/releases"]];
-            [NSApp terminate:nil];
-        });return;
+    NSUInteger helperCheck=[arguments indexOfObject:@"--check-privileged-helpers"];
+    if(helperCheck!=NSNotFound&&helperCheck+1<arguments.count&&[arguments[helperCheck+1] isAbsolutePath]) {
+        // Finite development check through the production clients: no USB
+        // capture or guest required, and the temporary host-only network closes.
+        NSString *output=arguments[helperCheck+1];NSMutableDictionary *results=[NSMutableDictionary new];
+        VIMUSBClient *usb=[VIMUSBClient new];VIMNetworkClient *network=[VIMNetworkClient new];
+        void (^record)(NSString *,NSError *)=^(NSString *kind,NSError *error){
+            results[kind]=error?@{@"Ready":@NO,@"Error":error.localizedDescription}:@{@"Ready":@YES};
+            if(results.count==2) {
+                NSData *data=[NSJSONSerialization dataWithJSONObject:results options:NSJSONWritingPrettyPrinted error:NULL];
+                [data writeToFile:output options:NSDataWritingAtomic error:NULL];
+            }
+        };
+        [usb prepareWithCompletion:^(NSError *error){[usb stop];record(@"USB",error);}];
+        [network startMode:@"host" bridge:@"" completion:^(NSError *error){[network stop];record(@"Network",error);}];
     }
     [NSUserDefaults.standardUserDefaults registerDefaults:@{@"VIMAutomaticUpdateChecks": @YES}];
     NSError *layoutError=nil;
     if(![VIMLibraryLocation prepareLayout:&layoutError]&&layoutError.code!=EBUSY)
         dispatch_async(dispatch_get_main_queue(),^{VIMPresentError(layoutError,self.window);});
+    [VIMNewMachineWindow prewarmLibraryCapacity];
     self.updateChecker = [VIMUpdateChecker new];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(updateResultChanged:) name:@"VIMUpdateResultChanged" object:nil];
     if (!self.window) self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 920, 560)
@@ -160,6 +167,18 @@
     NSUInteger newGuestConfiguration=[arguments indexOfObject:@"--configure-new-guest"];
     if(newGuestConfiguration!=NSNotFound&&newGuestConfiguration+1<arguments.count)
         [VIMNewMachineWindow showConfigurationForGuest:arguments[newGuestConfiguration+1]];
+    NSUInteger creationCapture=[arguments indexOfObject:@"--creation-capture"];
+    if(creationCapture!=NSNotFound&&creationCapture+1<arguments.count&&[arguments[creationCapture+1] isAbsolutePath]) {
+        NSString *path=arguments[creationCapture+1];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(),^{
+            for(NSWindow *window in NSApp.windows)if([window.windowController isKindOfClass:VIMNewMachineWindow.class]) {
+                NSView *view=window.contentView;[view layoutSubtreeIfNeeded];
+                NSBitmapImageRep *image=[view bitmapImageRepForCachingDisplayInRect:view.bounds];
+                [view cacheDisplayInRect:view.bounds toBitmapImageRep:image];
+                [[image representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:path atomically:YES];break;
+            }
+        });
+    }
     // Unattended acceptance: the same Create as the configuration step. The
     // password comes from the environment, never the argument list.
     NSUInteger newGuestCreation=[arguments indexOfObject:@"--create-new-guest"];
@@ -213,6 +232,16 @@
                 if(bridge!=NSNotFound&&bridge+1<arguments.count)settings[@"BridgeInterface"]=arguments[bridge+1];
                 if(![machine saveSettings:settings error:&error]){VIMPresentError(error,nil);continue;}
             }
+            NSUInteger renderer=[arguments indexOfObject:@"--opengl-renderer"];
+            if(renderer!=NSNotFound) {
+                NSString *value=renderer+1<arguments.count?arguments[renderer+1]:@"";
+                if(![machine.guest isEqual:@"mojave"]||![@[@"passthrough",@"apple"] containsObject:value]) {
+                    VIMPresentError([NSError errorWithDomain:@"VirtualIntelMac.Arguments" code:64 userInfo:@{NSLocalizedDescriptionKey:@"--opengl-renderer requires a Mojave Mac and passthrough or apple."}],nil);continue;
+                }
+                if(![machine saveSettings:@{@"PassthroughOpenGLEnabled":@([value isEqual:@"passthrough"])} error:&error]) {
+                    VIMPresentError(error,nil);continue;
+                }
+            }
             if(configure) {
                 [VIMMachineSettings showForMachine:machine window:nil completion:nil];
                 NSUInteger paneIndex=[arguments indexOfObject:@"--configuration-pane"];
@@ -227,7 +256,18 @@
                         NSError *failure=nil;if(![VIMMachineSettings captureForMachine:machine toURL:destination error:&failure]&&failure)VIMPresentError(failure,NSApp.mainWindow);
                     });
                 }
-            } else if(show)[VIMSession showMachineWindow:machine];
+            } else if(show) {
+                [VIMSession showMachineWindow:machine];
+                NSUInteger toolbarCheck=[arguments indexOfObject:@"--toolbar-inspect"];
+                if(toolbarCheck!=NSNotFound&&toolbarCheck+1<arguments.count&&[arguments[toolbarCheck+1] isAbsolutePath]) {
+                    NSString *output=arguments[toolbarCheck+1];
+                    dispatch_async(dispatch_get_main_queue(),^{
+                        NSDictionary *result=[VIMSession inspectToolbarForMachine:machine];
+                        [[NSJSONSerialization dataWithJSONObject:result options:NSJSONWritingPrettyPrinted error:NULL]
+                            writeToFile:output options:NSDataWritingAtomic error:NULL];
+                    });
+                }
+            }
             else if(!(repair?[VIMSession repairMachine:machine error:&error]:(install?[VIMSession installMachine:machine error:&error]:(prepare?[VIMSession prepareMachine:machine error:&error]:[VIMSession openMachine:machine error:&error]))))VIMPresentError(error,nil);
         }
         else if(error) VIMPresentError(error,nil);
@@ -242,11 +282,6 @@
         [alert addButtonWithTitle:VIMLocalized(@"app.show-in-finder", @"Show in Finder")];[alert addButtonWithTitle:VIMLocalized(@"app.not-now", @"Not Now")];
         VIMPresentAlert(alert,NSApp.mainWindow,^(NSModalResponse response){if(response==NSAlertFirstButtonReturn)[NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[NSBundle.mainBundle.bundleURL]];});
     }
-    VIMCheckRosetta(^(BOOL missing,NSError *error){
-        if(error){VIMPresentError(error,NSApp.mainWindow);return;}
-        if(!missing)return;
-        VIMPresentRosettaRequiredAlert(NSApp.mainWindow);
-    });
 }
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
@@ -367,7 +402,7 @@
         NSViewController *general=[NSViewController new];general.view=[[VIMSettingsPage alloc] initWithFrame:NSMakeRect(0,0,640,330)];
         self.libraryLocationPopup=[NSPopUpButton new];self.libraryLocationPopup.target=self;
         self.libraryLocationPopup.action=@selector(libraryLocationChanged:);self.libraryLocationPopup.autoenablesItems=NO;
-        self.libraryLocationPopup.accessibilityLabel=VIMLocalized(@"app.virtual-macs-folder", @"Virtual Macs folder");
+        self.libraryLocationPopup.accessibilityLabel=VIMLocalized(@"app.virtual-macs-folder", @"Virtual Intel Mac folder");
         [self.libraryLocationPopup.widthAnchor constraintEqualToConstant:400].active=YES;
         self.libraryLocationPopup.cell.lineBreakMode=NSLineBreakByTruncatingMiddle;[self refreshLibraryLocationPopup];
         NSButton *updates=[NSButton checkboxWithTitle:VIMLocalized(@"app.automatically-check-for-updates", @"Automatically check for updates") target:self action:@selector(toggleAutomaticUpdates:)];
@@ -381,7 +416,7 @@
         NSButton *diagnostics=[NSButton buttonWithTitle:VIMLocalized(@"app.export-diagnostics", @"Export Diagnostics…") target:self action:@selector(exportDiagnostics:)];
         NSStackView *library=[NSStackView stackViewWithViews:@[self.libraryLocationPopup,libraryActions,explanation]];library.orientation=NSUserInterfaceLayoutOrientationVertical;library.alignment=NSLayoutAttributeLeading;library.spacing=8;
         NSStackView *updateGroup=[NSStackView stackViewWithViews:@[updates,check]];updateGroup.orientation=NSUserInterfaceLayoutOrientationVertical;updateGroup.alignment=NSLayoutAttributeLeading;updateGroup.spacing=10;
-        NSGridView *grid=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:VIMLocalized(@"app.virtual-macs-folder-2", @"Virtual Macs folder:")],library],@[[NSTextField labelWithString:VIMLocalized(@"app.updates", @"Updates:")],updateGroup],@[[NSTextField labelWithString:VIMLocalized(@"app.support", @"Support:")],diagnostics]]];
+        NSGridView *grid=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:VIMLocalized(@"app.virtual-macs-folder-2", @"Virtual Intel Mac folder:")],library],@[[NSTextField labelWithString:VIMLocalized(@"app.updates", @"Updates:")],updateGroup],@[[NSTextField labelWithString:VIMLocalized(@"app.support", @"Support:")],diagnostics]]];
         grid.columnSpacing=14;grid.rowSpacing=24;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;[grid columnAtIndex:0].width=150;[grid columnAtIndex:1].xPlacement=NSGridCellPlacementLeading;
         for(NSInteger row=0;row<3;row++)[grid rowAtIndex:row].yPlacement=NSGridCellPlacementTop;
         [grid rowAtIndex:2].yPlacement=NSGridCellPlacementCenter;
@@ -395,9 +430,9 @@
         NSViewController *advanced=[NSViewController new];advanced.view=[[VIMSettingsPage alloc] initWithFrame:NSMakeRect(0,0,640,330)];
         NSButton *keep=[NSButton checkboxWithTitle:VIMLocalized(@"app.keep-downloaded-files-and-installers", @"Keep downloaded files and installers") target:self action:@selector(changeInstallerRetention:)];
         keep.state=[NSUserDefaults.standardUserDefaults boolForKey:@"VIMKeepInstallers"]?NSControlStateValueOn:NSControlStateValueOff;
-        NSTextField *retention=[NSTextField wrappingLabelWithString:VIMLocalized(@"app.keep-the-finished-installer-app-and-disk-image-for-another", @"Keep the finished installer app and disk image for another virtual Mac. Temporary preparation files are always removed. Otherwise, the installer image is removed after the operating system is installed and graphics support is verified.")];
-        retention.textColor=NSColor.secondaryLabelColor;
-        NSStackView *options=[NSStackView stackViewWithViews:@[keep,retention]];options.orientation=NSUserInterfaceLayoutOrientationVertical;options.alignment=NSLayoutAttributeLeading;options.spacing=8;options.translatesAutoresizingMaskIntoConstraints=NO;[advanced.view addSubview:options];
+        NSButton *guestInstaller=[NSButton checkboxWithTitle:VIMLocalized(@"appdelegate.use-slower-guest-side-installation-for-troubleshooting", @"Use slower guest-side installation for troubleshooting") target:self action:@selector(changeGuestInstaller:)];
+        guestInstaller.state=[NSUserDefaults.standardUserDefaults boolForKey:@"VIMUseGuestInstaller"]?NSControlStateValueOn:NSControlStateValueOff;
+        NSStackView *options=[NSStackView stackViewWithViews:@[keep,guestInstaller]];options.orientation=NSUserInterfaceLayoutOrientationVertical;options.alignment=NSLayoutAttributeLeading;options.spacing=16;options.translatesAutoresizingMaskIntoConstraints=NO;[advanced.view addSubview:options];
         [NSLayoutConstraint activateConstraints:@[[options.leadingAnchor constraintEqualToAnchor:advanced.view.leadingAnchor constant:32],[options.trailingAnchor constraintEqualToAnchor:advanced.view.trailingAnchor constant:-32],[options.topAnchor constraintEqualToAnchor:advanced.view.topAnchor constant:28],[options.bottomAnchor constraintEqualToAnchor:advanced.view.bottomAnchor constant:-24],[advanced.view.widthAnchor constraintEqualToConstant:640]]];
         NSTabViewItem *advancedItem=[NSTabViewItem tabViewItemWithViewController:advanced];advancedItem.label=VIMLocalized(@"app.advanced", @"Advanced");advancedItem.image=[NSImage imageWithSystemSymbolName:@"gearshape.2" accessibilityDescription:VIMLocalized(@"app.advanced", @"Advanced")];[tabs addTabViewItem:advancedItem];
         self.settingsWindow.contentViewController=tabs;
@@ -413,14 +448,28 @@
 - (void)changeInstallerRetention:(NSButton *)sender {
     [NSUserDefaults.standardUserDefaults setBool:sender.state==NSControlStateValueOn forKey:@"VIMKeepInstallers"];
 }
+- (void)changeGuestInstaller:(NSButton *)sender {
+    [NSUserDefaults.standardUserDefaults setBool:sender.state==NSControlStateValueOn forKey:@"VIMUseGuestInstaller"];
+}
 - (void)exportDiagnostics:(id)sender {[VIMDiagnostics exportFromWindow:self.settingsWindow];}
 - (void)showAbout:(id)sender {
     NSMutableParagraphStyle *paragraph=[NSMutableParagraphStyle new];paragraph.alignment=NSTextAlignmentCenter;paragraph.paragraphSpacing=5;
-    NSMutableAttributedString *credits=[[NSMutableAttributedString alloc] initWithString:[NSString stringWithFormat:VIMLocalized(@"ui.created-by-nfzerox", @"Created by nfzerox\n%@"),VIMLocalized(@"app.project-on-github", @"Project on GitHub")]
-        attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:12],NSForegroundColorAttributeName:NSColor.labelColor,NSParagraphStyleAttributeName:paragraph}];
+    NSArray *developers=@[@[@"Damon Lu",@"https://github.com/WhatDamon"],
+        @[@"Ely Wright",@"https://github.com/KiwiOnGit"],
+        @[@"Nihaal Sharma",@"https://github.com/neon443"],
+        @[@"UrkiMimi",@"https://github.com/UrkiMimi"],
+        @[@"Zach Bennoui",@"https://github.com/ZachB100"],
+        @[@"いえなが",@"https://github.com/ienaga045"]];
+    NSString *developerLine=[NSString stringWithFormat:VIMLocalized(@"appdelegate.developers", @"Developers: %@, %@, %@, %@, %@, and %@"),
+        developers[0][0],developers[1][0],developers[2][0],developers[3][0],developers[4][0],developers[5][0]];
+    NSString *project=[developerLine stringByAppendingFormat:@"\n%@",VIMLocalized(@"app.project-on-github", @"Project on GitHub")];
+    NSMutableAttributedString *credits=[[NSMutableAttributedString alloc] initWithString:[NSString stringWithFormat:VIMLocalized(@"appdelegate.gpu-acceleration-and-app-ui-by-nfzerox-hybrid-hypervisor", @"GPU Acceleration and App UI by nfzerox\nHybrid Hypervisor by Sam Henri Gold\n%@"),project]
+        attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:12],NSForegroundColorAttributeName:NSColor.labelColor,NSParagraphStyleAttributeName:paragraph,NSUnderlineStyleAttributeName:@0}];
     [credits addAttribute:NSLinkAttributeName value:[NSURL URLWithString:@"https://github.com/nfzerox"] range:[credits.string rangeOfString:@"nfzerox"]];
+    [credits addAttribute:NSLinkAttributeName value:[NSURL URLWithString:@"https://github.com/samhenrigold"] range:[credits.string rangeOfString:@"Sam Henri Gold"]];
+    for(NSArray *developer in developers)[credits addAttribute:NSLinkAttributeName value:[NSURL URLWithString:developer[1]] range:[credits.string rangeOfString:developer[0]]];
     [credits addAttribute:NSLinkAttributeName value:[NSURL URLWithString:@"https://github.com/nfzerox/VirtualIntelMacOnAppleSilicon"] range:[credits.string rangeOfString:VIMLocalized(@"app.project-on-github", @"Project on GitHub")]];
-    [NSApp orderFrontStandardAboutPanelWithOptions:@{NSAboutPanelOptionApplicationName:@"Virtual Intel Mac",NSAboutPanelOptionCredits:credits}];
+    [NSApp orderFrontStandardAboutPanelWithOptions:@{NSAboutPanelOptionApplicationName:VIMLocalized(@"app.name", @"Virtual Intel Mac"),NSAboutPanelOptionCredits:credits}];
 }
 - (void)updateResultChanged:(NSNotification *)notification {
     self.updateResult.stringValue=[NSUserDefaults.standardUserDefaults stringForKey:@"VIMLastUpdateResult"]?:@"";

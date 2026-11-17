@@ -4,6 +4,7 @@
 #import <DiskArbitration/DiskArbitration.h>
 #import <CommonCrypto/CommonDigest.h>
 #import "opengl-guest-machine.h"
+#import "opengl-system-version.h"
 #include "opengl-launchd-state.h"
 #include "opengl-state-path.h"
 #include "opengl-tiger-kernel-identity.h"
@@ -32,7 +33,7 @@ static NSString *const Guest=@"snowleopard",*const Metadata=@"SnowLeopardSMB.pli
 static NSString *const Server=@"snowleopard-smbd",*const Authentication=@"snowleopard-odsam.dylib";
 static NSString *const AuthenticationPath=@"/usr/lib/samba/auth/odsam.dylib";
 static NSString *const NativeVersion=@"Version 3.0.28a-apple\n";
-static const int PolicyVersion=1;
+static const int PolicyVersion=2;
 static NSString *const Job=@"/Library/LaunchDaemons/com.virtualintelmac.snowleopard-smb-compat.plist";
 static CFStringRef const Label=CFSTR("com.virtualintelmac.snowleopard-smb-compat");
 #else
@@ -174,16 +175,10 @@ static int Repair(NSDictionary *owner,NSString *build){
         if(!File(target,NO)||!current)return Error("a native sharing file is unavailable");
         NSDictionary *previous=[[prior objectForKey:@"Components"] objectForKey:name];
         BOOL ours=[[previous objectForKey:@"InstalledSHA256"] isEqual:current];
-#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ == 1060
-        // Apple 235.7 has server-side fixes but prints the same -V string.
-        // Never replace an unqualified newer native service with 235.6.
-        if(!ours){
-            NSData *bytes=[NSData dataWithContentsOfMappedFile:target];
-            NSData *tag=[@"/SourceCache/samba/samba-235.6/" dataUsingEncoding:NSASCIIStringEncoding];
-            if(!bytes||[bytes rangeOfData:tag options:0 range:NSMakeRange(0,[bytes length])].location==NSNotFound)
-                return Error("this native Samba revision is not supported by the bundled update");
-        }
-#endif
+        // Snow Leopard's replacement is built from Apple's final published
+        // source with its later AndX/NDR security fixes. The native service
+        // and authentication ABI above, not a SourceCache build-path string,
+        // identify compatible installations, including security-updated ones.
         // An interrupted publication/rollback can leave either saved native
         // bytes OR our bytes. Both retain the same verified original identity.
         BOOL known=ours||[[previous objectForKey:@"OriginalSHA256"] isEqual:current];
@@ -197,7 +192,17 @@ static int Repair(NSDictionary *owner,NSString *build){
         if(!Directory(folder,0700))return Error("the original sharing backup directory is unavailable");
         if(known){if(!File(backup,YES)||![Digest(backup) isEqual:originalHash])return Error("the saved native sharing file changed");}
         else {
-            struct stat s;if(!lstat([backup fileSystemRepresentation],&s)){
+            struct stat s;
+            // Apple's security updates replace the native sharing files
+            // without changing the OS build (Tiger's Security Update
+            // 2009-005 keeps 8S2167). Keep the earlier original where it is
+            // and save the newer native file beside it, keyed by its digest.
+            if(!lstat([backup fileSystemRepresentation],&s)&&!(File(backup,YES)&&[Digest(backup) isEqual:current])){
+                originalBuild=[build stringByAppendingString:[current substringToIndex:16]];
+                folder=[originals stringByAppendingPathComponent:originalBuild];backup=[folder stringByAppendingPathComponent:name];
+                if(!Directory(folder,0700))return Error("the original sharing backup directory is unavailable");
+            }
+            if(!lstat([backup fileSystemRepresentation],&s)){
                 if(!File(backup,YES)||![Digest(backup) isEqual:current])return Error("an unexpected backup occupies this OS build");
             }else if(errno!=ENOENT||!Copy(target,backup,0600)||![Digest(backup) isEqual:current])return Error("the native sharing backup could not be verified");
         }
@@ -254,8 +259,8 @@ int main(int argc,char **argv){
     umask(0077);
     NSDictionary *system=[NSDictionary dictionaryWithContentsOfFile:@"/System/Library/CoreServices/SystemVersion.plist"];
     NSString *version=[system objectForKey:@"ProductVersion"],*build=[system objectForKey:@"ProductBuildVersion"];
-    NSString *prefix=[Guest isEqual:@"tiger"]?@"10.4.":[Guest isEqual:@"snowleopard"]?@"10.6.":@"10.5.";
-    if(![version hasPrefix:prefix]||![build isKindOfClass:[NSString class]]||![build length]||[build length]>40||
+    if(![VIMOpenGLGuestForSystemVersion(version) isEqual:Guest]||
+       ![build isKindOfClass:[NSString class]]||![build length]||[build length]>40||
        [build rangeOfCharacterFromSet:[[NSCharacterSet alphanumericCharacterSet] invertedSet]].location!=NSNotFound)
         return Denied("the installed system version is unavailable or unsupported");
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1050

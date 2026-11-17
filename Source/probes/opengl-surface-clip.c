@@ -25,6 +25,8 @@ int main(int argc,char **argv)
     int geometry_only=argc==3 && !strcmp(argv[1],"--geometry");
     uint64_t args[]={geometry_only?strtoul(argv[2],NULL,0):1,0x800};uint32_t record[11]={0};size_t bytes=sizeof(record);
     if(!e) e=IOConnectCallMethod(connection,kIOVM2DSetSurface,args,2,NULL,0,NULL,NULL,record,&bytes);
+    IOReturn bind_error=e;
+    printf("surface=%llu bind=%x\n",(unsigned long long)args[0],bind_error);
     struct VIMSurfaceMapping mapping={0};bytes=sizeof(mapping);int locked=0;
     if(!e && !geometry_only) { e=IOConnectCallStructMethod(connection,kIOVM2DLockSurfaceBacking,NULL,0,&mapping,&bytes);locked=!e; }
     struct VIMSurfaceClip clip={0};bytes=sizeof(clip);
@@ -33,7 +35,7 @@ int main(int argc,char **argv)
         e,bytes,clip.version,clip.count,clip.origin_x,clip.origin_y,mapping.layout.width,mapping.layout.height,mapping.layout.row_bytes);
     if(!e && clip.count<=VIM_SURFACE_CLIP_RECTS)
         for(unsigned i=0;i<clip.count;++i) printf("rect[%u]=%d,%d %dx%d\n",i,clip.rects[i].x,clip.rects[i].y,clip.rects[i].w,clip.rects[i].h);
-    if(locked || (!e && geometry_only)) {
+    if(locked || (!bind_error && geometry_only)) {
         struct VIMSurfaceGeometry geometry={0};bytes=sizeof(geometry);
         IOReturn status=IOConnectCallStructMethod(connection,kIOVM2DGetSurfaceGeometry,NULL,0,&geometry,&bytes);
         printf("geometry error=%x version=%u source=%ux%u view=%d,%d %ux%u gpu-root=%u\n",status,

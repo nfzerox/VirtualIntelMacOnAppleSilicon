@@ -1,0 +1,17 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+build="$root/Build/Probes/KeynoteScreenCompatibility"
+mkdir -p "$build"
+flags=(-fobjc-arc -O2 -Wall -Wextra -Werror -Wno-unused-function
+       -arch arm64 -arch x86_64 -mmacosx-version-min=11.0)
+xcrun clang "${flags[@]}" -dynamiclib -fvisibility=hidden \
+    -DVIM_KEYNOTE_COMPATIBILITY_LIBRARY=1 -I "$root/PassthroughOpenGL" \
+    "$root/probes/keynote-screen-compatibility.m" -framework CoreFoundation \
+    -o "$build/compatibility.dylib"
+xcrun clang "${flags[@]}" "$root/probes/keynote-screen-compatibility.m" \
+    -framework AppKit -o "$build/probe"
+for architecture in arm64 x86_64; do
+    arch -"$architecture" "$build/probe" "$build/compatibility.dylib"
+    arch -"$architecture" "$build/probe" "$build/compatibility.dylib" existing
+done

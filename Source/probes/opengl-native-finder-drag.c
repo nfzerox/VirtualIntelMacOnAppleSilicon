@@ -1,4 +1,4 @@
-/* Finite Snow-or-later native Finder mouse workload. No AppKit registration,
+/* Finite Leopard-or-later native Finder mouse workload. No AppKit registration,
  * AppleEvents during motion, AX mutation, GL injection or persistent policy.
  * Same public HID input on a real Intel reference or guest. This emits input;
  * the separate compositor trace measures work, not this command's duration.
@@ -132,7 +132,8 @@ int main(int argc,char **argv)
     setvbuf(stdout,NULL,_IOLBF,0);
     post(source,kCGEventMouseMoved,origin);wait_until(clock_seconds()+.15);
     post(source,kCGEventLeftMouseDown,origin);wait_until(clock_seconds()+.15);
-    double start=clock_seconds();unsigned events=0;
+    double start=clock_seconds(),last_post=0,max_gap=0,max_call=0,gap_at=0,call_at=0;
+    unsigned events=0,late_posts=0;
     printf("READY Finder window=%lu bounds=%.0f,%.0f %.0fx%.0f amplitude=%.0f,%.0f seconds=%.2f pattern=%s\n",
         id,r.origin.x,r.origin.y,r.size.width,r.size.height,ax,ay,seconds,reversals?"reversals":"circle");
     for(unsigned i=0;;i++) {
@@ -145,7 +146,14 @@ int main(int argc,char **argv)
             dx=points[step][0]*(1-f)+points[step+1][0]*f;
             dy=points[step][1]*(1-f)+points[step+1][1]*f;
         }
+        double before_post=clock_seconds();
+        double gap=last_post?before_post-last_post:0;
+        if(gap>max_gap){max_gap=gap;gap_at=before_post-start;}
+        if(gap>.020)late_posts++;
         post(source,kCGEventLeftMouseDragged,CGPointMake(origin.x+ax*dx,origin.y+ay*dy));
+        double span=clock_seconds()-before_post;
+        if(span>max_call){max_call=span;call_at=before_post-start;}
+        last_post=before_post;
         events++;if(t>=1)break;
     }
     post(source,kCGEventLeftMouseUp,origin);wait_until(clock_seconds()+.4);
@@ -154,5 +162,9 @@ int main(int argc,char **argv)
         fabs(after.size.width-r.size.width)<3 && fabs(after.size.height-r.size.height)<3;
     post(source,kCGEventMouseMoved,original);CFRelease(source);
     printf("DONE events=%u final_geometry_restored=%d\n",events,verified);
+    // Inclusive call spans include descheduling; they are not IPC/CPU time.
+    // Record only a fixed summary after motion, never per-event I/O or queries.
+    printf("INPUT_TIMING max_start_gap_ms=%.3f gap_at_seconds=%.6f starts_over20ms=%u max_post_span_ms=%.3f post_at_seconds=%.6f\n",
+        max_gap*1000,gap_at,late_posts,max_call*1000,call_at);
     return verified?0:1;
 }

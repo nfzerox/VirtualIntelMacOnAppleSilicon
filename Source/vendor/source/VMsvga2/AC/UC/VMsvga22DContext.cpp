@@ -41,6 +41,7 @@
 #include "../../vminclude/vim_passthrough_opengl.h"
 #include "../../vminclude/vim_gl_surface_service.h"
 #include "../../vminclude/vim_handoff_profile.h"
+#include "../../vminclude/vim_surface_query.h"
 
 #include "svga_apple_header.h"
 #include "svga_overlay.h"
@@ -373,8 +374,45 @@ IOReturn CLASS::direct_gl_exchange(void const* input,void* output,size_t input_s
 IOExternalTrap* CLASS::getTargetAndTrapForIndex(IOService** targetP,UInt32 index)
 {
     static const IOExternalTrap trap={0,reinterpret_cast<IOTrap>(&CLASS::direct_gl_exchange_trap)};
-    if(!targetP || index!=VIM_GL_EXCHANGE_TRAP)return 0;
-    *targetP=this;return const_cast<IOExternalTrap*>(&trap);
+    static const IOExternalTrap query={0,reinterpret_cast<IOTrap>(&CLASS::surface_query_trap)};
+    if(!targetP)return 0;
+    if(index==VIM_GL_EXCHANGE_TRAP){*targetP=this;return const_cast<IOExternalTrap*>(&trap);}
+    if(index==VIM_SURFACE_QUERY_TRAP){*targetP=this;return const_cast<IOExternalTrap*>(&query);}
+    return 0;
+}
+
+/* Reuse the existing getters, including their actual backing-lock/owner
+ * checks. Unlike MIG, this entry must copy its bounded result itself.
+ * No mutating operation is accepted, so copyout failure needs no rollback. */
+IOReturn CLASS::surface_query_trap(void* kind_arg,void* output,void* size_arg,
+    void* reserved0,void* reserved1,void* reserved2)
+{
+    uintptr_t kind=reinterpret_cast<uintptr_t>(kind_arg),bytes=reinterpret_cast<uintptr_t>(size_arg);
+    if(reserved0 || reserved1 || reserved2)return kIOReturnBadArgument;
+    if(!m_owning_task || current_task()!=m_owning_task)return kIOReturnNotPermitted;
+    if(kind==VIM_SURFACE_QUERY_PROBE)return !output && !bytes?kIOReturnSuccess:kIOReturnBadArgument;
+    unsigned expected=VIMSurfaceQueryBytes(static_cast<unsigned>(kind));
+    user_addr_t address=reinterpret_cast<user_addr_t>(output);
+    if(kind>VIM_SURFACE_QUERY_PIXEL_FORMAT || !expected || bytes!=expected || !output ||
+        address+bytes<address)return kIOReturnBadArgument;
+    union {
+        VIMSurfaceGeometry geometry;VIMSurfaceState state;
+        VIMSurfaceDrawingSize drawing;VIMSurfacePixelFormat format;
+    } result;
+    bzero(&result,sizeof(result));size_t size=expected;IOReturn error=kIOReturnUnsupported;
+    switch(kind) {
+        case VIM_SURFACE_QUERY_GEOMETRY: {
+            if(!m_direct_lock)return kIOReturnNotReady;
+            VIM2DDirectGuard guard(m_direct_lock); // retain target against concurrent SetSurface
+            error=get_surface_geometry(&result,&size);break;
+        }
+        case VIM_SURFACE_QUERY_STATE:error=get_surface_state(&result,&size);break;
+        case VIM_SURFACE_QUERY_DRAWING_SIZE:error=get_surface_drawing_size(&result,&size);break;
+        case VIM_SURFACE_QUERY_PIXEL_FORMAT:error=get_surface_pixel_format(&result,&size);break;
+    }
+    if(!error && size!=expected)error=kIOReturnBadArgument;
+    if(!error && copyout(&result,address,expected))error=kIOReturnVMError;
+    return error;
 }
 
 IOReturn CLASS::direct_gl_exchange_trap(void* input,void* input_size_arg,void* output,

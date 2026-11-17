@@ -2,6 +2,7 @@
 #import "VIMUSBProtocol.h"
 #import "VIMUSBDevicePolicy.h"
 #import "VIMUSBTrust.h" // generated from the actual selected signing identity
+#import "../compat/VIMHelperXPC.h"
 #import <Security/Security.h>
 #import <IOKit/IOKitLib.h>
 #import <os/log.h>
@@ -86,6 +87,7 @@ static NSDictionary *ResolveDevice(NSDictionary *identity,NSError **error) {
 @property NSUInteger warningCount;
 @property BOOL traceStorageMetadata;
 @property dispatch_semaphore_t ready;
+@property unsigned backendInfoCount;
 - (void)run;
 - (void)cancel;
 @end
@@ -93,6 +95,11 @@ static NSDictionary *ResolveDevice(NSDictionary *identity,NSError **error) {
 static _Thread_local void *currentUSBWorker;
 static void USBBackendLog(libusb_context *context,enum libusb_log_level level,const char *message) {
     (void)context;
+    if(level==LIBUSB_LOG_LEVEL_INFO&&currentUSBWorker) {
+        VIMUSBWorker *worker=(__bridge VIMUSBWorker *)currentUSBWorker;
+        if(worker.traceStorageMetadata&&worker.backendInfoCount++<32)
+            os_log(OS_LOG_DEFAULT,"USB backend ownership: %{public}s",message);
+    }
     if(level<=LIBUSB_LOG_LEVEL_WARNING&&currentUSBWorker) {
         VIMUSBWorker *worker=(__bridge VIMUSBWorker *)currentUSBWorker;
         NSString *detail=[@(message) stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
@@ -212,29 +219,35 @@ finished:
 }
 @end
 
-@interface VIMUSBService : NSObject <NSXPCListenerDelegate,VIMUSBHelperProtocol>
+@interface VIMUSBService : NSObject <VIMHelperService,VIMUSBHelperProtocol>
 @property pid_t clientPID;
 @property uid_t clientUID;
 @property NSMutableDictionary<NSString *,VIMUSBWorker *> *workers;
 @end
 @implementation VIMUSBService
-- (BOOL)listener:(NSXPCListener *)listener shouldAcceptNewConnection:(NSXPCConnection *)connection {
-    if(connection.effectiveUserIdentifier==0)return NO;
-    if(@available(macOS 13.0,*)) [connection setCodeSigningRequirement:VIM_USB_CLIENT_REQUIREMENT];
-    else return NO; // the shipping host app itself requires macOS 15+
-    // An initial check complements the kernel's per-message XPC requirement.
-    SecCodeRef code=NULL;SecRequirementRef requirement=NULL;
-    NSDictionary *attributes=@{(__bridge NSString *)kSecGuestAttributePid:@(connection.processIdentifier)};
-    OSStatus result=SecCodeCopyGuestWithAttributes(NULL,(__bridge CFDictionaryRef)attributes,kSecCSDefaultFlags,&code);
-    if(!result)result=SecRequirementCreateWithString((__bridge CFStringRef)VIM_USB_CLIENT_REQUIREMENT,kSecCSDefaultFlags,&requirement);
-    if(!result)result=SecCodeCheckValidity(code,kSecCSDefaultFlags,requirement);
-    if(code)CFRelease(code);if(requirement)CFRelease(requirement);if(result)return NO;
-    VIMUSBService *client=[VIMUSBService new];client.clientPID=connection.processIdentifier;client.clientUID=connection.effectiveUserIdentifier;client.workers=[NSMutableDictionary new];
-    connection.exportedInterface=VIMUSBInterface();connection.exportedObject=client;
-    // This block owns the controller, not the connection: it guarantees that
-    // every worker is cancelled even if the app exits before a reply arrives.
-    connection.invalidationHandler=^{@synchronized(client){for(VIMUSBWorker *worker in client.workers.allValues)[worker cancel];[client.workers removeAllObjects];}};
-    [connection resume];return YES;
+- (instancetype)init {if((self=[super init]))_workers=[NSMutableDictionary new];return self;}
+- (void)connectionInvalidated {
+    @synchronized(self){for(VIMUSBWorker *worker in self.workers.allValues)[worker cancel];[self.workers removeAllObjects];}
+}
+- (void)handleMessage:(xpc_object_t)message {
+    xpc_connection_t peer=xpc_dictionary_get_remote_connection(message);
+    pid_t sender=xpc_connection_get_pid(peer);uid_t uid=xpc_connection_get_euid(peer);
+    if(!self.clientPID){self.clientPID=sender;self.clientUID=uid;}
+    if(self.clientPID!=sender||self.clientUID!=uid){xpc_connection_cancel(peer);return;}
+    const char *operation=xpc_dictionary_get_string(message,"operation");NSDictionary *payload=VIMHelperPayload(message);
+    if(!operation||!payload){VIMHelperReply(message,nil,nil,VIMUSBError(@"The USB request is invalid."));return;}
+    if(!strcmp(operation,"status"))[self statusWithReply:^(NSDictionary *result){VIMHelperReply(message,result,nil,nil);}];
+    else if(!strcmp(operation,"check-storage")&&[payload[@"UserSession"] isKindOfClass:NSNumber.class])
+        [self checkStorageInterface:payload[@"Identity"] inUserSession:[payload[@"UserSession"] boolValue]
+            reply:^(NSDictionary *result,NSError *error){VIMHelperReply(message,result,nil,error);}];
+    else if(!strcmp(operation,"begin-device"))
+        [self beginDevice:payload[@"Identity"] listener:VIMHelperCopyHandle(message,"listener") processID:payload[@"ProcessID"]
+            reply:^(NSString *session,NSError *error){VIMHelperReply(message,session?@{@"Session":session}:nil,nil,error);}];
+    else if(!strcmp(operation,"wait-capture")&&[payload[@"Session"] isKindOfClass:NSString.class])
+        [self waitForCapture:payload[@"Session"] reply:^(NSError *error){VIMHelperReply(message,nil,nil,error);}];
+    else if(!strcmp(operation,"end-session")&&[payload[@"Session"] isKindOfClass:NSString.class])
+        [self endSession:payload[@"Session"] reply:^{VIMHelperReply(message,nil,nil,nil);}];
+    else VIMHelperReply(message,nil,nil,VIMUSBError(@"The USB request is invalid."));
 }
 - (void)statusWithReply:(void (^)(NSDictionary *))reply {
     NSMutableDictionary *status=[@{@"Protocol":@(VIM_USB_PROTOCOL),@"SourceHash":VIM_USB_SOURCE_HASH} mutableCopy];
@@ -315,7 +328,6 @@ int main(int argc,const char *argv[]) {@autoreleasepool {
         return 64;
     }
     signal(SIGPIPE,SIG_IGN);ownershipLock=[NSObject new];busyLocations=[NSMutableSet new];
-    NSXPCListener *listener=[[NSXPCListener alloc] initWithMachServiceName:VIM_USB_SERVICE];
-    VIMUSBService *service=[VIMUSBService new];listener.delegate=service;[listener resume];
-    [[NSRunLoop currentRunLoop] run];
+    __attribute__((objc_precise_lifetime)) xpc_connection_t listener=VIMHelperCreateListener(VIM_USB_SERVICE,VIM_USB_CLIENT_REQUIREMENT,^{return [VIMUSBService new];});
+    [[NSRunLoop currentRunLoop] run];(void)listener;
 }return 0;}

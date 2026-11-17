@@ -1,0 +1,13 @@
+#!/bin/zsh
+set -euo pipefail
+source_root=${0:A:h:h}
+output=${1:-"$source_root/Build/MojaveHeadlessTransport/Selector/GLEngine"}
+toolchain="$source_root/resources/xcode/XcodeMojave.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+sdk="$source_root/resources/sdk/MacOSX10.9.sdk"
+mkdir -p "${output:h}"
+"$toolchain/clang" -O2 -Wall -Wextra -Werror -fvisibility=hidden -dynamiclib \
+    -arch i386 -arch x86_64 -mmacosx-version-min=10.14 -isysroot "$sdk" \
+    -install_name @rpath/VIMMojaveGLEngineSelector \
+    "$source_root/PassthroughOpenGL/mojave-engine-selector.c" \
+    -framework IOKit -framework CoreFoundation -o "$output"
+codesign --force --sign - "$output"

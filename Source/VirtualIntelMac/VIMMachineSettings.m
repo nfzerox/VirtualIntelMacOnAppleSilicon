@@ -1,18 +1,23 @@
 #import "VIMLocalization.h"
+#import "VIMGuestFamilies.h"
 #import "VIMMachineSettings.h"
 #import "VIMSettingsIcon.h"
 #import "VIMMachine.h"
+#import "VIMCPUBackend.h"
+#import "VIMGuestProductImage.h"
 #import "VIMSession.h"
 #import "VIMImageSlots.h"
 #import "VIMNetworkDefaults.h"
 #import "VIMSMBService.h"
 #import "VIMHostAudio.h"
 #import "VIMAlerts.h"
+#import "VIMConfigurationTabs.h"
 #import "VIMDiskMaintenance.h"
 #import "VIMHostSupport.h"
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <math.h>
 @import AVFoundation;
 
 @interface VIMConfigurationDocument : NSView
@@ -22,6 +27,46 @@
 - (BOOL)isFlipped {return YES;}
 - (void)drawRect:(NSRect)rect {if(self.drawsWindowBackground){[NSColor.windowBackgroundColor setFill];NSRectFill(rect);}}
 @end
+
+@interface VIMStorageDistributionBar : NSView @end
+@implementation VIMStorageDistributionBar
+- (instancetype)initWithFrame:(NSRect)frame {
+    if((self=[super initWithFrame:frame])) {
+        self.wantsLayer=YES;self.clipsToBounds=YES;
+        self.layer.cornerRadius=4;self.layer.masksToBounds=YES;
+    }return self;
+}
+@end
+
+static NSView *VIMStyledConfigurationTabs(NSTabView *tabs) {
+    if(@available(macOS 26.0,*))return tabs;
+    return [[VIMConfigurationTabs alloc] initWithTabs:tabs];
+}
+
+// Native popup rendering indents short and truncated image titles differently.
+// Use ordinary image/label views for the closed title; the native popup keeps
+// its bezel, arrow, complete menu, keyboard handling and selection/action.
+@interface VIMOpticalImageLabel : NSStackView @end
+@implementation VIMOpticalImageLabel
+- (NSView *)hitTest:(NSPoint)point {return nil;}
+@end
+static void VIMSetOpticalImageTitle(NSPopUpButton *popup,NSImage *image,NSString *title) {
+    NSPopUpButtonCell *cell=popup.cell;cell.usesItemFromMenu=NO;
+    cell.menuItem=[[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+    NSImageView *icon=[NSImageView imageViewWithImage:image];icon.imageScaling=NSImageScaleProportionallyDown;
+    NSTextField *label=[NSTextField labelWithString:title];
+    label.font=[NSFont systemFontOfSize:popup.font.pointSize weight:NSFontWeightRegular];label.textColor=NSColor.controlTextColor;
+    label.lineBreakMode=NSLineBreakByTruncatingTail;label.usesSingleLineMode=YES;
+    [label setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
+    VIMOpticalImageLabel *content=[VIMOpticalImageLabel stackViewWithViews:@[icon,label]];
+    content.spacing=6;content.alignment=NSLayoutAttributeCenterY;content.translatesAutoresizingMaskIntoConstraints=NO;
+    for(NSView *view in @[icon,label,content])view.accessibilityElement=NO;
+    popup.accessibilityLabel=title;popup.toolTip=title;[popup addSubview:content];
+    [NSLayoutConstraint activateConstraints:@[[icon.widthAnchor constraintEqualToConstant:16],[icon.heightAnchor constraintEqualToConstant:16],
+        [content.leadingAnchor constraintEqualToAnchor:popup.leadingAnchor constant:5],
+        [content.trailingAnchor constraintEqualToAnchor:popup.trailingAnchor constant:-25],
+        [content.centerYAnchor constraintEqualToAnchor:popup.centerYAnchor]]];
+}
 
 // Retained by the configuration controller until the native sheet is dismissed.
 // Validation keeps the editor open rather than losing the user's input.
@@ -133,8 +178,26 @@ static NSScrollView *VIMSharingScrollPane(NSView *pane) {
     return scroll;
 }
 static void VIMAlignFormBaselines(NSView *view) {
+    // Pop-up bezels extend beyond their alignment rects. Older AppKit
+    // container defaults can clip that outset; keep clipping only on the
+    // actual scrolling viewport, not on the grid/stack/control hierarchy.
+    if(![view isKindOfClass:NSScrollView.class]&&![view isKindOfClass:NSClipView.class]&&
+       ![view isKindOfClass:VIMStorageDistributionBar.class])view.clipsToBounds=NO;
     if([view isKindOfClass:NSGridView.class]) {
         NSGridView *grid=(NSGridView *)view;grid.rowAlignment=NSGridRowAlignmentFirstBaseline;
+        if(grid.numberOfColumns==2) {
+            CGFloat captionWidth=0;
+            for(NSInteger row=0;row<grid.numberOfRows;row++) {
+                NSView *caption=[grid cellAtColumnIndex:0 rowIndex:row].contentView;
+                if([caption isKindOfClass:NSTextField.class]) {
+                    ((NSTextField *)caption).alignment=NSTextAlignmentRight;
+                    captionWidth=MAX(captionWidth,caption.intrinsicContentSize.width);
+                }
+            }
+            if(captionWidth>0)[grid columnAtIndex:0].width=ceil(captionWidth);
+            [grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
+            [grid columnAtIndex:1].xPlacement=NSGridCellPlacementLeading;
+        }
         for(NSInteger row=0;row<grid.numberOfRows;row++) {
             NSView *value=[grid cellAtColumnIndex:1 rowIndex:row].contentView;
             if([value isKindOfClass:NSStackView.class]||[value isKindOfClass:NSScrollView.class])
@@ -142,6 +205,25 @@ static void VIMAlignFormBaselines(NSView *view) {
         }
     }
     for(NSView *child in view.subviews)VIMAlignFormBaselines(child);
+}
+static BOOL VIMConfigurationFormLayoutIsValid(NSView *view) {
+    if([view isKindOfClass:NSGridView.class]) {
+        NSGridView *grid=(NSGridView *)view;
+        if(grid.numberOfColumns==2)for(NSInteger row=0;row<grid.numberOfRows;row++) {
+            NSView *label=[grid cellAtColumnIndex:0 rowIndex:row].contentView;
+            if([label isKindOfClass:NSTextField.class]&&
+               (((NSTextField *)label).alignment!=NSTextAlignmentRight||[grid columnAtIndex:0].xPlacement!=NSGridCellPlacementTrailing))return NO;
+        }
+    }
+    if([view isKindOfClass:NSPopUpButton.class]&&[view.identifier isEqual:@"CPUBackend"]) {
+        NSPopUpButton *backend=(NSPopUpButton *)view;
+        if(!backend.enabled)return NO;
+#if !defined(__arm64__)
+        if(backend.numberOfItems!=1||![backend.titleOfSelectedItem isEqual:@"Hypervisor"])return NO;
+#endif
+    }
+    for(NSView *child in view.subviews)if(!VIMConfigurationFormLayoutIsValid(child))return NO;
+    return YES;
 }
 
 @implementation VIMConfigurationWindow
@@ -217,7 +299,8 @@ static void VIMAlignFormBaselines(NSView *view) {
 }
 - (NSTextField *)field:(NSString *)key value:(NSString *)value {
     NSTextField *field=[NSTextField textFieldWithString:value];field.identifier=key;field.delegate=self;
-    [field.widthAnchor constraintEqualToConstant:[key isEqual:@"GuestUsername"]?240:([key isEqual:@"Name"]?220:90)].active=YES;
+    if(![key isEqual:@"Name"])
+        [field.widthAnchor constraintEqualToConstant:[key isEqual:@"GuestUsername"]?240:90].active=YES;
     self.fields[key]=field;return field;
 }
 - (NSButton *)toggle:(NSString *)key title:(NSString *)title {
@@ -230,10 +313,10 @@ static void VIMAlignFormBaselines(NSView *view) {
     return [NSButton buttonWithTitle:title target:self action:action];
 }
 - (NSView *)general {
-    NSString *system=@{@"tiger":@"Mac OS X Tiger 10.4",@"leopard":@"Mac OS X Leopard 10.5",@"snowleopard":@"Mac OS X Snow Leopard 10.6",@"lion":@"Mac OS X Lion 10.7",@"mountainlion":@"OS X Mountain Lion 10.8",@"mavericks":@"OS X Mavericks 10.9",@"yosemite":@"OS X Yosemite 10.10",@"elcapitan":@"OS X El Capitan 10.11",@"sierra":@"macOS Sierra 10.12",@"highsierra":@"macOS High Sierra 10.13",@"mojave":@"macOS Mojave 10.14",@"catalina":@"macOS Catalina 10.15",@"bigsur":@"macOS Big Sur 11"}[self.machine.guest]?:@"Mac OS";
+    NSString *system=VIMSystemTitleForGuest(self.machine.guest)?:@"Mac OS";
     NSTextField *name=[self field:@"Name" value:self.machine.pendingName?:self.machine.name];
-    NSImage *identityImage=[NSImage imageNamed:[self.machine.guest stringByAppendingString:@"Roundel"]]?:
-        [NSImage imageNamed:[self.machine.guest stringByAppendingString:@"ProductIcon"]]?:
+    NSImage *identityImage=VIMGuestProductImage(self.machine.guest)?:
+        [NSImage imageNamed:[self.machine.guest stringByAppendingString:@"Roundel"]]?:
         [NSImage imageNamed:[self.machine.guest stringByAppendingString:@"Icon"]]?:NSApp.applicationIconImage;
     NSImageView *mark=[NSImageView imageViewWithImage:identityImage];
     mark.imageScaling=NSImageScaleProportionallyUpOrDown;
@@ -244,25 +327,28 @@ static void VIMAlignFormBaselines(NSView *view) {
     self.descriptionEditor=[[NSTextView alloc] initWithFrame:NSMakeRect(0,0,450,54)];self.descriptionEditor.font=[NSFont systemFontOfSize:13];self.descriptionEditor.richText=NO;
     self.descriptionEditor.textContainerInset=NSMakeSize(4,4);self.descriptionEditor.delegate=self;self.descriptionEditor.string=self.machine.editableConfiguration[@"Description"]?:@"";
     description.documentView=self.descriptionEditor;self.descriptionEditor.autoresizingMask=NSViewWidthSizable;
-    [description.widthAnchor constraintEqualToConstant:472].active=YES;[description.heightAnchor constraintEqualToConstant:58].active=YES;
+    [description.heightAnchor constraintEqualToConstant:58].active=YES;
     NSTextField *descriptionLabel=[NSTextField labelWithString:VIMLocalized(@"settings.description", @"Description:")];
     NSGridView *grid=[NSGridView gridViewWithViews:@[@[NSGridCell.emptyContentView,identity],@[[NSTextField labelWithString:VIMLocalized(@"settings.name", @"Name:")],name],@[descriptionLabel,description]]];
     grid.columnSpacing=8;grid.rowSpacing=12;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;[grid columnAtIndex:0].width=80;
-    [grid columnAtIndex:1].xPlacement=NSGridCellPlacementLeading;[grid rowAtIndex:2].yPlacement=NSGridCellPlacementTop;
+    [grid columnAtIndex:1].xPlacement=NSGridCellPlacementFill;[grid rowAtIndex:2].yPlacement=NSGridCellPlacementTop;
     NSGridCell *caption=[grid cellAtColumnIndex:0 rowIndex:2];caption.yPlacement=NSGridCellPlacementNone;
     caption.customPlacementConstraints=@[[descriptionLabel.topAnchor constraintEqualToAnchor:description.topAnchor]];
     NSBox *divider=[NSBox new];divider.boxType=NSBoxSeparator;
     NSView *storage=[self storageOverview];
     NSButton *reveal=[self button:VIMLocalized(@"app.show-in-finder", @"Show in Finder") action:@selector(reveal:)];
-    NSStackView *location=[NSStackView stackViewWithViews:@[VIMText(VIMLocalized(@"settings.location", @"Location:"),NO),reveal]];location.spacing=12;
+    NSTextField *locationLabel=VIMText(VIMLocalized(@"settings.location", @"Location:"),NO);locationLabel.alignment=NSTextAlignmentRight;
+    [locationLabel.widthAnchor constraintEqualToConstant:80].active=YES;
+    NSStackView *location=[NSStackView stackViewWithViews:@[locationLabel,reveal]];location.spacing=8;
     NSStackView *column=VIMColumn(@[grid,divider,storage,location]);column.spacing=16;
+    [grid.widthAnchor constraintEqualToAnchor:column.widthAnchor].active=YES;
     [divider.widthAnchor constraintEqualToAnchor:column.widthAnchor].active=YES;
     [storage.widthAnchor constraintEqualToAnchor:column.widthAnchor].active=YES;
     return column;
 }
 - (NSView *)storageOverview {
     NSString *(^bytes)(uint64_t)=^NSString *(uint64_t value){return self.sizesReady?[NSByteCountFormatter stringFromByteCount:value countStyle:NSByteCountFormatterCountStyleFile]:VIMLocalized(@"settings.calculating", @"Calculating…");};
-    NSView *bar=[NSView new];bar.wantsLayer=YES;bar.layer.cornerRadius=4;bar.layer.masksToBounds=YES;
+    NSView *bar=[[VIMStorageDistributionBar alloc] initWithFrame:NSZeroRect];
     NSView *disk=[NSView new],*other=[NSView new];
     NSColor *diskColor=[NSColor colorWithSRGBRed:.29 green:.67 blue:.91 alpha:1],*otherColor=[NSColor colorWithSRGBRed:.73 green:.48 blue:.83 alpha:1];
     disk.wantsLayer=other.wantsLayer=YES;disk.layer.backgroundColor=diskColor.CGColor;other.layer.backgroundColor=otherColor.CGColor;
@@ -300,12 +386,40 @@ static void VIMAlignFormBaselines(NSView *view) {
         NSTextField *low=VIMText(@"1 GB",NO),*mid=VIMText([NSString stringWithFormat:@"%.0f GB",round((maxGiB+1)/2)],NO),*high=VIMText([NSString stringWithFormat:@"%.0f GB",maxGiB],NO);mid.alignment=NSTextAlignmentCenter;high.alignment=NSTextAlignmentRight;
         NSStackView *ticks=[NSStackView stackViewWithViews:@[low,mid,high]];ticks.distribution=NSStackViewDistributionFillEqually;[ticks.widthAnchor constraintEqualToConstant:280].active=YES;
         NSStackView *memoryColumn=VIMColumn(@[memoryRow,self.memorySlider,ticks]);memoryColumn.spacing=10;
+        NSPopUpButton *backend=[NSPopUpButton new];
+        backend.autoenablesItems=NO;backend.identifier=@"CPUBackend";backend.accessibilityLabel=VIMLocalized(@"settings.cpu.backend.label", @"CPU backend");
+        backend.target=self;backend.action=@selector(cpuBackendChanged:);
+#if defined(__arm64__)
+        BOOL appleSilicon=YES;
+#else
+        BOOL appleSilicon=NO;
+#endif
+        [backend addItemsWithTitles:appleSilicon?@[
+            VIMLocalized(@"settings.cpu.backend.hybrid", @"Hybrid Hypervisor"),
+            VIMLocalized(@"settings.cpu.backend.tcg", @"TCG Emulation")]:@[
+            VIMLocalized(@"settings.cpu.backend.hvf", @"Hypervisor")]];
+        [backend selectItemAtIndex:VIMCPUUsesEmulation(c,appleSilicon)?1:0];
+        backend.enabled=YES;
+        backend.toolTip=!appleSilicon?nil:VIMLocalized(@"vimmachinesettings.uses-emulation-for-unsupported-code-changes-apply-after-restart", @"Uses emulation for unsupported code. Changes apply after restart.");
+        [backend.widthAnchor constraintEqualToConstant:MAX(170,backend.intrinsicContentSize.width)].active=YES;
         NSGridView *grid=[NSGridView gridViewWithViews:@[
-            @[[NSTextField labelWithString:VIMLocalized(@"settings.processors", @"Processors:")],cpu],@[[NSTextField labelWithString:VIMLocalized(@"settings.memory", @"Memory:")],memoryColumn]]];
+            @[[NSTextField labelWithString:VIMLocalized(@"settings.processors", @"Processors:")],cpu],@[[NSTextField labelWithString:VIMLocalized(@"settings.memory", @"Memory:")],memoryColumn],
+            @[[NSTextField labelWithString:VIMLocalized(@"vimmachinesettings.cpu-backend", @"CPU Backend:")],backend]]];
         grid.columnSpacing=12;grid.rowSpacing=22;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;[grid columnAtIndex:1].xPlacement=NSGridCellPlacementLeading;[grid rowAtIndex:1].yPlacement=NSGridCellPlacementTop;
-        return VIMColumn(@[grid,
-            VIMText([NSString stringWithFormat:VIMLocalized(@"settings.this-mac-has-lu-logical-processors-and-llu-gb-of", @"This Mac has %lu logical processors and %llu GB of memory. Leave resources available for other apps."),(unsigned long)NSProcessInfo.processInfo.processorCount,NSProcessInfo.processInfo.physicalMemory/(1024ULL*1024*1024)],NO),
-            VIMText(VIMLocalized(@"settings.changes-take-effect-the-next-time-this-virtual-mac-starts", @"Changes take effect the next time this virtual Mac starts."),NO)]);
+        NSMutableArray *views=[NSMutableArray arrayWithObject:grid];
+        NSTextField *credit=nil;
+        if(appleSilicon&&!VIMCPUUsesEmulation(c,appleSilicon)) {
+            NSString *copy=VIMLocalized(@"vimmachinesettings.hybrid-hypervisor-is-invented-by-sam-henri-gold-the", @"Hybrid Hypervisor is developed by Sam Henri Gold.");
+            credit=VIMText(copy,NO);credit.selectable=YES;credit.allowsEditingTextAttributes=YES;
+            NSMutableAttributedString *text=[[NSMutableAttributedString alloc] initWithString:copy
+                attributes:@{NSFontAttributeName:credit.font,NSForegroundColorAttributeName:credit.textColor,NSUnderlineStyleAttributeName:@0}];
+            [text addAttribute:NSLinkAttributeName value:[NSURL URLWithString:@"https://samhenri.gold"] range:[copy rangeOfString:@"Sam Henri Gold"]];
+            credit.attributedStringValue=text;[views addObject:credit];
+        }
+        [views addObject:VIMText(VIMLocalized(@"settings.changes-take-effect-the-next-time-this-virtual-mac-starts", @"Changes take effect the next time this virtual Mac starts."),NO)];
+        NSStackView *column=VIMColumn(views);
+        if(credit)[credit.widthAnchor constraintEqualToAnchor:column.widthAnchor].active=YES;
+        return column;
     }
     if(self.hardwareIndex==1) {
         NSMutableArray *views=[NSMutableArray new];
@@ -343,19 +457,34 @@ static void VIMAlignFormBaselines(NSView *view) {
         [filter addItemsWithTitles:@[VIMLocalized(@"settings.nearest-neighbor", @"Nearest Neighbor"),VIMLocalized(@"ui.linear", @"Linear")]];
         [filter selectItemAtIndex:[VIMDisplayScalingFilter(c) isEqual:@"nearest"]?0:1];
         filter.target=self;filter.action=@selector(scalingFilterChanged:);
-        NSGridView *sampling=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:VIMLocalized(@"settings.scaling-filter", @"Scaling Filter:")],filter]]];
-        sampling.columnSpacing=12;[sampling columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
-        return VIMColumn(@[form,sampling,VIMText(VIMLocalized(@"settings.resolution-changes-take-effect-the-next-time-this-mac-starts", @"Resolution changes take effect the next time this Mac starts. The scaling filter applies immediately."),NO)]);
+        NSTextField *samplingLabel=[NSTextField labelWithString:VIMLocalized(@"settings.scaling-filter", @"Scaling Filter:")];
+        CGFloat labelWidth=MAX(label.intrinsicContentSize.width,samplingLabel.intrinsicContentSize.width);
+        label.alignment=NSTextAlignmentRight;
+        [label.widthAnchor constraintEqualToConstant:labelWidth].active=YES;
+        NSMutableArray *rows=[@[@[samplingLabel,filter]] mutableCopy];
+        NSPopUpButton *renderer=nil;
+        if([self.machine.guest isEqual:@"mojave"]) {
+            renderer=[NSPopUpButton new];
+            [renderer addItemsWithTitles:@[VIMLocalized(@"settings.opengl.passthrough", @"Passthrough OpenGL"),VIMLocalized(@"vimmachinesettings.apple-64-bit-only", @"Apple (64-bit only)")]];
+            [renderer selectItemAtIndex:[c[@"PassthroughOpenGLEnabled"]?:@YES boolValue]?0:1];
+            renderer.target=self;renderer.action=@selector(openGLRendererChanged:);renderer.accessibilityLabel=@"OpenGL renderer";
+            [rows addObject:@[[NSTextField labelWithString:@"OpenGL:"],renderer]];
+        }
+        NSGridView *sampling=[NSGridView gridViewWithViews:rows];
+        // The grid must own both controls before their cross-view constraint.
+        if(renderer)[renderer.widthAnchor constraintEqualToAnchor:filter.widthAnchor].active=YES;
+        sampling.columnSpacing=12;sampling.rowSpacing=16;
+        [sampling columnAtIndex:0].width=labelWidth;
+        [sampling columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
+        [sampling columnAtIndex:1].xPlacement=NSGridCellPlacementLeading;
+        return VIMColumn(@[form,sampling,VIMText(VIMLocalized(@"vimmachinesettings.changes-apply-after-restart-the-scaling-filter-applies-immediately", @"Changes apply after restart. The scaling filter applies immediately."),NO)]);
     }
     if(self.hardwareIndex==4) {
         NSPopUpButton *output=[self audioPopup:NO],*input=[self audioPopup:YES];
         NSGridView *grid=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:VIMLocalized(@"settings.sound-output", @"Sound Output:")],output],@[[NSTextField labelWithString:VIMLocalized(@"settings.microphone", @"Microphone:")],input]]];grid.rowSpacing=20;grid.columnSpacing=12;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
-        NSButton *hostAccess=[self button:VIMLocalized(@"settings.this-mac-s-access", @"This Mac’s Access…") action:@selector(microphone:)];
+        NSButton *hostAccess=[self button:VIMLocalized(@"vimmachinesettings.open-system-settings", @"Open System Settings") action:@selector(microphone:)];
         hostAccess.toolTip=VIMLocalized(@"settings.allow-virtual-intel-mac-to-use-this-mac-s-microphone", @"Allow Virtual Intel Mac to use this Mac’s microphone.");
-        NSStackView *access=[NSStackView stackViewWithViews:@[hostAccess,
-            [self guestSettingsButton:VIMLocalized(@"settings.virtual-mac-s-access", @"Virtual Mac’s Access…") pane:@"microphone"]]];access.spacing=8;
-        return VIMColumn(@[grid,access,
-            VIMText(VIMLocalized(@"settings.inside-the-virtual-mac-also-allow-access-in-system-preferences", @"Inside the virtual Mac, also allow access in System Preferences → Security & Privacy → Privacy → Microphone."),NO),
+        return VIMColumn(@[grid,hostAccess,
             VIMText(VIMLocalized(@"settings.changes-take-effect-the-next-time-the-virtual-mac-starts", @"Changes take effect the next time the virtual Mac starts."),NO)]);
     }
     if(self.hardwareIndex==3) {
@@ -379,20 +508,34 @@ static void VIMAlignFormBaselines(NSView *view) {
         return VIMColumn(@[grid,VIMText(explanation,NO)]);
     }
     if(self.hardwareIndex==2) {
-        NSPopUpButton *mode=[NSPopUpButton new];[mode addItemWithTitle:VIMLocalized(@"settings.automatic", @"Automatic")];
-        [mode.widthAnchor constraintEqualToConstant:220].active=YES;
-        NSGridView *grid=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:VIMLocalized(@"settings.mouse-keyboard", @"Mouse & Keyboard:")],mode]]];grid.columnSpacing=12;
-        return VIMColumn(@[grid,VIMText(VIMLocalized(@"settings.click-inside-this-mac-to-use-its-mouse-and-mac", @"Click inside this Mac to use its mouse and Mac keyboard. Press Command–Option to release them."),NO)]);
+        NSPopUpButton *region=[NSPopUpButton new];[region addItemsWithTitles:@[VIMLocalized(@"vimmachinesettings.automatic-default", @"Automatic (Default)"),@"On",@"Off"]];
+        region.identifier=@"MouseRegionAccommodation";region.target=self;region.action=@selector(inputPreferenceChanged:);
+        NSUInteger regionIndex=[@[@"automatic",@"on",@"off"] indexOfObject:c[region.identifier]?:@"automatic"];
+        [region selectItemAtIndex:regionIndex==NSNotFound?0:regionIndex];
+        NSPopUpButton *release=[NSPopUpButton new];[release addItemsWithTitles:@[@"Control–Option",@"Command–Option"]];
+        release.identifier=@"InputReleaseShortcut";release.target=self;release.action=@selector(inputPreferenceChanged:);
+        [release selectItemAtIndex:[c[release.identifier] isEqual:@"command-option"]?1:0];
+        for(NSPopUpButton *popup in @[region,release])[popup.widthAnchor constraintEqualToConstant:170].active=YES;
+        NSGridView *grid=[NSGridView gridViewWithViews:@[
+            @[[NSTextField labelWithString:VIMLocalized(@"vimmachinesettings.mouse-region-accommodation", @"Mouse Region Accommodation:")],region],
+            @[[NSTextField labelWithString:VIMLocalized(@"vimmachinesettings.release-mouse-keyboard", @"Release Mouse & Keyboard:")],release]]];
+        grid.columnSpacing=12;grid.rowSpacing=18;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
+        return VIMColumn(@[grid]);
     }
     if(self.hardwareIndex==6) {
         NSArray *images=[VIMSession connectedImagesForMachine:self.machine];NSMutableArray *rows=[NSMutableArray new];
         NSUInteger driveNumber=0;
         for(NSDictionary *image in images) {
             NSUInteger slot=[image[@"Slot"] unsignedIntegerValue];NSString *path=image[@"Path"];
-            NSPopUpButton *source=[NSPopUpButton new];source.target=self;source.action=@selector(opticalChanged:);source.tag=(NSInteger)slot;
+            NSPopUpButton *source=[NSPopUpButton new];
+            source.target=self;source.action=@selector(opticalChanged:);source.tag=(NSInteger)slot;
+            source.alignment=NSTextAlignmentLeft;
             [source addItemWithTitle:path.lastPathComponent];source.selectedItem.tag=0;
-            source.selectedItem.image=[NSImage imageWithSystemSymbolName:@"opticaldisc" accessibilityDescription:nil];
+            NSImage *disc=[[NSImage alloc] initWithContentsOfFile:@"/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/CDAudioVolumeIcon.icns"]?:[NSImage imageWithSystemSymbolName:@"opticaldisc" accessibilityDescription:nil];
+            disc.size=NSMakeSize(16,16);
+            source.selectedItem.image=disc;
             [source.menu addItem:NSMenuItem.separatorItem];[source addItemWithTitle:VIMLocalized(@"ui.disconnect", @"Disconnect")];source.lastItem.tag=2;
+            VIMSetOpticalImageTitle(source,disc,path.lastPathComponent);
             [source.widthAnchor constraintEqualToConstant:280].active=YES;
             [rows addObject:@[[NSTextField labelWithString:[NSString stringWithFormat:VIMLocalized(@"settings.drive-lu", @"Drive %lu:"),(unsigned long)++driveNumber]],source]];
         }
@@ -404,7 +547,7 @@ static void VIMAlignFormBaselines(NSView *view) {
             [rows addObject:@[[NSTextField labelWithString:VIMLocalized(@"settings.source", @"Source:")],source]];
         } else if(images.count<VIMImageSlotCount)[rows addObject:@[NSGridCell.emptyContentView,[self button:VIMLocalized(@"settings.connect-image", @"Connect Image…") action:@selector(chooseDisc:)]]];
         NSGridView *grid=[NSGridView gridViewWithViews:rows];grid.columnSpacing=12;grid.rowSpacing=14;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
-        return VIMColumn(@[grid,VIMText(VIMLocalized(@"settings.connect-iso-cdr-toast-or-unencrypted-dmg-images-disconnect-a", @"Connect ISO, CDR, Toast or unencrypted DMG images. Disconnect a drive’s current image before replacing it."),NO)]);
+        return VIMColumn(@[grid,VIMText(VIMLocalized(@"vimmachinesettings.connect-iso-cdr-toast-or-unencrypted-dmg-images", @"Connect ISO, CDR, Toast or unencrypted DMG images."),NO)]);
     }
     NSString *file=[self.machine.configuration[@"Disk"] lastPathComponent]?:@"System.qcow2";
     NSPopUpButton *source=[NSPopUpButton new];[source addItemWithTitle:file];source.toolTip=file;
@@ -425,10 +568,7 @@ static void VIMAlignFormBaselines(NSView *view) {
         @[[NSTextField labelWithString:VIMLocalized(@"diskmaintenance.maintenance", @"Maintenance:")],tools]]];
     grid.columnSpacing=12;grid.rowSpacing=16;
     [grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;[grid columnAtIndex:1].xPlacement=NSGridCellPlacementLeading;
-    return VIMColumn(@[grid,
-        VIMText(VIMLocalized(@"diskmaintenance.reclaim-space-recovers-unused-image-storage-compress-also-compresses-existing-data-new", @"Reclaim Space recovers unused image storage. Compress also compresses existing data; new writes stay uncompressed."),NO),
-        VIMText(running?VIMLocalized(@"diskmaintenance.shut-down-this-mac-to-use-these-tools-capacity-stays-unchanged-deleted", @"Shut down this Mac to use these tools. Capacity stays unchanged. Deleted files may still occupy space inside the image."):
-            VIMLocalized(@"diskmaintenance.capacity-stays-unchanged-deleted-files-may-still-occupy-space-inside-the-image", @"Capacity stays unchanged. Deleted files may still occupy space inside the image."),NO)]);
+    return VIMColumn(@[grid]);
 }
 - (void)maintainDisk:(NSButton *)sender {
     if(self.maintenanceWindow||[VIMDiskMaintenance hasActiveOperation])return;
@@ -447,7 +587,11 @@ static void VIMAlignFormBaselines(NSView *view) {
     if(self.maintenanceWindow||[VIMDiskMaintenance hasActiveOperation])return;
     NSURL *image=[NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"Runtime/bin/qemu-img"];
     NSString *root=VIMDevelopmentSourceRoot();
-    if(root.length)image=[[NSURL fileURLWithPath:root] URLByAppendingPathComponent:@"Build/qemu/build-arm64-pvg/qemu-img"];
+    if(root.length) {
+        NSString *runtime=[NSDictionary dictionaryWithContentsOfFile:[root stringByAppendingPathComponent:@"Build/RuntimeLocation.plist"]][@"Directory"];
+        if(!runtime.length){VIMPresentError([NSError errorWithDomain:@"VirtualIntelMac.Runtime" code:1 userInfo:@{NSLocalizedDescriptionKey:VIMLocalized(@"vimmachinesettings.open-the-complete-virtual-intel-mac-app-to-maintain", @"Open the complete Virtual Intel Mac app to maintain its disks.")}],self.window);return;}
+        image=[[NSURL fileURLWithPath:runtime] URLByAppendingPathComponent:@"qemu-img"];
+    }
     NSWindow *window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,440,208) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
     window.title=self.machine.name;window.releasedWhenClosed=NO;
     window.tabbingMode=NSWindowTabbingModeDisallowed;
@@ -461,7 +605,7 @@ static void VIMAlignFormBaselines(NSView *view) {
     [percentage.widthAnchor constraintEqualToConstant:44].active=YES;
     NSStackView *statusRow=[NSStackView stackViewWithViews:@[status,percentage]];statusRow.spacing=12;statusRow.alignment=NSLayoutAttributeFirstBaseline;
     [status.widthAnchor constraintEqualToAnchor:statusRow.widthAnchor constant:-56].active=YES;
-    NSTextField *explanation=VIMText(VIMLocalized(@"diskmaintenance.keep-the-drive-connected-this-window-closes-when-the-operation-finishes", @"Keep the drive connected. This window closes when the operation finishes."),NO);explanation.font=[NSFont systemFontOfSize:11];
+    NSTextField *explanation=VIMText(VIMLocalized(@"vimmachinesettings.the-original-disk-is-kept-until-the-operation-finishes", @"The original disk is kept until the operation finishes."),NO);explanation.font=[NSFont systemFontOfSize:11];
     NSProgressIndicator *progress=[NSProgressIndicator new];progress.style=NSProgressIndicatorStyleBar;progress.indeterminate=YES;
     progress.minValue=0;progress.maxValue=1;[progress startAnimation:nil];
     NSStackView *activity=VIMColumn(@[statusRow,progress]);activity.spacing=8;
@@ -478,18 +622,23 @@ static void VIMAlignFormBaselines(NSView *view) {
         [progress.widthAnchor constraintEqualToAnchor:activity.widthAnchor],
         [explanation.widthAnchor constraintEqualToAnchor:content.widthAnchor]]];
     self.maintenanceWindow=window;
-    __block NSDictionary *result=nil;__block NSError *failure=nil;NSError *error=nil;
+    NSError *error=nil;
     BOOL started=[VIMDiskMaintenance startForPackage:self.machine.URL identifier:self.machine.configuration[@"Identifier"] qemuImage:image compressed:compressed
         progress:^(NSString *phase,double fraction){
             status.stringValue=phase;percentage.stringValue=fraction<0?@"":[NSString stringWithFormat:@"%.0f%%",floor(fraction*100)];
             progress.accessibilityLabel=phase;
             progress.indeterminate=fraction<0;
             if(fraction<0)[progress startAnimation:nil];else {[progress stopAnimation:nil];progress.doubleValue=fraction;}
-        } completion:^(NSDictionary *value,NSError *issue){result=value;failure=issue;[NSApp stopModal];} error:&error];
+        } completion:^(NSDictionary *value,NSError *issue){
+            [self.window endSheet:window];[window orderOut:nil];
+            self.maintenanceWindow=nil;self.diskActivity=nil;
+            [self diskMaintenanceFinished:value error:issue compressed:compressed];
+        } error:&error];
     if(!started){self.maintenanceWindow=nil;VIMPresentError(error,self.window);return;}
     self.diskActivity=[VIMInstallationActivity beginWithReason:compressed?VIMLocalized(@"diskmaintenance.compressing-a-virtual-mac-disk", @"Compressing a virtual Mac disk"):VIMLocalized(@"diskmaintenance.reclaiming-virtual-mac-disk-space", @"Reclaiming virtual Mac disk space")];
-    [window setFrameOrigin:NSMakePoint(NSMidX(self.window.frame)-NSWidth(window.frame)/2,NSMidY(self.window.frame)-NSHeight(window.frame)/2)];
-    [NSApp runModalForWindow:window];[window orderOut:nil];self.maintenanceWindow=nil;self.diskActivity=nil;
+    [self.window beginSheet:window completionHandler:nil];
+}
+- (void)diskMaintenanceFinished:(NSDictionary *)result error:(NSError *)failure compressed:(BOOL)compressed {
     [self readStorageSizes];[self render];
     [NSNotificationCenter.defaultCenter postNotificationName:@"VIMLibraryChanged" object:nil];
     if(self.completion)self.completion();
@@ -541,6 +690,16 @@ static void VIMAlignFormBaselines(NSView *view) {
         [NSString stringWithFormat:@"ssh -p %@ -l '%@' 127.0.0.1",port,self.guestUsername];
     NSString *guestIP=[network[@"GuestAddresses"] firstObject];
     if(!shared)address=guestIP.length?(files?[@"smb://" stringByAppendingString:guestIP]:[NSString stringWithFormat:@"ssh -l '%@' %@",self.guestUsername,guestIP]):@"";
+    BOOL tigerSharing=files&&[self.machine.guest isEqual:@"tiger"];
+    if(tigerSharing&&self.guestUsername.length&&(shared||guestIP.length)) {
+        // A current host can mount Tiger's home share and transfer files,
+        // but its server-browser request to Tiger's native Samba can fail.
+        // Connect to the actual share rather than enumerating the server.
+        NSURLComponents *home=[NSURLComponents new];home.scheme=@"smb";
+        home.host=shared?@"127.0.0.1":guestIP;home.port=shared?port:nil;
+        home.user=self.guestUsername;home.path=[@"/" stringByAppendingString:self.guestUsername];
+        address=home.URL.absoluteString;
+    }
     if(!files&&self.machine.preMetalGuest&&address.length){
         NSString *user=[self.guestUsername stringByReplacingOccurrencesOfString:@"'" withString:@"'\\''"];
         // Stock 13F34 advertises AES-GCM but its sshd aborts when using it.
@@ -555,8 +714,10 @@ static void VIMAlignFormBaselines(NSView *view) {
     if(!shared){connection.host=guestIP;connection.port=nil;}
     NSButton *open=[self button:files?VIMLocalized(@"settings.open-in-finder", @"Open in Finder"):VIMLocalized(@"settings.open-in-terminal", @"Open in Terminal") action:@selector(openConnection:)];open.identifier=files||self.machine.preMetalGuest?address:(address.length?connection.URL.absoluteString:@"");open.enabled=[network[@"Connected"] boolValue]&&(!shared||enabled.state==NSControlStateValueOn)&&address.length&&(files||self.guestUsername.length>0);
     NSStackView *actions=[NSStackView stackViewWithViews:@[open,copy]];actions.spacing=12;
+    NSString *enableSharing=tigerSharing?VIMLocalized(@"vimmachinesettings.1-in-the-virtual-mac-open-system-preferences-sharing", @"1. In the virtual Mac, open System Preferences → Sharing and turn on Windows Sharing for your account."):
+        VIMLocalized(@"settings.1-in-the-virtual-mac-open-system-preferences-sharing-and", @"1. In the virtual Mac, open System Preferences → Sharing and turn on File Sharing. In Options, enable SMB for your account.");
     NSMutableArray *views=[NSMutableArray arrayWithArray:@[VIMText(files?VIMLocalized(@"settings.open-the-virtual-mac-s-files-on-this-mac", @"Open the virtual Mac’s files on this Mac"):VIMLocalized(@"settings.connect-to-the-virtual-mac-with-ssh", @"Connect to the virtual Mac with SSH"),YES),
-        VIMText(files?VIMLocalized(@"settings.1-in-the-virtual-mac-open-system-preferences-sharing-and", @"1. In the virtual Mac, open System Preferences → Sharing and turn on File Sharing. In Options, enable SMB for your account."):VIMLocalized(@"settings.1-in-the-virtual-mac-open-system-preferences-sharing-and-2", @"1. In the virtual Mac, open System Preferences → Sharing and turn on Remote Login."),NO)]];
+        VIMText(files?enableSharing:VIMLocalized(@"settings.1-in-the-virtual-mac-open-system-preferences-sharing-and-2", @"1. In the virtual Mac, open System Preferences → Sharing and turn on Remote Login."),NO)]];
     if(files) {
         [views addObject:[self guestSettingsButton:VIMLocalized(@"settings.open-sharing-in-virtual-mac", @"Open Sharing in Virtual Mac…") pane:@"sharing"]];
     }
@@ -584,7 +745,7 @@ static void VIMAlignFormBaselines(NSView *view) {
             [enabled.trailingAnchor constraintLessThanOrEqualToAnchor:pane.trailingAnchor constant:-20]]];
         NSTabView *tabs=[NSTabView new];tabs.tabViewType=NSTopTabsBezelBorder;
         NSTabViewItem *item=[[NSTabViewItem alloc] initWithIdentifier:@"guest"];
-        item.label=VIMLocalized(@"settings.virtual-mac", @"Virtual Mac");item.view=pane;[tabs addTabViewItem:item];return tabs;
+        item.label=VIMLocalized(@"settings.virtual-mac", @"Virtual Mac");item.view=pane;[tabs addTabViewItem:item];return VIMStyledConfigurationTabs(tabs);
     }
     NSTabView *tabs=[NSTabView new];tabs.identifier=@"SharingDirections";tabs.tabViewType=NSTopTabsBezelBorder;
     tabs.accessibilityLabel=VIMLocalized(@"settings.which-mac-to-connect-to", @"Which Mac to connect to");
@@ -594,7 +755,7 @@ static void VIMAlignFormBaselines(NSView *view) {
         NSView *pane=[self sharingContentForHost:host.boolValue];VIMAlignFormBaselines(pane);
         item.view=VIMSharingScrollPane(pane);[tabs addTabViewItem:item];
     }
-    [tabs selectTabViewItemAtIndex:self.hostFiles?0:1];tabs.delegate=self;return tabs;
+    [tabs selectTabViewItemAtIndex:self.hostFiles?0:1];tabs.delegate=self;return VIMStyledConfigurationTabs(tabs);
 }
 - (BOOL)tabView:(NSTabView *)tabView shouldSelectTabViewItem:(NSTabViewItem *)item {
     [self.window makeFirstResponder:nil];return !self.invalidField;
@@ -674,8 +835,11 @@ static void VIMAlignFormBaselines(NSView *view) {
     NSButton *generate=[self button:VIMLocalized(@"ui.generate", @"Generate") action:@selector(generateMAC:)];generate.cell.representedObject=mac;
     NSStackView *macRow=[NSStackView stackViewWithViews:@[mac,generate]];macRow.spacing=12;
     macRow.alignment=NSLayoutAttributeFirstBaseline;
-    NSPopUpButton *type=[NSPopUpButton new];[type addItemWithTitle:@"Intel 82545EM Gigabit Ethernet"];type.toolTip=@"QEMU e1000-82545em · PCI 8086:100F";
-    NSGridView *grid=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:VIMLocalized(@"settings.mac", @"MAC:")],macRow],@[[NSTextField labelWithString:VIMLocalized(@"settings.type", @"Type:")],type]]];grid.rowSpacing=16;grid.columnSpacing=12;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
+    NSString *model=VIMNetworkDeviceModel(self.machine.guest,self.machine.editableConfiguration);
+    BOOL virtio=[model isEqual:@"virtio-net-pci"],realtek=[model isEqual:@"rtl8139"];
+    NSPopUpButton *type=[NSPopUpButton new];[type addItemWithTitle:virtio?@"VirtIO Network":realtek?@"Realtek RTL8139 Fast Ethernet":@"Intel 82545EM Gigabit Ethernet"];
+    type.toolTip=virtio?@"QEMU virtio-net-pci · PCI 1AF4:1041":realtek?@"QEMU rtl8139 · PCI 10EC:8139":@"QEMU e1000-82545em · PCI 8086:100F";
+    NSGridView *grid=[NSGridView gridViewWithViews:@[@[[NSTextField labelWithString:@"MAC:"],macRow],@[[NSTextField labelWithString:VIMLocalized(@"settings.type", @"Type:")],type]]];grid.rowSpacing=16;grid.columnSpacing=12;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
     // A stack's bounds and a popup's bezel are not text baselines. Align the
     // captions with the actual editable/control text, not their outer frames.
     for(NSInteger row=0;row<2;row++) {
@@ -734,6 +898,7 @@ static void VIMAlignFormBaselines(NSView *view) {
     self.sidebar.delegate=nil;self.sidebar.dataSource=nil;self.sidebar=nil;
     BOOL hasRestore=[self.section isEqual:@"Hardware"]&&[@[@0,@1,@3,@4] containsObject:@(self.hardwareIndex)];
     CGFloat height=[self.section isEqual:@"General"]?380:([self.section isEqual:@"Hardware"]?390:490);
+    // All panes share one width; long popup titles must not resize the window.
     CGFloat width=660;
     NSRect frame=self.window.frame;CGFloat top=NSMaxY(frame);[self.window setContentSize:NSMakeSize(width,height)];frame=self.window.frame;frame.origin.y=top-NSHeight(frame);[self.window setFrame:frame display:YES];
     self.fields=[NSMutableDictionary dictionary];self.descriptionEditor=nil;VIMConfigurationDocument *content=[VIMConfigurationDocument new];content.drawsWindowBackground=YES;self.window.contentView=content;
@@ -772,8 +937,9 @@ static void VIMAlignFormBaselines(NSView *view) {
             [content layoutSubtreeIfNeeded];
             return;
         }
-        NSBox *box=[NSBox new];box.boxType=NSBoxCustom;box.borderWidth=.5;box.borderColor=NSColor.separatorColor;box.cornerRadius=4;
-        box.fillColor=NSColor.controlBackgroundColor;
+        NSBox *box=[NSBox new];box.identifier=@"ConfigurationDetailFrame";box.boxType=NSBoxCustom;box.borderWidth=.5;box.borderColor=NSColor.separatorColor;box.cornerRadius=4;
+        if(@available(macOS 26.0,*))box.fillColor=NSColor.controlBackgroundColor;
+        else box.fillColor=NSColor.clearColor;
         box.translatesAutoresizingMaskIntoConstraints=NO;[content addSubview:box positioned:NSWindowBelow relativeTo:nil];
         [NSLayoutConstraint activateConstraints:@[[box.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:left],[box.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-12],[box.topAnchor constraintEqualToAnchor:content.topAnchor constant:12],[box.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-12]]];
         left+=20;
@@ -784,8 +950,15 @@ static void VIMAlignFormBaselines(NSView *view) {
     scroll.drawsBackground=NO;scroll.translatesAutoresizingMaskIntoConstraints=NO;[content addSubview:scroll];
     NSView *document=[VIMConfigurationDocument new];document.translatesAutoresizingMaskIntoConstraints=NO;scroll.documentView=document;
     NSView *pane=[self.section isEqual:@"General"]?[self general]:([self.section isEqual:@"Hardware"]?[self hardware]:[self sharing]);
+    // A wide footer must not alter a form's leading edge or distribute spare
+    // width into its caption column when the CPU backend changes.
+    if([pane isKindOfClass:NSStackView.class])for(NSView *view in ((NSStackView *)pane).arrangedSubviews)
+        if([view isKindOfClass:NSGridView.class])[view.widthAnchor constraintEqualToAnchor:pane.widthAnchor].active=YES;
     VIMAlignFormBaselines(pane);
     pane.translatesAutoresizingMaskIntoConstraints=NO;[document addSubview:pane];
+    // Leave the native text-field focus ring inside the clip view. General's
+    // fields fill their form; clipping at that exact edge cuts off the ring.
+    CGFloat focusMargin=[self.section isEqual:@"General"]?4:0;
     [NSLayoutConstraint activateConstraints:@[[scroll.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:left],
         [scroll.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-24],
         [scroll.topAnchor constraintEqualToAnchor:content.topAnchor constant:24],
@@ -794,17 +967,17 @@ static void VIMAlignFormBaselines(NSView *view) {
         [self.feedback.trailingAnchor constraintEqualToAnchor:scroll.trailingAnchor],
         [self.feedback.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-16],
         [document.widthAnchor constraintEqualToAnchor:scroll.contentView.widthAnchor],
-        [pane.leadingAnchor constraintEqualToAnchor:document.leadingAnchor],
-        [pane.trailingAnchor constraintEqualToAnchor:document.trailingAnchor],
-        [pane.topAnchor constraintEqualToAnchor:document.topAnchor],
-        [pane.bottomAnchor constraintEqualToAnchor:document.bottomAnchor]]];
+        [pane.leadingAnchor constraintEqualToAnchor:document.leadingAnchor constant:focusMargin],
+        [pane.trailingAnchor constraintEqualToAnchor:document.trailingAnchor constant:-focusMargin],
+        [pane.topAnchor constraintEqualToAnchor:document.topAnchor constant:6],
+        [pane.bottomAnchor constraintEqualToAnchor:document.bottomAnchor constant:-6]]];
     if(hasRestore) {
         NSButton *restore=[self button:VIMLocalized(@"settings.restore-defaults", @"Restore Defaults") action:@selector(restoreDefaults:)];restore.translatesAutoresizingMaskIntoConstraints=NO;[content addSubview:restore];
         [NSLayoutConstraint activateConstraints:@[[restore.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-32],[restore.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-30]]];
     }
     if([self.section isEqual:@"General"]) {
         [content layoutSubtreeIfNeeded];
-        CGFloat fitting=ceil(pane.fittingSize.height)+24+12+ceil(self.feedback.fittingSize.height)+16;
+        CGFloat fitting=ceil(pane.fittingSize.height)+12+24+12+ceil(self.feedback.fittingSize.height)+16;
         CGFloat top=NSMaxY(self.window.frame);
         [self.window setContentSize:NSMakeSize(width,fitting)];
         NSRect fitted=self.window.frame;fitted.origin.y=top-NSHeight(fitted);
@@ -853,7 +1026,7 @@ static void VIMAlignFormBaselines(NSView *view) {
     if([key isEqual:@"Name"]) {
         if([field.stringValue isEqual:self.machine.pendingName?:self.machine.name]){self.feedback.stringValue=@"";return;}
         if(![self.machine rename:field.stringValue error:&error]){self.feedback.stringValue=error.localizedDescription;self.invalidField=YES;}
-        else {self.feedback.stringValue=@"";self.window.title=[NSString stringWithFormat:VIMLocalized(@"ui.configuration", @"“%@” Configuration"),self.machine.name];if(self.completion)self.completion();}
+        else {self.feedback.stringValue=@"";self.window.title=[NSString stringWithFormat:@"“%@” Configuration",self.machine.pendingName?:self.machine.name];if(self.completion)self.completion();}
         return;
     }
     NSScanner *scanner=[NSScanner scannerWithString:field.stringValue];long long value=0;
@@ -881,12 +1054,28 @@ static void VIMAlignFormBaselines(NSView *view) {
     if(self.completion)self.completion();return YES;
 }
 - (void)processorsChanged:(NSPopUpButton *)sender {[self commitSettings:@{@"CPUCount":@(sender.indexOfSelectedItem+1)}];}
+- (void)cpuBackendChanged:(NSPopUpButton *)sender {
+#if defined(__arm64__)
+    if([self commitSettings:@{@"CPUBackend":sender.indexOfSelectedItem==0?@"hybrid":@"tcg"}])[self render];
+#else
+    // Intel has one backend; choosing it must not replace an ARM-side preference.
+    (void)sender;
+#endif
+}
+- (void)inputPreferenceChanged:(NSPopUpButton *)sender {
+    NSArray *values=[sender.identifier isEqual:@"MouseRegionAccommodation"]?@[@"automatic",@"on",@"off"]:@[@"control-option",@"command-option"];
+    if([self commitSettings:@{sender.identifier:values[sender.indexOfSelectedItem]}])
+        [VIMSession inputPreferencesChangedForMachine:self.machine];
+}
 - (void)memoryStepped:(NSStepper *)sender {self.memoryValue.integerValue=sender.integerValue;self.memorySlider.doubleValue=sender.doubleValue/1024;[self commitSettings:@{@"MemoryMiB":@(sender.integerValue)}];}
 - (void)memorySlid:(NSSlider *)sender {
     NSInteger mib=MIN(NSProcessInfo.processInfo.physicalMemory/(1024*1024),1024*(NSInteger)llround(sender.doubleValue));self.memoryValue.integerValue=mib;
     [self commitSettings:@{@"MemoryMiB":@(mib)}];
 }
 - (void)retinaChanged:(NSButton *)sender {if([self commitSettings:@{@"DisplayMode":@[@"space",@"retina",@"scaled"][sender.tag],@"RetinaEnabled":@(sender.tag!=2)}])[self render];}
+- (void)openGLRendererChanged:(NSPopUpButton *)sender {
+    if([self commitSettings:@{@"PassthroughOpenGLEnabled":@(sender.indexOfSelectedItem==0)}])[self render];
+}
 - (void)scalingFilterChanged:(NSPopUpButton *)sender {
     if([self commitSettings:@{@"DisplayScalingFilter":sender.indexOfSelectedItem==0?@"nearest":@"linear"}])
         [VIMSession displayScalingPreferencesChangedForMachine:self.machine];
@@ -926,7 +1115,7 @@ static void VIMAlignFormBaselines(NSView *view) {
         // no credential or generated shell script in this document.
         NSURL *directory=[[NSFileManager.defaultManager URLsForDirectory:NSCachesDirectory inDomains:NSUserDomainMask].firstObject URLByAppendingPathComponent:@"com.mac.virtualintelmac/Connections" isDirectory:YES];
         NSURL *profile=[directory URLByAppendingPathComponent:[self.machine.configuration[@"Identifier"] stringByAppendingPathExtension:@"terminal"]];NSError *failure=nil;
-        NSDictionary *settings=@{@"type":@"Window Settings",@"name":self.machine.name,@"CommandString":sender.identifier,@"RunCommandAsShell":@NO,@"ProfileCurrentVersion":@2.08};
+        NSDictionary *settings=@{@"type":VIMLocalized(@"vimmachinesettings.window-settings", @"Window Settings"),@"name":self.machine.name,@"CommandString":sender.identifier,@"RunCommandAsShell":@NO,@"ProfileCurrentVersion":@2.08};
         if(![NSFileManager.defaultManager createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:&failure]||![settings writeToURL:profile error:&failure]||![NSWorkspace.sharedWorkspace openURL:profile])
             VIMPresentError(failure?:[NSError errorWithDomain:@"VirtualIntelMac.RemoteLogin" code:1 userInfo:@{NSLocalizedDescriptionKey:VIMLocalized(@"settings.terminal-couldn-t-open-this-connection-use-copy-command-and", @"Terminal couldn’t open this connection. Use Copy Command and paste it into Terminal.")}],self.window);
         return;
@@ -961,11 +1150,14 @@ static void VIMAlignFormBaselines(NSView *view) {
         VIMConfigurationSidebar *outgoing=controller.sidebar;
         NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:cycle%2?@"Sharing":@"Hardware"];
         [controller selectSection:item];[outgoing layoutSubtreeIfNeeded];
+        controller.hardwareIndex=cycle%controller.categories.count;[controller render];
         [controller.window.contentView layoutSubtreeIfNeeded];
         NSScrollView *scroll=controller.sidebar.enclosingScrollView;
         if(scroll.verticalScrollElasticity!=NSScrollElasticityNone||scroll.horizontalScrollElasticity!=NSScrollElasticityNone||
            scroll.hasVerticalScroller||scroll.hasHorizontalScroller||
-           controller.sidebar.categories.count!=controller.categories.count){step=nil;completion(NO);return;}
+           controller.sidebar.categories.count!=controller.categories.count||
+           fabs(NSWidth(controller.window.contentView.bounds)-660)>.5||
+           !VIMConfigurationFormLayoutIsValid(controller.window.contentView)){step=nil;completion(NO);return;}
         cycle++;dispatch_after(dispatch_time(DISPATCH_TIME_NOW,20*NSEC_PER_MSEC),dispatch_get_main_queue(),step);
     };
     step();

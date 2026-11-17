@@ -13,6 +13,7 @@ xcrun clang -fobjc-arc -fmodules -Wno-incomplete-implementation \
   "$source_dir/VirtualIntelMac/VIMUpdateChecker.m" \
   "$source_dir/VirtualIntelMac/VIMLibraryViewController.m" \
   "$source_dir/VirtualIntelMac/VIMMachineSettings.m" \
+  "$source_dir/VirtualIntelMac/VIMConfigurationTabs.m" \
   "$source_dir/VirtualIntelMac/VIMDiskMaintenance.m" \
   "$source_dir/VirtualIntelMac/VIMSettingsIcon.m" \
   "$source_dir/VirtualIntelMac/VIMDiscImage.m" \

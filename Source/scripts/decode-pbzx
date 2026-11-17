@@ -29,6 +29,8 @@ def main():
         # payloadv2 uses this as the maximum uncompressed chunk size.
         read_exact(source, 8)
         output = sys.stdout.buffer
+        chunk = 0
+        offset = 12
 
         while True:
             header = source.read(16)
@@ -40,7 +42,10 @@ def main():
             uncompressed_size, stored_size = struct.unpack(">QQ", header)
             stored = read_exact(source, stored_size)
             if stored.startswith(b"\xfd7zXZ\x00"):
-                decoded = lzma.decompress(stored)
+                try:
+                    decoded = lzma.decompress(stored)
+                except lzma.LZMAError as error:
+                    raise SystemExit(f"corrupt PBZX chunk {chunk} at byte {offset + 16}: {error}") from None
             elif stored_size == uncompressed_size:
                 decoded = stored
             else:
@@ -52,6 +57,8 @@ def main():
                     f"decoded {len(decoded)}"
                 )
             output.write(decoded)
+            chunk += 1
+            offset += 16 + stored_size
 
 
 if __name__ == "__main__":

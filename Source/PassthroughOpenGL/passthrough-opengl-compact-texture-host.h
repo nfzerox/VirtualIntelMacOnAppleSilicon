@@ -1,6 +1,6 @@
 /* Compact CPU texture packets retain formats, byte swapping and native calls.
  * Only pixel-store addressing differs from the client's original storage. */
-struct DGCompactUnpackScope { GLint saved[7],tight[7];int active; };
+struct DGCompactUnpackScope { GLint saved[7],tight[7];int active,submit_definition; };
 static const GLenum dg_compact_unpack_keys[]={GL_UNPACK_ALIGNMENT,GL_UNPACK_ROW_LENGTH,
     GL_UNPACK_SKIP_ROWS,GL_UNPACK_SKIP_PIXELS,GL_UNPACK_ROW_BYTES_APPLE,
     GL_UNPACK_IMAGE_HEIGHT,GL_UNPACK_SKIP_IMAGES};
@@ -21,6 +21,10 @@ static size_t DGHostUnpackBytes(struct DGHostContext *c,struct DGMessage *m,unsi
 }
 static void DGHostCompactUnpackEnd(struct DGHostContext *c,struct DGCompactUnpackScope *scope)
 {
+    /* Shared consumers can bind this image in another CGL context next.
+     * NVIDIA defers the definition without submission; a diagnostic readback
+     * hid the missing wave table. Submit, without waiting for completion. */
+    if(scope->submit_definition){glFlush();scope->submit_definition=0;}
     if(!scope->active)return;
     GLenum error=glGetError();if(error&&!c->error)c->error=error;
     for(unsigned i=0;i<7;++i)if(scope->saved[i]!=scope->tight[i])
@@ -31,6 +35,7 @@ static void DGHostCompactUnpackEnd(struct DGHostContext *c,struct DGCompactUnpac
 static int DGHostCompactUnpackBegin(struct DGHostContext *c,struct DGMessage *m,
     struct DGCompactUnpackScope *scope)
 {
+    scope->submit_definition=m->op==DG_OP_tex_image2D && m->bytes;
     if(!m->args[15])return 1;
     GLenum prior=glGetError();if(prior&&!c->error)c->error=prior;
     for(unsigned i=0;i<7;++i)glGetIntegerv(dg_compact_unpack_keys[i],scope->saved+i);

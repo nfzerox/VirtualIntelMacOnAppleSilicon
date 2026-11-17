@@ -10,6 +10,7 @@
 #include "opengl-installer-paths.h"
 #include "opengl-state-path.h"
 #include "opengl-boot-identity.h"
+#include "opengl-support-revision.h"
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -561,6 +562,7 @@ static int Installed(void){
     // Live maintenance has a current kernel/control epoch. An early startup
     // before the old-OS agent exists can lack one; the host's acknowledged
     // exact-pair restart journal fences those older/unbound receipts.
+    [receipt setObject:[NSNumber numberWithUnsignedInt:VIM_OPENGL_SUPPORT_REVISION] forKey:@"GraphicsSupportRevision"];
     if(boot)[receipt setObject:boot forKey:@"InstalledBootSessionUUID"];
     if(!Write(receipt,[State stringByAppendingPathComponent:@"Graphics.plist"]))return Error("saving graphics installation evidence");
     return 0;

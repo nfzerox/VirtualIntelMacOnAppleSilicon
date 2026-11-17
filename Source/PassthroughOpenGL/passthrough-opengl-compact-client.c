@@ -16,6 +16,34 @@ static size_t DGCompactRecord(unsigned char *out,const struct DGMessage *m,unsig
     memcpy(out,&r,sizeof(r));if(words)memcpy(out+sizeof(r),m->args,words*sizeof(uint64_t));
     return sizeof(r)+words*sizeof(uint64_t);
 }
+/* Connection-lock owned. Same record/header bits as DGCompactAppend, without
+ * constructing/scanning a full zero-padded message for short scalar APIs. */
+static int DGCompactAppendScalars(struct DGConnection *c,uint32_t op,uint32_t context,const uint64_t *args,unsigned words)
+{
+    if(!context || !c->scalar_start || !c->scalar_compact)return 0;
+    while(words && !args[words-1])--words;
+    size_t bytes=sizeof(struct DGCompactScalar)+words*sizeof(uint64_t);
+    if(bytes>sizeof(c->batch)-c->used)return 0;
+#ifdef VIM_PASSTHROUGH_OPENGL_CLIENT_PROFILE
+    /* Accepted scalar counts stay exact. This row times encoding only;
+     * connection-lock wait remains in its separate lock row. */
+    struct DGClientProfileStamp profile=DGClientProfileBegin(0,op,0);
+#endif
+    size_t at=c->scalar_start-1;uint32_t body=0;uint64_t count=0;
+    memcpy(&body,c->batch+at+offsetof(struct DGMessage,bytes),sizeof(body));
+    memcpy(&count,c->batch+at+offsetof(struct DGMessage,args)+sizeof(uint64_t),sizeof(count));
+    struct DGCompactScalar record={(uint16_t)op,(uint16_t)words,context};
+    memcpy(c->batch+c->used,&record,sizeof(record));
+    if(words)memcpy(c->batch+c->used+sizeof(record),args,words*sizeof(uint64_t));
+    c->used+=bytes;body+=(uint32_t)bytes;++count;
+    memcpy(c->batch+at+offsetof(struct DGMessage,bytes),&body,sizeof(body));
+    memcpy(c->batch+at+offsetof(struct DGMessage,args)+sizeof(uint64_t),&count,sizeof(count));
+    ++c->compact_commands;c->compact_saved_bytes+=sizeof(struct DGMessage)-bytes;
+#ifdef VIM_PASSTHROUGH_OPENGL_CLIENT_PROFILE
+    DGClientProfileEnd(profile);
+#endif
+    return 1;
+}
 static int DGCompactAppend(struct DGConnection *c,const struct DGMessage *m)
 {
     if(!dg_compact_scalar_override || !(c->capabilities&DG_CAP_COMPACT_SCALARS) ||

@@ -85,6 +85,7 @@ struct TranslationBlock {
 #define CF_PCREL         0x00020000 /* Opcodes in TB are PC-relative */
 #define CF_BP_PAGE       0x00040000 /* Breakpoint present in code page */
 #define CF_STEP_ATOMIC   0x00080000 /* Running in cpu_exec_step_atomic */
+#define CF_HANDOFF_GUARD 0x00100000 /* Check decoded bytes before hybrid reuse */
 #define CF_CLUSTER_MASK  0xff000000 /* Top 8 bits are cluster ID */
 #define CF_CLUSTER_SHIFT 24
 

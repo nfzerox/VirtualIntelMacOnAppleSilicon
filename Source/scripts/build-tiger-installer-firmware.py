@@ -49,6 +49,12 @@ def main():
     fat=FAT32(data);c=plistlib.loads(fat.read('EFI/OC/config.plist'))
     if c['Misc']['Boot']['ShowPicker'] or c['Misc']['Debug']['Target']:
         raise ValueError('Input configuration is not actually quiet')
+    # A host-applied Tiger combo can fragment mach_kernel beyond the eight
+    # inline HFS+ extents. Use the same overflow-aware reader as Lion rather
+    # than depending on the placement of Apple's original kernel bytes.
+    loader=source/'prebuilt/PassthroughOpenGL/Firmware/OpenCore'
+    runpy.run_path(str(source/'scripts/build-opengl-opencore.py'))['verify'](loader)
+    fat.write('EFI/OC/Drivers/OpenHfsPlus.efi',(loader/'OpenHfsPlus.efi').read_bytes(),replace=True)
     for key in ('Add','Force','Patch','Block'):c['Kernel'][key]=[]
     c['Kernel']['Scheme']['KernelArch']='i386'
     # Darwin8 machine_idle_cstate has no halt fallback without pmDispatch.

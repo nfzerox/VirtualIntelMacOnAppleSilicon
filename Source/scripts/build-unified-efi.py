@@ -11,8 +11,15 @@ import runpy
 import struct
 import tempfile
 
+# macOS 12 and later boot Big Sur's OpenCore profile, presenting a Mac model
+# each release supports (Tahoe dropped iMac19,1). Packaging derives each
+# EFI.img from the base profile's vendored BOOT.img; there is no separate input.
+DERIVED_PROFILES = {'monterey': ('bigsur', 'iMac19,1'), 'ventura': ('bigsur', 'iMac19,1'),
+                    'sonoma': ('bigsur', 'iMac19,1'), 'sequoia': ('bigsur', 'iMac19,1'),
+                    'tahoe': ('bigsur', 'iMac20,1')}
 PROFILES = ('tiger', 'leopard', 'snowleopard', 'lion', 'mountainlion', 'mavericks',
-            'yosemite', 'elcapitan', 'sierra', 'highsierra', 'mojave', 'catalina', 'bigsur')
+            'yosemite', 'elcapitan', 'sierra', 'highsierra', 'mojave', 'catalina', 'bigsur',
+            *DERIVED_PROFILES)
 FAT32 = runpy.run_path(str(Path(__file__).with_name('efi-fat32.py')))['FAT32']
 SNOW_SERIAL = Path(__file__).resolve().parents[1]/'prebuilt/firmware/VIMSerialStartup'
 APPLE_BOOT_GUID = '7C436110-AB2A-4BBB-A880-FE41995C9F82'
@@ -73,6 +80,42 @@ def volume(image):
     return bytearray(data[first*512:(last+1)*512])
 
 
+def sized_for(data, old, profiles):
+    """Grow the volume when the profiles need more room than the base image.
+
+    Same boot sector, cluster size, reserved area and FAT count; only the
+    sector count and FAT length change (both boot-sector copies), and FSInfo's
+    free-cluster hints are marked unknown. Sized from the content, with room
+    to spare, so adding a profile never needs a new fixed size.
+    """
+    clusters = sum(-(-len(content)//old.cluster) or 1 for entries in profiles.values() for content in entries.values())
+    directories = {'/'.join(path.split('/')[:depth]) for guest, entries in profiles.items()
+                   for path in entries for depth in range(1, path.count('/')+1)}
+    clusters += (len(directories)+len(profiles)+8)*8
+    needed = clusters*old.cluster*5//4 + (8 << 20)
+    if needed <= len(data)-old.start:
+        return data
+    sector, reserved = old.sector, old.reserved
+    total = -(-(old.start + needed)//(1 << 20))*(1 << 20)//sector
+    fat_sectors = 1
+    while True:
+        data_clusters = (total-reserved-old.fats*fat_sectors)*sector//old.cluster
+        required = -(-(data_clusters+2)*4//sector)
+        if required <= fat_sectors:
+            break
+        fat_sectors = required
+    grown = bytearray(total*sector)
+    grown[:reserved*sector] = data[:reserved*sector]
+    backup = struct.unpack_from('<H', grown, 50)[0]
+    for boot in {0, backup} if backup and backup < reserved else {0}:
+        struct.pack_into('<I', grown, boot*sector+32, total)
+        struct.pack_into('<I', grown, boot*sector+36, fat_sectors)
+    information = struct.unpack_from('<H', grown, 48)[0]
+    if information and information < reserved and grown[information*sector:information*sector+4] == b'RRaA':
+        struct.pack_into('<II', grown, information*sector+488, 0xffffffff, 0xffffffff)
+    return grown
+
+
 def files(fat, directory, prefix=''):
     result = {}
     for name, _, cluster, size, attributes, _ in fat.entries(directory):
@@ -103,13 +146,16 @@ def build(firmware, selector, output):
         profiles[guest] = files(fat, fat.directory(parent))
         if not {'OpenCore.efi', 'config.plist'}.issubset(profiles[guest]):
             raise ValueError('Incomplete firmware profile: '+guest)
-    # Snow Leopard can publish both real PC UARTs as the same BSD device.
+    # Snow Leopard and Lion can race while publishing the real PC UARTs:
+    # duplicate BSD devices or a missing second callout. Both ship the
+    # unlocked allocator and an identical IOSerialBSDClient subclass ABI.
     # Keep the two-port protocol and the native driver; serialize only the
     # two UART startup calls. Other OS profiles are unchanged.
     serial_profile = runpy.run_path(str(Path(__file__).with_name(
         'build-snowleopard-serial-efi.py')))['serial_profile_entries']
-    profiles['snowleopard'].update(serial_profile(
-        profiles['snowleopard']['config.plist'], SNOW_SERIAL.read_bytes()))
+    for guest in ('snowleopard', 'lion'):
+        profiles[guest].update(serial_profile(
+            profiles[guest]['config.plist'], SNOW_SERIAL.read_bytes(), guest))
     for guest in EARLY_XHCI_PROFILES:
         profiles[guest]['config.plist'] = early_xhci_config(profiles[guest]['config.plist'])
     profiles['lion']['config.plist'] = lion_namecache_config(profiles['lion']['config.plist'])
@@ -118,6 +164,8 @@ def build(firmware, selector, output):
     data = volume(firmware/'bigsur/EFI.img')
     old = FAT32(data)
     reserved = bytes(data[old.fat:old.fat+8])
+    data = sized_for(data, old, profiles)
+    old = FAT32(data)
     data[old.start:] = bytes(len(data)-old.start)
     for mirror in range(old.fats):
         start = old.fat+mirror*old.fat_size

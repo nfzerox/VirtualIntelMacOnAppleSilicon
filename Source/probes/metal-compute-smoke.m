@@ -7,7 +7,10 @@
 
 int main(int argc, char **argv) {
     // Optional element count exercises multi-page host imports without changing
-    // the shader. A bounded run cannot leave a stuck diagnostic in the guest.
+    // the shader. Work is finite; shader compilation and GPU completion on a
+    // first-boot TCG guest must not be mistaken for failure after60 seconds.
+    // Observe the actual process/command result, and stop it explicitly if
+    // collecting evidence of a stall rather than imposing a wall-clock alarm.
     NSUInteger count = 1024;
     if (argc > 2) return 64;
     if (argc == 2) {
@@ -16,7 +19,6 @@ int main(int argc, char **argv) {
         if (!*argv[1] || *end || n < 1 || n > 1048576) return 64;
         count = n;
     }
-    alarm(60);
     @autoreleasepool {
         id<MTLDevice> device = MTLCopyAllDevices().firstObject;
         if (!device) {

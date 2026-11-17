@@ -47,7 +47,7 @@ static inline bool cpu_plugin_mem_cbs_enabled(const CPUState *cpu)
 #endif
 }
 
-TranslationBlock *tb_gen_code(CPUState *cpu, TCGTBCPUState s);
+TranslationBlock *tb_gen_code(CPUState *cpu, TCGTBCPUState s, bool *reused);
 void page_init(void);
 void tb_htable_init(void);
 void tb_reset_jump(TranslationBlock *tb, int n);

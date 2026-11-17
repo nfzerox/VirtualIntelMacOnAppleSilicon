@@ -112,8 +112,14 @@ done:
 int main(int argc,char **argv){
     int corrupt=argc>3&&!strcmp(argv[argc-1],"--corrupt-mic");if(corrupt)argc--;
     if(argc<3||argc>4){fprintf(stderr,"usage: %s host user [domain] [--corrupt-mic]\n",argv[0]);return 2;}
+    /* Qualification can use the real app's loopback forwarding port without
+     * changing host/guest SMB configuration or adding a diagnostic relay. */
+    const char *port=getenv("VIM_SMB_PROBE_PORT");
+    if(!port)port="445";
+    char *end=NULL;unsigned long number=strtoul(port,&end,10);
+    if(!*port||!end||*end||number<1||number>65535)return 2;
     struct addrinfo hints={0},*addresses=NULL;hints.ai_socktype=SOCK_STREAM;
-    if(getaddrinfo(argv[1],"445",&hints,&addresses))return 2;int fd=-1;
+    if(getaddrinfo(argv[1],port,&hints,&addresses))return 2;int fd=-1;
     for(struct addrinfo *a=addresses;a;a=a->ai_next){fd=socket(a->ai_family,a->ai_socktype,a->ai_protocol);
         if(fd>=0&&connect(fd,a->ai_addr,a->ai_addrlen)==0)break;if(fd>=0)close(fd);fd=-1;}
     freeaddrinfo(addresses);if(fd<0)return 2;

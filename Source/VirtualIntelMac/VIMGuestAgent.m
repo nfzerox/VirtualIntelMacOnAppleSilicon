@@ -27,6 +27,9 @@ static NSString *Output(NSDictionary *result) {
 @property BOOL recoveryTransport;
 @property BOOL connecting;
 @property NSMutableArray *connectCompletions;
+- (void)runExecutable:(NSString *)path arguments:(NSArray<NSString *> *)arguments standardInput:(NSData *)input
+              timeout:(NSTimeInterval)timeout pollInterval:(NSTimeInterval)interval
+           completion:(void (^)(NSDictionary *,NSError *))completion;
 @end
 @implementation VIMGuestAgent
 - (instancetype)initWithSocketPath:(NSString *)path {
@@ -67,6 +70,12 @@ static NSString *Output(NSDictionary *result) {
 }
 - (void)runExecutable:(NSString *)path arguments:(NSArray<NSString *> *)arguments standardInput:(NSData *)input
               timeout:(NSTimeInterval)timeout completion:(void (^)(NSDictionary *,NSError *))completion {
+    [self runExecutable:path arguments:arguments standardInput:input timeout:timeout
+           pollInterval:self.processPollInterval completion:completion];
+}
+- (void)runExecutable:(NSString *)path arguments:(NSArray<NSString *> *)arguments standardInput:(NSData *)input
+              timeout:(NSTimeInterval)timeout pollInterval:(NSTimeInterval)interval
+           completion:(void (^)(NSDictionary *,NSError *))completion {
     NSAssert(NSThread.isMainThread,@"Guest controller is main-thread owned");
     if(self.closed || !path.isAbsolutePath || !isfinite(timeout) || timeout<0 || timeout>1200 || input.length>16384) {
         completion(nil,GuestError(VIMLocalized(@"guestagent.the-guest-command-cannot-be-started", @"The guest command cannot be started.")));return;
@@ -80,10 +89,11 @@ static NSString *Output(NSDictionary *result) {
         if(error || ![pid isKindOfClass:NSNumber.class] || pid.longLongValue<=0) {
             completion(nil,error?:GuestError(VIMLocalized(@"guestagent.the-guest-did-not-return-a-process-identifier", @"The guest did not return a process identifier.")));return;
         }
-        [self pollProcess:pid deadline:deadline completion:completion];
+        [self pollProcess:pid deadline:deadline pollInterval:interval completion:completion];
     }];
 }
-- (void)pollProcess:(NSNumber *)pid deadline:(double)deadline completion:(void (^)(NSDictionary *,NSError *))completion {
+- (void)pollProcess:(NSNumber *)pid deadline:(double)deadline pollInterval:(NSTimeInterval)requestedInterval
+         completion:(void (^)(NSDictionary *,NSError *))completion {
     if(self.closed || (deadline>0 && NSProcessInfo.processInfo.systemUptime>=deadline)) {
         completion(nil,GuestError(VIMLocalized(@"guestagent.the-guest-command-was-interrupted-or-timed-out-it-may", @"The guest command was interrupted or timed out. It may still be running.")));return;
     }
@@ -109,10 +119,10 @@ static NSString *Output(NSDictionary *result) {
             }
             completion(result,nil);return;
         }
-        NSTimeInterval interval=isfinite(self.processPollInterval)?MAX(.25,MIN(15,self.processPollInterval)):.25;
+        NSTimeInterval interval=isfinite(requestedInterval)?MAX(.25,MIN(15,requestedInterval)):.25;
         if(self.recoveryTransport)interval=MAX(1,interval); // cold UART, not a VirtIO work queue
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(interval*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
-            [self pollProcess:pid deadline:deadline completion:completion];
+            [self pollProcess:pid deadline:deadline pollInterval:requestedInterval completion:completion];
         });
     }];
 }
@@ -289,7 +299,12 @@ static NSString *Output(NSDictionary *result) {
 }
 - (void)readStatusAtPath:(NSString *)path completion:(void (^)(NSDictionary *,NSError *))completion {
     // Cache executable bytes only, never readiness, build, volume or boot data.
-    [self runExecutable:path arguments:@[] timeout:30 completion:^(NSDictionary *result,NSError *error){
+    // A native service RPC can outlast a cold boot's observation window. Keep
+    // this one child owned until it exits; dropping its PID after30s caused a
+    // fresh blocked probe every45s while Sonoma's configd was crash-looping.
+    // This is a cold status operation, not input: poll once/second without
+    // changing the cadence of other guest commands or inventing readiness.
+    [self runExecutable:path arguments:@[] standardInput:nil timeout:0 pollInterval:1 completion:^(NSDictionary *result,NSError *error){
         NSError *failure=error;
         id report=Successful(result)?[NSJSONSerialization JSONObjectWithData:result[@"stdout"] options:0 error:&failure]:nil;
         if(![report isKindOfClass:NSDictionary.class] || ![report[@"ProtocolVersion"] isEqual:@1] || ![report[@"Ready"] isEqual:@NO]) {
@@ -340,6 +355,30 @@ static NSString *Output(NSDictionary *result) {
                     if(modeError || !Successful(mode)){cleanup(nil,modeError?:GuestError(VIMLocalized(@"guestagent.could-not-prepare-the-guest-probe", @"Could not prepare the guest probe.")));return;}
                     self.statusDirectory=directory;self.statusPayload=payload;
                     [self readStatusAtPath:path completion:finish];
+                }];
+            }];
+        }];
+    }];
+}
+- (void)runTemporaryTool:(NSURL *)tool arguments:(NSArray<NSString *> *)arguments
+             completion:(void (^)(NSDictionary *,NSError *))completion {
+    [self stageFiles:@{@"guest-tool":tool} progress:nil completion:^(NSDictionary *receipt,NSError *error){
+        NSString *directory=receipt[@"Directory"];
+        if(error||!directory.length){completion(nil,error);return;}
+        NSString *path=[directory stringByAppendingPathComponent:@"guest-tool"];
+        [self runExecutable:@"/bin/chmod" arguments:@[@"0700",path] timeout:15 completion:^(NSDictionary *mode,NSError *modeError){
+            if(modeError||!Successful(mode)){
+                completion(nil,modeError?:GuestError(VIMLocalized(@"guestagent.could-not-prepare-the-guest-probe", @"Could not prepare the guest probe.")));return;
+            }
+            [self runExecutable:path arguments:arguments timeout:0 completion:^(NSDictionary *result,NSError *failure){
+                // A lost connection is not proof of exit; retain that staging.
+                if(failure){completion(result,failure);return;}
+                [self runExecutable:@"/bin/rm" arguments:@[@"-f",path] timeout:15 completion:^(NSDictionary *removed,NSError *removeError){
+                    if(removeError||!Successful(removed)){completion(result,nil);return;}
+                    [self runExecutable:@"/bin/rmdir" arguments:@[directory] timeout:15 completion:^(NSDictionary *unused,NSError *unusedError){
+                        // Cleanup cannot invalidate a completed guest operation.
+                        (void)unused;(void)unusedError;completion(result,nil);
+                    }];
                 }];
             }];
         }];

@@ -5,6 +5,9 @@
 
 #include <IOKit/IOLib.h>
 #include <IOKit/IOUserClient.h>
+#include <IOKit/IOWorkLoop.h>
+#include <IOKit/IOEventSource.h>
+#include <IOKit/graphics/IOFramebuffer.h>
 #include <IOKit/graphics/IOGraphicsTypes.h>
 #include <libkern/c++/OSArray.h>
 #include <libkern/libkern.h>
@@ -13,6 +16,7 @@
 #include <stdint.h>
 #include "PVGMojaveSurface.h"
 #include "PVGSurfaceLimits.h"
+#include "PVGDisplayWorkLoop.h"
 
 #ifndef PVG_TRACE_DISPLAY
 #define PVG_TRACE_DISPLAY 0
@@ -48,6 +52,85 @@ using PopulateConfig = void (*)(OSObject *, void *);
 PopulateConfig originalPopulateConfig = nullptr;
 uint32_t surfaceDimensionsOffset = 0;
 uint32_t populatedDimensionsOffset = 0;
+PVGDisplayWorkLoop::Layout displayWorkLoopLayout {};
+using FreeDisplayPipe = void (*)(void *);
+FreeDisplayPipe originalFreeDisplayPipe = nullptr;
+
+void wrappedFreeDisplayPipe(void *pipe) {
+    auto bytes=static_cast<uint8_t *>(pipe);
+    auto loop=*reinterpret_cast<IOWorkLoop **>(bytes+displayWorkLoopLayout.workLoop);
+    // A shared loop outlives this pipe. Unlike a private loop's final release,
+    // its release will not detach our two native interrupt sources for us.
+    // Detach while native init/free still own their creation references.
+    const uint32_t offsets[]={displayWorkLoopLayout.online,displayWorkLoopLayout.offline};
+    if (loop) for (uint32_t offset : offsets) {
+        auto source=*reinterpret_cast<IOEventSource **>(bytes+offset);
+        if (source) { source->disable(); loop->removeEventSource(source); }
+    }
+    originalFreeDisplayPipe(pipe);
+}
+
+// On Mojave and Catalina, cursor updates hold the framebuffer's graphics gate.
+// donor's private display work loop otherwise takes the gates in the opposite
+// order during hot-plug, deadlocking cursor, connectionChange and allocation.
+// Use the same recursive gate from creation, before any native event source
+// is attached. Native init/free retain their existing ownership contract.
+extern "C" __attribute__((used,noinline))
+IOWorkLoop *PVGFramebufferWorkLoop(IOFramebuffer *framebuffer) {
+    IOWorkLoop *loop=framebuffer ? framebuffer->getWorkLoop() : nullptr;
+    if (!loop) {
+        SYSLOG("iosabi","framebuffer work loop not ready; retained native display loop");
+        return IOWorkLoop::workLoop();
+    }
+    loop->retain();
+    return loop;
+}
+extern "C" __attribute__((naked,noinline))
+IOWorkLoop *PVGFramebufferWorkLoopThunk() {
+    __asm__ volatile("movq %r12, %rdi\n\tjmp _PVGFramebufferWorkLoop");
+}
+
+void installDisplayWorkLoop(KernelPatcher &patcher, size_t index,
+    mach_vm_address_t address, size_t size) {
+    if (getKernelVersion()!=KernelVersion::Mojave &&
+        getKernelVersion()!=KernelVersion::Catalina) return;
+    auto init=patcher.solveSymbol(index,
+        "__ZN24AppleParavirtDisplayPipe4initEP22IOGraphicsAccelerator2P21IOAccelDisplayMachineP13IOFramebufferj");
+    auto cursor=patcher.solveSymbol(index,
+        "__ZN24AppleParavirtDisplayPipe17updateCursorStateEttb");
+    auto factory=patcher.solveSymbol(KernelPatcher::KernelID,"__ZN10IOWorkLoop8workLoopEv");
+    auto interruptFactory=patcher.solveSymbol(KernelPatcher::KernelID,
+        "__ZN22IOInterruptEventSource20interruptEventSourceEP8OSObjectPFvS1_PS_iEP9IOServicei");
+    constexpr size_t initBytes=512, cursorBytes=32;
+    PVGDisplayWorkLoop::Layout layout {};
+    if (!init || !cursor || !factory || !interruptFactory || init<address || cursor<address ||
+        init-address>size || cursor-address>size ||
+        size-(init-address)<initBytes || size-(cursor-address)<cursorBytes ||
+        !PVGDisplayWorkLoop::findFactoryCall(reinterpret_cast<const uint8_t *>(init),initBytes,
+            reinterpret_cast<const uint8_t *>(cursor),cursorBytes,init,factory,interruptFactory,layout)) {
+        SYSLOG("iosabi","unknown display work-loop allocation layout; retained native path");
+        patcher.clearError(); return;
+    }
+    int64_t distance=reinterpret_cast<mach_vm_address_t>(PVGFramebufferWorkLoopThunk)-(init+layout.call+5);
+    if (distance<INT32_MIN || distance>INT32_MAX) {
+        SYSLOG("iosabi","display work-loop factory is out of call range"); return;
+    }
+    KernelPatcher::RouteRequest cleanup {"__ZN24AppleParavirtDisplayPipe4freeEv",
+        wrappedFreeDisplayPipe,originalFreeDisplayPipe};
+    displayWorkLoopLayout=layout;
+    if (!patcher.routeMultiple(index,&cleanup,1)) {
+        SYSLOG("iosabi","could not install display work-loop event cleanup");
+        patcher.clearError(); return;
+    }
+    uint8_t replacement[5]={0xe8}; int32_t relative=static_cast<int32_t>(distance);
+    memcpy(replacement+1,&relative,4);
+    patcher.routeBlock(init+layout.call,replacement,sizeof(replacement));
+    if (patcher.getError()!=KernelPatcher::Error::NoError) {
+        SYSLOG("iosabi","could not install shared display work loop");
+        patcher.clearError(); return;
+    }
+    SYSLOG("iosabi","using framebuffer work loop for display hot-plug and cursor");
+}
 
 void wrappedPopulateConfig(OSObject *accelerator, void *config) {
     originalPopulateConfig(accelerator, config);
@@ -613,6 +696,7 @@ void processAppleParavirtGPU(
     }
 
     installPopulatedSurfaceDimensions(patcher, index, address, size);
+    installDisplayWorkLoop(patcher, index, address, size);
 
     setStartupDisplayMode = reinterpret_cast<SetFramebufferMode>(
         patcher.solveSymbol(index,

@@ -140,7 +140,7 @@ static int Provision(NSString *path) {
     if(!VIMOpenGLGuestForSystemVersion(release))return 77;
 #endif
 #else
-    if(![@[@"mojave",@"catalina",@"bigsur"] containsObject:VIMGuestForSystemVersion(release)?:@""])return 77;
+    if(![VIMModernGuests() containsObject:VIMGuestForSystemVersion(release)?:@""])return 77;
 #endif
     int fd=open(path.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW|O_CLOEXEC);struct stat st;
     if(fd<0||fstat(fd,&st)||!S_ISREG(st.st_mode)||st.st_uid||st.st_nlink!=1||(st.st_mode&077)||st.st_size>4096){if(fd>=0)close(fd);return 77;}

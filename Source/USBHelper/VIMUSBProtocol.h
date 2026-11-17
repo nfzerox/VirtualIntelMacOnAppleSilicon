@@ -1,7 +1,7 @@
 #import <Foundation/Foundation.h>
 
 #define VIM_USB_SERVICE @"com.mac.virtualintelmac.usb-helper"
-#define VIM_USB_PROTOCOL 1
+#define VIM_USB_PROTOCOL 2
 
 /// No paths, commands, disk operations or executable uploads cross this API.
 /// The helper accepts only a listening Unix socket and an exact external USB
@@ -17,9 +17,6 @@
 - (void)endSession:(NSString *)sessionID reply:(void (^)(void))reply;
 @end
 
-static inline NSXPCInterface *VIMUSBInterface(void) {
-    return [NSXPCInterface interfaceWithProtocol:@protocol(VIMUSBHelperProtocol)];
-}
 static inline NSError *VIMUSBError(NSString *message) {
     return [NSError errorWithDomain:@"VirtualIntelMac.USB" code:1 userInfo:@{NSLocalizedDescriptionKey:message}];
 }

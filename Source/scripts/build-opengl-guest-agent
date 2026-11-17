@@ -10,6 +10,18 @@ minimum="${VIM_OPENGL_MIN_VERSION:-10.9}"
     echo 'Set VIM_OPENGL_CC and VIM_OPENGL_SDK to an Intel-capable Apple compiler and the period SDK.' >&2;exit 66;
 }
 mkdir -p "$output"
+if [[ "$minimum" == 10.7 ]]; then
+    python3 "$root/scripts/build-native-smb.py" --guest lion --sdk "$sdk" --cc "$cc" --output "$output/LionSMB"
+fi
+if [[ "$minimum" == 10.10 ]]; then
+    python3 "$root/scripts/build-native-smb.py" --guest yosemite --sdk "$sdk" --cc "$cc" --output "$output/YosemiteSMB"
+fi
+if [[ "$minimum" == 10.11 ]]; then
+    python3 "$root/scripts/build-native-smb.py" --guest elcapitan --sdk "$sdk" --cc "$cc" --output "$output/ElCapitanSMB"
+fi
+if [[ "$minimum" == 10.12 ]]; then
+    python3 "$root/scripts/build-native-smb.py" --guest sierra --sdk "$sdk" --cc "$cc" --output "$output/SierraSMB"
+fi
 python3 "$root/scripts/build-guest-ssh.py" --sdk "$sdk" --cc "$cc" --output "$output/guest-ssh"
 "$cc" -fno-objc-arc -O2 -Wall -Wextra -Werror -Wno-deprecated-declarations -arch x86_64 -isysroot "$sdk" -mmacosx-version-min=10.7 \
     "$root/tools/opengl-desktop-status.m" -framework Foundation -framework SystemConfiguration -framework IOKit -o "$output/opengl-desktop-status"

@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "PVGGLSwizzle.h"
+#include "../PVGTextureViewSwizzle.h"
 #include "PVGBigSurTextureUsage.h"
 extern id PVGNewGLDrawable(id device,SEL selector);
 
@@ -144,40 +145,9 @@ static id traceTextureCreate(id self,SEL selector,MTLTextureDescriptor *descript
     return ((id(*)(id,SEL,id))originalTextureCreate)(self,selector,descriptor);
 }
 static char textureViewSwizzleKey;
-static IMP originalPVGView,originalSerializeView;
-static _Thread_local id swizzleParent;
-static _Thread_local uint32_t pendingSwizzle;
-static id pvgSwizzledView(id self,SEL selector,id parent,NSUInteger format,
-                         NSUInteger type,NSRange levels,NSRange slices,uint32_t swizzle) {
-    id savedParent=swizzleParent;uint32_t saved=pendingSwizzle;
-    swizzleParent=parent;pendingSwizzle=swizzle;
-    @try {
-        return ((id(*)(id,SEL,id,NSUInteger,NSUInteger,NSRange,NSRange,uint32_t))originalPVGView)
-            (self,selector,parent,format,type,levels,slices,swizzle);
-    } @finally {swizzleParent=savedParent;pendingSwizzle=saved;}
-}
-static uint32_t serializeSwizzledView(id self,SEL selector,NSUInteger format,NSUInteger type,
-                                    NSRange levels,NSRange slices,id parent,id allocator) {
-    if(parent==swizzleParent&&pendingSwizzle!=0x05040302) {
-        SEL full=sel_registerName("newTextureViewWithPixelFormat:textureType:levels:slices:swizzle:baseTexture:allocator:");
-        return ((uint32_t(*)(id,SEL,NSUInteger,NSUInteger,NSRange,NSRange,uint32_t,id,id))objc_msgSend)
-            (self,full,format,type,levels,slices,pendingSwizzle,parent,allocator);
-    }
-    return ((uint32_t(*)(id,SEL,NSUInteger,NSUInteger,NSRange,NSRange,id,id))originalSerializeView)
-        (self,selector,format,type,levels,slices,parent,allocator);
-}
 static void installSwizzleSerialization(id device) {
-    if(originalPVGView)return;
     id serializer=((id(*)(id,SEL))objc_msgSend)(device,sel_registerName("serializer"));
-    SEL old=sel_registerName("newTextureViewWithPixelFormat:textureType:levels:slices:baseTexture:allocator:");
-    SEL full=sel_registerName("newTextureViewWithPixelFormat:textureType:levels:slices:swizzle:baseTexture:allocator:");
-    SEL view=sel_registerName("initWithTexture:pixelFormat:textureType:levels:slices:swizzle:");
-    Class texture=objc_getClass("AppleParavirtTexture");
-    Method sm=class_getInstanceMethod([serializer class],old),vm=class_getInstanceMethod(texture,view);
-    if(!sm||!vm||![serializer respondsToSelector:full])abort();
-    originalSerializeView=method_getImplementation(sm);originalPVGView=method_getImplementation(vm);
-    class_replaceMethod([serializer class],old,(IMP)serializeSwizzledView,method_getTypeEncoding(sm));
-    class_replaceMethod(texture,view,(IMP)pvgSwizzledView,method_getTypeEncoding(vm));
+    if(!pvgInstallTextureSwizzleTransport([serializer class]))abort();
 }
 static unsigned textureViewSwizzle(id self,SEL selector) {
     (void)selector;
@@ -190,7 +160,7 @@ static id initIdentityTextureView(id self,SEL selector,id parent,NSUInteger form
     for(unsigned i=0;i<4;i++)if(((swizzle>>(8*i))&255)>5) {
         fprintf(stderr,"PVG GL: invalid texture-view swizzle 0x%x\n",swizzle);abort();
     }
-    if(swizzle!=0x05040302&&!originalPVGView) {
+    if(swizzle!=0x05040302&&!pvgTextureSwizzleTransportInstalled()) {
         fprintf(stderr,"PVG GL: texture-view swizzle transport unavailable 0x%x\n",swizzle);abort();
     }
     // Catalina's superclass stores the supplied key (not a composition with
@@ -233,6 +203,90 @@ static void setOpenGLMode(id self,SEL selector,BOOL value) {
 }
 static BOOL openGLMode(id self,SEL selector) {
     (void)selector;return [objc_getAssociatedObject(self,&openGLModeKey) boolValue];
+}
+// Monterey and later Metal has native OpenGL-mode accessors, so the adapter's
+// own ones above are never added, and the native bit reaches a paravirtual
+// plugin whose device answers supportsOpenGL NO: it then refuses the render
+// pass ("Cannot support OpenGL on this device"). Exactly then, record the bit
+// as adapter state and report it off, as Catalina's plugin never saw it; the
+// adapter lowers GL semantics itself. Otherwise the native accessors run.
+typedef struct {Class cls; IMP set,get;} NativeOpenGLMode;
+static NativeOpenGLMode nativeOpenGLModes[2];
+static BOOL deviceRefusesOpenGLMode(void) {
+    static BOOL refuses;static dispatch_once_t once;
+    dispatch_once(&once,^{
+        SEL supports=sel_registerName("supportsOpenGL");
+        for(id device in [MTLCopyAllDevices() autorelease])
+            if([NSStringFromClass([device class]) hasPrefix:@"AppleParavirt"]&&[device respondsToSelector:supports])
+                refuses|=!((BOOL(*)(id,SEL))objc_msgSend)(device,supports);
+    });
+    return refuses;
+}
+static const NativeOpenGLMode *nativeOpenGLMode(id self) {
+    for(Class cls=object_getClass(self);cls;cls=class_getSuperclass(cls))
+        for(unsigned i=0;i<2;i++)if(nativeOpenGLModes[i].cls==cls)return &nativeOpenGLModes[i];
+    abort();
+}
+static void setGatedOpenGLMode(id self,SEL selector,BOOL value) {
+    if(deviceRefusesOpenGLMode())setOpenGLMode(self,selector,value);
+    else ((void(*)(id,SEL,BOOL))nativeOpenGLMode(self)->set)(self,selector,value);
+}
+static BOOL gatedOpenGLMode(id self,SEL selector) {
+    return deviceRefusesOpenGLMode()?NO:((BOOL(*)(id,SEL))nativeOpenGLMode(self)->get)(self,selector);
+}
+static void installOpenGLMode(Class cls,unsigned slot) {
+    SEL set=sel_registerName("setOpenGLModeEnabled:"),get=sel_registerName("openGLModeEnabled");
+    if(class_addMethod(cls,set,(IMP)setOpenGLMode,"v@:c")){class_addMethod(cls,get,(IMP)openGLMode,"c@:");return;}
+    Method setter=class_getInstanceMethod(cls,set),getter=class_getInstanceMethod(cls,get);
+    if(!setter||!getter)return;
+    nativeOpenGLModes[slot]=(NativeOpenGLMode){cls,method_getImplementation(setter),method_getImplementation(getter)};
+    class_replaceMethod(cls,set,(IMP)setGatedOpenGLMode,method_getTypeEncoding(setter));
+    class_replaceMethod(cls,get,(IMP)gatedOpenGLMode,method_getTypeEncoding(getter));
+}
+// Likewise for the pass's default raster sample count: the native setter
+// stores the renderer's value and the paravirtual encoder then refuses the
+// pass (a nil encoder, which the renderer calls through). Releases without
+// the native setter never stored it, so do the same, after the same check.
+static IMP nativeRasterSamples;
+static void gatedRasterSamples(MTLRenderPassDescriptor *self,SEL selector,NSUInteger count) {
+    if(deviceRefusesOpenGLMode())requireSupportedRasterSamples(self,selector,count);
+    else ((void(*)(id,SEL,NSUInteger))nativeRasterSamples)(self,selector,count);
+}
+static void installRasterSamples(Class cls) {
+    SEL set=sel_registerName("setDefaultRasterSampleCount:");
+    if(class_addMethod(cls,set,(IMP)requireSupportedRasterSamples,"v@:Q"))return;
+    Method setter=class_getInstanceMethod(cls,set);
+    if(!setter)return;
+    nativeRasterSamples=method_getImplementation(setter);
+    class_replaceMethod(cls,set,(IMP)gatedRasterSamples,method_getTypeEncoding(setter));
+}
+// The renderer also sets sample positions on multisampled passes, and the
+// paravirtual encoder refuses any pass carrying them (nil encoder). They are
+// the device's own default pattern, so dropping exactly those changes no
+// sample; any other pattern still reaches the native setter.
+static IMP nativeSamplePositions;
+static BOOL deviceDefaultSamplePositions(const MTLSamplePosition *positions,NSUInteger count) {
+    if(!positions||!count||count>16)return NO;
+    for(id<MTLDevice> device in [MTLCopyAllDevices() autorelease]) {
+        if(![NSStringFromClass([device class]) hasPrefix:@"AppleParavirt"])continue;
+        MTLSamplePosition defaults[16];
+        [device getDefaultSamplePositions:defaults count:count];
+        for(NSUInteger i=0;i<count;i++)
+            if(defaults[i].x!=positions[i].x||defaults[i].y!=positions[i].y)return NO;
+        return YES;
+    }
+    return NO;
+}
+static void gatedSamplePositions(id self,SEL selector,const MTLSamplePosition *positions,NSUInteger count) {
+    if(deviceRefusesOpenGLMode()&&deviceDefaultSamplePositions(positions,count))return;
+    ((void(*)(id,SEL,const MTLSamplePosition *,NSUInteger))nativeSamplePositions)(self,selector,positions,count);
+}
+static void installSamplePositions(Class cls) {
+    SEL set=sel_registerName("setSamplePositions:count:");
+    Method setter=class_getInstanceMethod(cls,set);
+    if(!setter)return;
+    nativeSamplePositions=method_getImplementation(setter);
+    class_replaceMethod(cls,set,(IMP)gatedSamplePositions,method_getTypeEncoding(setter));
 }
 static char writeSwizzleKey;
 typedef struct {Class cls; IMP copy;} DescriptorCopy;
@@ -528,10 +582,10 @@ __attribute__((constructor)) static void enablePVGProfile(void) {
         // the native OpenGL-mode bit (private flags bit7). Lowering is handled
         // explicitly above. Full descriptor copy/cache semantics remain to be
         // validated before this adapter is suitable for global activation.
-        if(class_addMethod(descriptor,sel_registerName("setOpenGLModeEnabled:"),(IMP)setOpenGLMode,"v@:c"))
-            class_addMethod(descriptor,sel_registerName("openGLModeEnabled"),(IMP)openGLMode,"c@:");
+        installOpenGLMode(descriptor,0);
         Class passDescriptor=objc_getClass("MTLRenderPassDescriptorInternal");
-        class_addMethod(passDescriptor,sel_registerName("setDefaultRasterSampleCount:"),(IMP)requireSupportedRasterSamples,"v@:Q");
+        installRasterSamples(passDescriptor);
+        installSamplePositions(passDescriptor);
         // Live inspection of donor writeDescriptor confirms its PVG wire
         // format omits dither (also on Catalina, which has native accessors).
         // Preserve observable descriptor state; do not claim hardware dithering.
@@ -539,8 +593,7 @@ __attribute__((constructor)) static void enablePVGProfile(void) {
             class_addMethod(passDescriptor,sel_registerName("isDitherEnabled"),(IMP)isDither,"c@:");
         for(NSString *name in @[@"MTLRenderPassColorAttachmentDescriptorInternal",@"MTLRenderPassDepthAttachmentDescriptorInternal",@"MTLRenderPassStencilAttachmentDescriptorInternal"])
             class_addMethod(objc_getClass(name.UTF8String),sel_registerName("setYInvert:"),(IMP)requireDisabledGLFeature,"v@:c");
-        if(class_addMethod(passDescriptor,sel_registerName("setOpenGLModeEnabled:"),(IMP)setOpenGLMode,"v@:c"))
-            class_addMethod(passDescriptor,sel_registerName("openGLModeEnabled"),(IMP)openGLMode,"c@:");
+        installOpenGLMode(passDescriptor,1);
         for(NSString *setter in @[@"setPointCoordLowerLeft:",@"setPointSizeOutputVS:",@"setTwoSideEnabled:",@"setNeedsCustomBorderColorSamplers:"])
             class_addMethod(descriptor,sel_registerName(setter.UTF8String),(IMP)requireDisabledGLFeature,"v@:c");
         // Absent-only, default-state bring-up. Reject nondefault coverage;

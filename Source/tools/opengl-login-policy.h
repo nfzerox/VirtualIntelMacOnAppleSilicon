@@ -23,6 +23,9 @@ static BOOL VIMOpenGLSetLoginUserWithPendingPublication(NSString *name,BOOL allo
     }else if(errno!=ENOENT)return NO;
     CFStringRef domain=CFSTR("/Library/Preferences/com.apple.loginwindow");
     CFPreferencesSetValue(CFSTR("autoLoginUser"),(CFStringRef)name,domain,kCFPreferencesCurrentUser,kCFPreferencesAnyHost);
+    // Tahoe can lock the screen right after an automatic login; the app's
+    // login is meant to reach an unlocked desktop. Older releases ignore it.
+    CFPreferencesSetValue(CFSTR("autoLoginUserScreenLocked"),name?kCFBooleanFalse:NULL,domain,kCFPreferencesCurrentUser,kCFPreferencesAnyHost);
     BOOL synchronized=CFPreferencesSynchronize(domain,kCFPreferencesCurrentUser,kCFPreferencesAnyHost);
     // High Sierra's cold cfprefsd can report a failed synchronization while
     // still publishing the requested preference. Confirm the actual native

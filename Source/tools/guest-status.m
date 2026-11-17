@@ -7,6 +7,7 @@
 #include <net/if_dl.h>
 #include <arpa/inet.h>
 #import <SystemConfiguration/SystemConfiguration.h>
+#import <IOKit/IOKitLib.h>
 #include <sys/sysctl.h>
 #include <sys/utsname.h>
 #include <sys/stat.h>
@@ -70,7 +71,7 @@ int main(int argc,const char *argv[]) {@autoreleasepool {
     }
     NSString *release=version[@"ProductVersion"],*build=version[@"ProductBuildVersion"];
     NSString *family=VIMGuestForSystemVersion(release);
-    NSString *guest=[@[@"mojave",@"catalina",@"bigsur"] containsObject:family?:@""]?family:@"unsupported";
+    NSString *guest=[VIMModernGuests() containsObject:family?:@""]?family:@"unsupported";
     NSMutableArray *pending=[NSMutableArray array];
     // .OSInstallerMessages is an installer analytics/messages plist, not a
     // pending-install checkpoint. Security updates can leave it on a normal
@@ -88,17 +89,35 @@ int main(int argc,const char *argv[]) {@autoreleasepool {
     NSString *kernelBuild=live?SysctlString("kern.osversion"):@"";
     BOOL installedRoot=![guest isEqual:@"unsupported"]&&system&&!recovery&&!pending.count;
     BOOL candidate=installedRoot&&setup;
-    // Big Sur already ships its Metal PVG stack. Setup Assistant need not
+    // Big Sur and later already ship their Metal PVG stack. Setup Assistant need not
     // finish before selecting that native device, but Recovery must never be
     // mistaken for an installed root or a completed graphics transaction.
     NSString *nativeGPU=path(@"System/Library/Extensions/AppleParavirtGPU.kext/Contents");
-    NSDictionary *nativeInfo=[guest isEqual:@"bigsur"]?[NSDictionary dictionaryWithContentsOfFile:[nativeGPU stringByAppendingPathComponent:@"Info.plist"]]:nil;
+    NSDictionary *nativeInfo=[VIMAssistantGuests() containsObject:guest]?[NSDictionary dictionaryWithContentsOfFile:[nativeGPU stringByAppendingPathComponent:@"Info.plist"]]:nil;
+    // Any personality matching Apple's PVG PCI ID; later releases may rename
+    // or add personalities.
+    BOOL pvgPersonality=NO;
+    NSDictionary *personalities=[nativeInfo[@"IOKitPersonalities"] isKindOfClass:NSDictionary.class]?nativeInfo[@"IOKitPersonalities"]:nil;
+    for(NSString *key in personalities){
+        id match=[personalities[key] isKindOfClass:NSDictionary.class]?personalities[key][@"IOPCIMatch"]:nil;
+        if([match isKindOfClass:NSString.class]&&[[match uppercaseString] rangeOfString:@"0XEEEE106B"].location!=NSNotFound)pvgPersonality=YES;
+    }
+    BOOL nativeExecutable=[fm fileExistsAtPath:[nativeGPU stringByAppendingPathComponent:@"MacOS/AppleParavirtGPU"]];
+    // Modern signed System media can retain only the kext's Info.plist on
+    // disk: its executable is already in the boot kernel collection. A live
+    // matched accelerator is stronger evidence than requiring a loose copy.
+    // Offline roots must never borrow a driver from the running host.
+    if(live&&pvgPersonality&&!nativeExecutable) {
+        io_service_t accelerator=IOServiceGetMatchingService(MACH_PORT_NULL,
+            IOServiceMatching("AppleParavirtAccelerator"));
+        nativeExecutable=accelerator!=IO_OBJECT_NULL;
+        if(accelerator)IOObjectRelease(accelerator);
+    }
     BOOL nativePVG=[nativeInfo[@"CFBundleIdentifier"] isEqual:@"com.apple.driver.AppleParavirtGPU"]&&
-        [nativeInfo[@"IOKitPersonalities"][@"AppleParavirtGPUControl"][@"IOPCIMatch"] isEqual:@"0xEEEE106B"]&&
-        [fm fileExistsAtPath:[nativeGPU stringByAppendingPathComponent:@"MacOS/AppleParavirtGPU"]];
+        pvgPersonality&&nativeExecutable;
     NSInteger consoleLocked=live?VIMConsoleLockState():-1;
     NSDictionary *report=@{@"ProtocolVersion":@1,@"Guest":guest,@"ProductVersion":release,@"ProductBuildVersion":build,
-        @"VolumeUUID":volumeUUID?:@"",@"BootSessionUUID":live?SysctlString("kern.bootsessionuuid"):@"",@"LiveRoot":@(live),@"KernelBuild":kernelBuild,
+        @"VolumeUUID":volumeUUID?:@"",@"BootSessionUUID":live?SysctlString("kern.bootsessionuuid"):@"",@"KernelBootArguments":live?SysctlString("kern.bootargs")?:@"":@"",@"LiveRoot":@(live),@"KernelBuild":kernelBuild,
         @"KernelMatchesSystem":(live&&[kernelBuild isEqual:build])?@YES:@NO,
         @"ProcessMachine":haveKernel?@(kernel.machine):@"unknown",@"SetupComplete":@(setup),
         @"FinderPresent":@(system),@"DesktopRunning":@(live&&consoleLocked==0&&DesktopRunning()),@"RecoveryToolsPresent":@(recovery),@"InstallerMarkers":pending,

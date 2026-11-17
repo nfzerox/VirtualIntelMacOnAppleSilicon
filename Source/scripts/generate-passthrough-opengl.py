@@ -1063,6 +1063,11 @@ for index, (ret, field, parameters) in enumerate(rows):
                    f"        int staged=DGLargeTextureBegin(context,{pointer},&layout,&input);",
                    f"        if(staged){{if(staged>0){{{name}({arguments});DGLargeTextureEnd(context,&input);}}return;}}",
                    "    }"]
+    if field in {"tex_coord2f", "vertex2f", "multi_tex_coord2f"}:
+        assert ret=="void" and len(parsed) in (2,3) and all("*" not in typ for typ,arg in parsed)
+        bits=",".join(f"DGBits(&{arg},sizeof({arg}))" for typ,arg in parsed)
+        client += [f"    const uint64_t immediate_args[]={{{bits}}};",
+                   f"    if(DGTrySubmitImmediateScalars(context,{index},immediate_args,{len(parsed)}))return;"]
     client += ["    if(!context) {" + (" return;" if ret == "void" else f" return ({ret})0;") + " }",
                f"    struct DGPacket packet=DGPacketNew(context,{index});"]
     host += [f"case {index}: {{"]
@@ -1460,6 +1465,13 @@ for index, (ret, field, parameters) in enumerate(rows):
         continue
     if field == "draw_buffers_ARB":
         host += ["    DGSetDrawBuffers(context,n,bufs);", "    return 0;", "}"]
+        continue
+    if field == "accum":
+        host += ["    DGHostAccumulation(context,op,value,0);", "    return 0;", "}"]
+        continue
+    if field == "clear":
+        host += ["    if(!DGDrawableWritable(context))return 0;",
+                 "    DGHostClear(context,mask);", "    return 0;", "}"]
         continue
     if field in {"pixel_storei", "pixel_storef"}:
         host.append("    if(pname==GL_UNPACK_CLIENT_STORAGE_APPLE) { context->client_storage=!!param;return 0; }")

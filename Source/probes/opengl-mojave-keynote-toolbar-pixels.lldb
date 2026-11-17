@@ -1,0 +1,42 @@
+# Research only: actual Mojave 18G9323 i386 Keynote 5.3, with General Preferences open.
+# Source from the period LLDB attached to that process. No global environment or hook.
+# CABackingStoreCopyCGImage's one-argument ABI was checked in native QuartzCore.
+# It can drain a pending CG queue: capture the window before and after this diagnostic.
+# PNGs are diagnostic outputs in the guest's temporary directory.
+# This is not a production workaround or a broad AppKit conformance test.
+# After any expression error, explicitly detach/resume rather than leave the app stopped.
+expression -p -l objc++ -- extern "C" void *CABackingStoreCopyCGImage(void *);
+expression -p -l objc++ -- extern "C" unsigned long CGImageGetWidth(void *);
+expression -p -l objc++ -- extern "C" unsigned long CGImageGetHeight(void *);
+expression -p -l objc++ -- extern "C" void *CGImageDestinationCreateWithURL(void *,void *,unsigned long,void *);
+expression -p -l objc++ -- extern "C" void CGImageDestinationAddImage(void *,void *,void *);
+expression -p -l objc++ -- extern "C" unsigned char CGImageDestinationFinalize(void *);
+expression -p -l objc++ -- extern "C" void CGImageRelease(void *);
+expression -p -l objc++ -- extern "C" void CFRelease(void *);
+expression -l objc++ -- id $app=(id)[(id)objc_getClass("NSApplication") sharedApplication]
+expression -l objc++ -- id $windows=(id)[$app windows]; id $window=(id)0; for(unsigned i=0;i<(unsigned)[$windows count];++i) { id w=(id)[$windows objectAtIndex:i]; if((BOOL)[(id)[w title] isEqualToString:@"General Preferences"]) $window=w; }
+expression -O -l objc++ -- (id)[$window title]
+expression -l objc++ -- id $frame=(id)[(id)[$window contentView] superview]
+expression -l objc++ -- id $toolbar=(id)[(id)[$frame subviews] objectAtIndex:3]
+expression -O -l objc++ -- (id)[$toolbar class]
+expression -l objc++ -- id $item=(id)[(id)[$toolbar subviews] objectAtIndex:0]
+expression -l objc++ -- id $button=(id)[(id)[$item subviews] objectAtIndex:0]
+expression -O -l objc++ -- (id)[$button class]
+expression -l objc++ -- void *$image=CABackingStoreCopyCGImage((void *)[(id)[$button layer] contents])
+expression -l objc++ -- (unsigned long)CGImageGetWidth($image)
+expression -l objc++ -- (unsigned long)CGImageGetHeight($image)
+expression -l objc++ -- id $url=(id)[(id)objc_getClass("NSURL") fileURLWithPath:@"/private/tmp/keynote-button-backing.png"]
+expression -l objc++ -- void *$dest=CGImageDestinationCreateWithURL((void *)$url,(void *)@"public.png",1,0)
+expression -l objc++ -- CGImageDestinationAddImage($dest,$image,0)
+expression -l objc++ -- (unsigned char)CGImageDestinationFinalize($dest)
+expression -l objc++ -- CFRelease($dest);CGImageRelease($image)
+expression -l objc++ -- $image=CABackingStoreCopyCGImage((void *)[(id)[$toolbar layer] contents])
+expression -l objc++ -- (unsigned long)CGImageGetWidth($image)
+expression -l objc++ -- (unsigned long)CGImageGetHeight($image)
+expression -l objc++ -- $url=(id)[(id)objc_getClass("NSURL") fileURLWithPath:@"/private/tmp/keynote-toolbar-backing.png"]
+expression -l objc++ -- $dest=CGImageDestinationCreateWithURL((void *)$url,(void *)@"public.png",1,0)
+expression -l objc++ -- CGImageDestinationAddImage($dest,$image,0)
+expression -l objc++ -- (unsigned char)CGImageDestinationFinalize($dest)
+expression -l objc++ -- CFRelease($dest);CGImageRelease($image)
+process detach
+quit

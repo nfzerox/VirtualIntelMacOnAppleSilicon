@@ -1,0 +1,3 @@
+# Fuzz forms left out of the comparison with TCG, by name, one a line. fuzz_driver.c keeps most of what TCG gets wrong out of 32-bit runs.
+# haddps m adds lanes of one register, so its two NaNs can both come from the first source: the SDM takes the lower, TCG the larger significand. The 64-bit fuzz holds it to Rosetta.
+haddps m

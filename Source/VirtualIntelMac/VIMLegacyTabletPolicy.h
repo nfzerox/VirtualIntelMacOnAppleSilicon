@@ -7,13 +7,16 @@ static inline BOOL VIMUsesLegacyTabletCalibration(NSString *guest) {
 
 static inline NSUInteger VIMInitialTabletTrim(NSString *guest, BOOL installer) {
     // The installed 10.5–10.9 guests bind the tablet with a zero override.
-    // Only Tiger's installer/recovery environment was actually measured
-    // trimming the tablet's absolute axis bounds; extending that guess to
-    // Leopard through Mavericks installer/recovery boots left clicks near
-    // the edge of the screen (including the menu bar) landing well inside
-    // it, since nothing observes/corrects the override before the OS is
-    // installed. Send those guests' full, unmodified pointer range instead.
-    return [guest isEqual:@"tiger"]?15:0;
+    // Tiger was measured trimming on the installed desktop. Legacy
+    // installer/recovery boots retain the separate native driver fallback.
+    return [guest isEqual:@"tiger"]||(installer&&VIMUsesLegacyTabletCalibration(guest))?15:0;
+}
+
+static inline NSUInteger VIMConfiguredTabletTrim(NSDictionary *configuration,NSUInteger automaticTrim) {
+    NSString *mode=configuration[@"MouseRegionAccommodation"];
+    if([mode isEqual:@"on"])return 15;
+    if([mode isEqual:@"off"])return 0;
+    return automaticTrim;
 }
 
 // Period ioreg has no plist output. Only consume the override on the bound
@@ -37,5 +40,10 @@ static inline NSNumber *VIMObservedTabletTrim(NSString *registry) {
         }
         if(tablet&&trim){if(observed)return nil;observed=trim;}
     }
+    // Original Leopard's IOHIDFamily1.5 (Apple source IOHIDFamily-247)
+    // hardcodes15% in handleReport: the zero property in its matching
+    // personality is ignored. The1.5.2 driver reads the override instead.
+    // Use the loaded module, not the OS build or an on-disk updated kext.
+    if(observed&&[registry containsString:@" com.apple.iokit.IOHIDFamily (1.5)"])return @15;
     return observed;
 }

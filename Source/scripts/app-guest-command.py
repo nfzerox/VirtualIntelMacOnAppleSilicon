@@ -28,11 +28,13 @@ Use DIRECTORY --fullscreen on|off for the real AppKit transition (not a guest mo
 Use DIRECTORY --insert-disc ABSOLUTE_PATH [SLOT] or --eject-disc [SLOT] for the production image operation (slots0..3).
 Use DIRECTORY --shutdown to invoke the real app shutdown action (save work first).
 Use DIRECTORY --resume-setup to retry the saved legacy transaction through the
-production coordinator, with its existing Keychain credential (no password argument).
+production coordinator, with its saved private setup credential (no password argument).
 Use DIRECTORY --force-stop for the real force-stop action, only with the app's
 explicit --development-no-power-confirmation launch argument (unsaved work is lost).
 Use DIRECTORY --usb-devices to list selectable host USB devices.
 Use DIRECTORY --usb-storage-access LOCATION_ID for the normal scoped storage-access request only (no unmount/capture).
+Use DIRECTORY --usb-interface-policy LOCATION_ID [--user-session] for the existing
+read-only helper policy diagnostic, including the exact IOKit return code.
 Use DIRECTORY --menu-state library|guest|about to focus that real window and inspect File/Actions/Devices.
 Use DIRECTORY --usb-connect LOCATION_ID [--unmount] for explicit normal unmount/capture.
 Use DIRECTORY --usb-disconnect LOCATION_ID to release it. No force-unmount automation.
@@ -71,6 +73,8 @@ Never connect another client to the app's guest-agent socket.
 Commands require a running VM. The 120-second CLI observation window does not
 cancel the guest process: inspect the same Running.json/Result.json after an
 observation timeout, and never repeat a write just because that window expired.
+Current apps publish Session.json. Requests are bound to that emulator lifetime
+and rejected after a reboot instead of being replayed into the new guest.
 For private stdin, create DIRECTORY/Input.bin as a user-owned0600 regular file,
 then use DIRECTORY --private-stdin /absolute/guest/program [arguments ...]. The
 app consumes/removes that bounded file before launching; passwords never enter
@@ -82,6 +86,7 @@ import os
 from pathlib import Path
 import sys
 import time
+import uuid
 
 def main():
     if len(sys.argv) < 3:
@@ -101,6 +106,7 @@ def main():
                {"Action": "menu-state", "Context": sys.argv[3]} if sys.argv[2] == "--menu-state" and len(sys.argv) == 4 and sys.argv[3] in ("library", "guest", "about") else
                {"Action": "opengl-pirq-f-pic", **({} if sys.argv[3] == "status" else {"Route": int(sys.argv[3], 0)})} if sys.argv[2] == "--opengl-pirq-f-route" and len(sys.argv) == 4 else
                {"Action": "usb-storage-access", "LocationID": int(sys.argv[3], 0)} if sys.argv[2] == "--usb-storage-access" and len(sys.argv) == 4 else
+               {"Action": "usb-interface-policy", "LocationID": int(sys.argv[3], 0), "UserSession": "--user-session" in sys.argv[4:]} if sys.argv[2] == "--usb-interface-policy" and len(sys.argv) in (4,5) else
                {"Action": "usb-devices"} if sys.argv[2] == "--usb-devices" else
                {"Action": "network-details"} if sys.argv[2] == "--network-details" else
                {"Action": "configuration", "Pane": sys.argv[3]} if sys.argv[2] == "--configure" and len(sys.argv) == 4 else
@@ -137,6 +143,13 @@ def main():
         if 'Executable' not in command:
             raise SystemExit('Private stdin requires a guest executable, not an app action.')
         command['PrivateInput']='Input.bin'
+    session_file=directory/'Session.json'
+    binding=json.loads(session_file.read_text()) if session_file.exists() else None
+    if binding:
+        session=binding.get('Session')
+        if not isinstance(session,str) or not session:
+            raise SystemExit('The app has not published a valid diagnostic session.')
+        command.update(Session=session,RequestID=str(uuid.uuid4()))
     result.unlink(missing_ok=True)
     temporary = directory / f"Request-{os.getpid()}.json"
     with temporary.open("x") as file:
@@ -146,8 +159,11 @@ def main():
     while time.monotonic() < deadline:
         if result.exists():
             response = json.loads(result.read_text())
-            print(json.dumps(response, indent=2))
-            return int(bool(response.get("Error")) or response.get("ExitCode", 0))
+            if not binding or response.get('RequestID')==command['RequestID']:
+                print(json.dumps(response, indent=2))
+                return int(bool(response.get("Error")) or response.get("ExitCode", 0))
+        if binding and session_file.exists() and json.loads(session_file.read_text()).get('Session')!=command['Session']:
+            raise SystemExit("The VM session changed before this result was observed. No request was replayed; inspect the current session before another command.")
         time.sleep(0.25)
     raise SystemExit("No result yet. The command may still run; do not repeat a write.")
 

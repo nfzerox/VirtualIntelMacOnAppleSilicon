@@ -1,3 +1,4 @@
+#import "VIMGuestFamilies.h"
 #import <Foundation/Foundation.h>
 
 // Apple's standalone packages can replace SystemVersion.plist and the boot
@@ -37,7 +38,7 @@ static inline BOOL VIMVerifiedInstallationSuperseded(NSDictionary *state,NSDicti
        ![verified[@"MetalCommandVerified"] isEqual:@YES])return NO;
     if(![report[@"InstalledSystemCandidate"] isEqual:@YES]||![report[@"LiveRoot"] isEqual:@YES]||
        ![report[@"KernelMatchesSystem"] isEqual:@YES]||
-       ![@[@"mojave",@"catalina",@"bigsur"] containsObject:report[@"Guest"]]||
+       !VIMIsModernGuest(report[@"Guest"])||
        ![prepared[@"GuestReport"][@"Guest"] isEqual:report[@"Guest"]])return NO;
     for(NSString *key in @[@"VolumeUUID",@"BootSessionUUID",@"ProductBuildVersion"])
         if(![report[key] isKindOfClass:NSString.class]||![report[key] length])return NO;

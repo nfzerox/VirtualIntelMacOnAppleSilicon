@@ -23,6 +23,7 @@ system_ss.add(when: 'CONFIG_VGA_ISA', if_true: files('vga-isa.c'))
 system_ss.add(when: 'CONFIG_VGA_MMIO', if_true: files('vga-mmio.c'))
 system_ss.add(when: 'CONFIG_VMWARE_VGA', if_true: files('vmware_vga.c'))
 if host_os == 'darwin'
+  system_ss.add(when: 'CONFIG_VMWARE_VGA', if_true: files('vim-gl-headless.c'))
   # Private VRAM capability research authenticates Mach audit trailers.
   system_ss.add(when: 'CONFIG_VMWARE_VGA', if_true: declare_dependency(link_args: ['-lbsm']))
 endif

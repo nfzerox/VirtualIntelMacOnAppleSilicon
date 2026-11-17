@@ -1861,7 +1861,7 @@ void tcg_init(size_t tb_size, int splitwx, unsigned max_threads)
  * normally keeping TBs and code on different cache lines. The local compact
  * layout experiment intentionally relaxes that performance-only separation.
  */
-TranslationBlock *tcg_tb_alloc(TCGContext *s)
+TranslationBlock *tcg_tb_alloc(TCGContext *s, size_t extra)
 {
     uintptr_t align = tcg_tb_alloc_align;
     TranslationBlock *tb;
@@ -1875,7 +1875,7 @@ TranslationBlock *tcg_tb_alloc(TCGContext *s)
          * See tcg_region_thread_initial_alloc.
          */
         if (tb) {
-            next = (void *)ROUND_UP((uintptr_t)(tb + 1), align);
+            next = (void *)ROUND_UP((uintptr_t)(tb + 1) + extra, align);
             if (next <= s->code_gen_highwater) {
                 qatomic_set(&s->code_gen_ptr, next);
                 return tb;

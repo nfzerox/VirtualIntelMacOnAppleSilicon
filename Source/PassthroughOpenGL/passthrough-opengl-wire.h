@@ -94,6 +94,7 @@
 #define DG_FEATURE3_COMPACT_IMAGING UINT32_C(2)
 #define DG_FEATURE3_COMPACT_TEXTURE UINT32_C(4)
 #define DG_FEATURE3_BIG_ENDIAN_ARRAY_ELEMENT UINT32_C(8)
+#define DG_FEATURE3_ACCUMULATION_BUFFER UINT32_C(16)
 /* DG_STRING(GL_NUM_EXTENSIONS) returns a stable bitmask, not the host's
  * extension list. Only add a bit after qualifying its entire wire family. */
 #define DG_CORE_EXTENSIONS(X) \
@@ -234,9 +235,14 @@ struct DGHelloFeatures { uint32_t magic,features,magic2,features2,magic3,feature
  * 3 for the subsequent negotiated compatibility families,
  * 4 for the extended point-size array descriptor, 5 for object purgeability,
  * 7 for qualified compressed-texture and anisotropy discovery,
- * 8 for texture/sampler sRGB-decode state.
+ * 8 for texture/sampler sRGB-decode state,
+ * 9 for public guest-framework framebuffer-blit discovery in args[6].
  * The echoed host feature bits alone cannot prove what the client supports. */
-#define DG_COMPAT_DISPATCH_REVISION 8u
+#define DG_COMPAT_DISPATCH_REVISION 9u
+/* args[6] describes the guest's public OpenGL frontend, not host addresses.
+ * A transport can implement a call even when an older framework cannot
+ * export that entry point to applications. */
+#define DG_FRONTEND_FRAMEBUFFER_BLIT (UINT64_C(1)<<0)
 #define DG_MAX_BYTES (64u*1024u*1024u)
 #define DG_MAX_DISPLAY_PIXELS (8192u*8192u)
 /* A wire packet is not a texture-memory budget. Native CI's ordinary 5K

@@ -11,6 +11,7 @@ xcrun clang -fobjc-arc -fmodules -mmacosx-version-min=11.0 -arch arm64 -arch x86
   "$source_dir/VirtualIntelMac/VIMAutomaticSetup.m" \
   "$source_dir/VirtualIntelMac/VIMInstallerCatalog.m" \
   "$source_dir/VirtualIntelMac/VIMInstallerSource.m" \
+  "$source_dir/VirtualIntelMac/VIMPackagePublication.c" \
   "$source_dir/VirtualIntelMac/VIMHFSInstallerDisk.c" \
   -framework Cocoa -framework Security -o "$source_dir/Build/Probes/machine-configuration-tests"
-"$source_dir/Build/Probes/machine-configuration-tests"
+"$source_dir/Build/Probes/machine-configuration-tests" "$@"

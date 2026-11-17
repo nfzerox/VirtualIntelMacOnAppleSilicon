@@ -1,5 +1,5 @@
-// Installer/recovery admission only, shared by the source-built loader and
-// its finite native probe. Apple system kexts still load normally. An actual
+// Prelinked-cache admission, shared by the source-built loader and its
+// finite native probe. An actual
 // installer needs no injected graphics, audio, input or system families.
 // Keep the configured SMC/decryption provider and its Lilu dependency:
 // QEMU's OSK device alone does not establish the DSMOS page-transform hook.
@@ -26,14 +26,13 @@ VimSkipInstallerKext (
     && AsciiStrCmp (BundlePath, "VirtualSMC.kext") != 0;
 }
 
-// Sierra's recovery cache contains Drizzle's higher-score dummy SMC claimant,
-// not the native AppleSMC/DSMOS pair. Let the native drivers match normally.
-// Disable only its initializer; excluding its shared XML breaks ID references.
+// Sierra's original recovery and Essentials caches both contain Drizzle's
+// higher-score dummy SMC claimant. Let native AppleSMC establish DSMOS on
+// either root. A rebuilt cache without Drizzle needs no modification.
 STATIC BOOLEAN
-VimDisableInstallerDrizzle (
-  IN BOOLEAN  InstallerKernel,
+VimDisableSierraDrizzle (
   IN UINT32   DarwinMajor
   )
 {
-  return InstallerKernel && DarwinMajor == 16;
+  return DarwinMajor == 16;
 }

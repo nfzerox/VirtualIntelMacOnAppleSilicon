@@ -1992,6 +1992,21 @@ IOReturn CLASS::set_shape_backing_length_ext(eIOAccelSurfaceShapeBits options,
 
 	if (!rgn || rgnSize < IOACCEL_SIZEOF_DEVICE_REGION(rgn))
 		return kIOReturnBadArgument;
+	/* Native Mavericks WindowServer's cglsCreatePBuffer also uses plain
+	 * mode0x24, not the public CGL rectangle-target mode0x200024. Its
+	 * shape1 has allocation bounds and one EMPTY visibility rectangle.
+	 * cglsAttachPBuffer then passes only ID/target/format to GLI: the driver
+	 * must retain these allocation dimensions before that attachment.
+	 * Do not treat ordinary empty window damage (or display-family shapes)
+	 * as an allocation, and do not broaden private-client admission here. */
+	if (!m_cgl_pbuffer && !gpu_root && bHaveID && m_wID>2U && !backing &&
+		m_provider->getProperty("VIMDirectGLCompositor") &&
+		m_pixel_format==kIOAccelSurfaceModeColorDepth8888 &&
+		options==kIOAccelSurfaceShapeNonBlockingBit && rgn->num_rects==1 &&
+		!rgn->rect[0].x && !rgn->rect[0].y && !rgn->rect[0].w && !rgn->rect[0].h &&
+		!rgn->bounds.x && !rgn->bounds.y && rgn->bounds.w>0 && rgn->bounds.h>0 &&
+		rgn->bounds.w<=8192 && rgn->bounds.h<=8192)
+		m_cgl_pbuffer=true;
 	// Native CGL's pbuffer shape has sized bounds but an empty visibility
 	// rectangle: it is an offscreen allocation, not a visible window. Validate
 	// before changing metadata and do not discard it as empty display damage.
@@ -2995,6 +3010,18 @@ IOReturn CLASS::copy_framebuffer_region_to_self(uint32_t framebufferIndex,
 		if (rc != kIOReturnSuccess)
 			return rc;
 		extra.mem_offset_in_gmr = 0U;
+		/* The first primary snapshot can precede set_id_mode's GPU-family
+		 * claim. Until a GPU front exists, read the host's completed fitted
+		 * boot image rather than reinterpret old console bytes at the new
+		 * display pitch. The capability exists only during that handoff;
+		 * old hosts and subsequent normal reads retain the existing path. */
+		if((!root || !root->m_gpu_service_ready) && m_bytes_per_pixel==4){
+			VMsvga2Surface* owner=m_gpu_primary?m_gpu_primary:this;
+			const uint64_t destination_offset=owner->m_backing.offset+m_scale.reserved[2];
+			rc=m_provider->readBootFramebuffer(owner->m_backing.vtb.md,destination_offset,
+				limit_from_base,m_scale.reserved[1],region,extra.dstDeltaX,extra.dstDeltaY);
+			if(!rc){if(holder)holder->release();return rc;}
+		}
 		rc = m_provider->blitGFB(framebufferIndex,
 								 region,
 								 &extra,

@@ -5,6 +5,7 @@
 #import "VIMSession.h"
 #import "AppDelegate.h"
 #import "VIMSymbolImages.h"
+#import "VIMToolbarAppearance.h"
 
 @interface VIMMenuController ()
 @property VIMLibraryViewController *library;
@@ -105,16 +106,33 @@
         for(NSUInteger i=0;i<2;i++){NSMenuItem *item=[self add:i?VIMLocalized(@"menu.compact-view", @"Compact View"):VIMLocalized(@"menu.expanded-view", @"Expanded View") action:@selector(setDensity:) key:@"" to:self.viewMenu target:self];item.tag=i;item.state=self.library.compact==(i==1)?NSControlStateValueOn:NSControlStateValueOff;}
         [self.viewMenu addItem:NSMenuItem.separatorItem];
         NSMenuItem *arrange=[self.viewMenu addItemWithTitle:VIMLocalized(@"menu.arrange-by", @"Arrange By") action:nil keyEquivalent:@""];arrange.submenu=[[NSMenu alloc] initWithTitle:VIMLocalized(@"menu.arrange-by", @"Arrange By")];
-        NSArray *names=@[@"Name",@"Type",@"Date Last Opened",@"Date Created",@"Size",@"Tags",@"None"];
+        NSArray *names=@[@"Name",@"Type",@"macOS Release",@"Date Last Opened",@"Date Created",@"Size",@"Tags",@"None"];
+        NSArray *keys=@[@"1",@"2",@"7",@"3",@"4",@"5",@"6",@"0"];
         for(NSUInteger i=0;i<names.count;i++) {
-            if(i==6)[arrange.submenu addItem:NSMenuItem.separatorItem];
-            NSMenuItem *item=[self add:VIMLocalizedLabel(names[i]) action:@selector(arrange:) key:i==6?@"0":[NSString stringWithFormat:@"%lu",(unsigned long)i+1] to:arrange.submenu target:self];
+            if(i==names.count-1)[arrange.submenu addItem:NSMenuItem.separatorItem];
+            NSMenuItem *item=[self add:VIMLocalizedLabel(names[i]) action:@selector(arrange:) key:keys[i] to:arrange.submenu target:self];
             item.keyEquivalentModifierMask=NSEventModifierFlagControl|NSEventModifierFlagCommand;item.representedObject=names[i];item.state=[self.library.arrangement isEqual:names[i]]?NSControlStateValueOn:NSControlStateValueOff;
         }
     }
     [self.viewMenu addItem:NSMenuItem.separatorItem];
+    NSMenuItem *compact=[self add:VIMLocalized(@"vimmenucontroller.compact-toolbar", @"Compact Toolbar") action:@selector(toggleCompactToolbar:) key:@"" to:self.viewMenu target:self];
+    compact.state=VIMCompactToolbarEnabled()?NSControlStateValueOn:NSControlStateValueOff;
     NSMenuItem *toolbar=[self add:self.activeWindow.toolbar.visible?VIMLocalized(@"menu.hide-toolbar", @"Hide Toolbar"):VIMLocalized(@"menu.show-toolbar", @"Show Toolbar") action:@selector(toggleToolbarShown:) key:@"t" to:self.viewMenu target:self];
     toolbar.keyEquivalentModifierMask=NSEventModifierFlagOption|NSEventModifierFlagCommand;
+}
+- (void)toggleCompactToolbar:(id)sender {
+    [NSUserDefaults.standardUserDefaults setBool:!VIMCompactToolbarEnabled() forKey:@"VIMCompactToolbar"];
+    for(NSWindow *window in NSApp.windows)if(VIMUsesUnifiedToolbar(window)) {
+        // AppKit caches custom/group view metrics when inserting toolbar items.
+        // Recreate them in the new style rather than retaining clipped frames.
+        NSToolbar *toolbar=window.toolbar;
+        NSArray *identifiers=[toolbar.items valueForKey:@"itemIdentifier"];
+        while(toolbar.items.count)[toolbar removeItemAtIndex:toolbar.items.count-1];
+        VIMApplyToolbarAppearance(window);
+        for(NSUInteger i=0;i<identifiers.count;i++)[toolbar insertItemWithItemIdentifier:identifiers[i] atIndex:i];
+        [window.contentView.superview layoutSubtreeIfNeeded];
+    }
+    [self contextChanged:nil];
 }
 - (void)toggleToolbarShown:(id)sender {
     [self.activeWindow toggleToolbarShown:sender];[self refresh];
@@ -126,7 +144,7 @@
     NSArray *symbols=@[@"power",@"power.circle",@"stop.fill",@"arrow.counterclockwise"];
     for(NSUInteger i=0;i<titles.count;i++) {
         if(i==1||i==2)[actions addItem:NSMenuItem.separatorItem];
-        NSMenuItem *item=[self add:titles[i] action:NSSelectorFromString(selectors[i]) key:@"" to:actions target:session];item.image=[NSImage imageWithSystemSymbolName:symbols[i] accessibilityDescription:nil];item.enabled=session!=nil;
+        NSMenuItem *item=[self add:titles[i] action:NSSelectorFromString(selectors[i]) key:@"" to:actions target:session];item.image=VIMSystemSymbolImage(symbols[i],titles[i]);item.enabled=session!=nil;
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 270000
         if(@available(macOS 27.0,*))item.preferredImageVisibility=NSMenuItemImageVisibilityVisible;
 #endif
@@ -160,6 +178,7 @@
 - (void)setDensity:(NSMenuItem *)sender {[self.library setDensityFromMenu:sender];[self contextChanged:nil];}
 - (void)arrange:(NSMenuItem *)sender {[self.library arrangeFromMenu:sender];[self contextChanged:nil];}
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if(item.action==@selector(toggleCompactToolbar:)){item.state=VIMCompactToolbarEnabled()?NSControlStateValueOn:NSControlStateValueOff;return YES;}
     if(item.action==@selector(toggleToolbarShown:)){item.title=self.activeWindow.toolbar.visible?VIMLocalized(@"menu.hide-toolbar", @"Hide Toolbar"):VIMLocalized(@"menu.show-toolbar", @"Show Toolbar");return self.activeWindow.toolbar!=nil;}
     if(item.action==@selector(setDensity:)||item.action==@selector(arrange:))return self.activeWindow==self.library.view.window;
     return YES;

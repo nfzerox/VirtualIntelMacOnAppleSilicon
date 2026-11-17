@@ -2,52 +2,145 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>FormatVersion</key><integer>1</integer>
-<key>Revision</key><integer>9</integer>
+<key>Revision</key><integer>29</integer>
 <key>UpdateURL</key><string>https://raw.githubusercontent.com/nfzerox/VirtualIntelMacOnAppleSilicon/refs/heads/main/Source/VirtualIntelMac/InstallerCatalog.plist</string>
 <key>Installers</key><array>
 <dict><key>Guest</key><string>tiger</string><key>ReleaseURL</key><string>https://archive.org/download/10.4.10-8-r-4088-acdt/10.4.10-8R4088-iMac7%2C1-Disc-1.dmg</string><key>Name</key><string>Mac OS X Tiger</string><key>Version</key><string>10.4.10</string><key>Assembly</key><string>restore-dvd</string><key>Files</key><array>
 <dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://dn720202.ca.archive.org/0/items/10.4.10-8-r-4088-acdt/10.4.10-8R4088-iMac7%2C1-Disc-1.dmg</string></dict>
-</array></dict>
+</array><key>HostUpdates</key><dict>
+<key>Recipe</key><string>tiger-10.4.11-security</string>
+<key>CatalogURL</key><string>https://swscan.apple.com/content/catalogs/index-1.sucatalog</string>
+<key>Steps</key><array>
+<dict><key>Role</key><string>Combo</string><key>Product</key><string>zzz061-4049</string><key>Package</key><string>MacOSXUpdCombo10.4.11Intel.tar</string></dict>
+<dict><key>Role</key><string>Security</string><key>Product</key><string>zz061-7097</string><key>Package</key><string>SecUpd2009-005Intel.tar</string></dict>
+</array></dict></dict>
 <dict><key>Guest</key><string>leopard</string><key>ReleaseURL</key><string>https://archive.org/download/10.5.7-9-j-3050/10.5.7-9J3050.dmg</string><key>Name</key><string>Mac OS X Leopard</string><key>Version</key><string>10.5.7</string><key>Assembly</key><string>restore-dvd</string><key>Files</key><array>
 <dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://archive.org/download/10.5.7-9-j-3050/10.5.7-9J3050.dmg</string></dict>
-</array></dict>
+</array><key>HostUpdates</key><dict>
+<key>Recipe</key><string>leopard-10.5.8-security</string>
+<key>CatalogURL</key><string>https://swscan.apple.com/content/catalogs/others/index-leopard.merged-1.sucatalog</string>
+<key>Steps</key><array>
+<dict><key>Role</key><string>Combo</string><key>Product</key><string>zzz041-88057</string><key>Package</key><string>MacOSXUpdCombo10.5.8.pkg</string></dict>
+<dict><key>Role</key><string>Security</string><key>Product</key><string>zzz041-87998</string><key>Package</key><string>SecUpd2011-004.pkg</string></dict>
+</array></dict></dict>
 <dict><key>Guest</key><string>snowleopard</string><key>ReleaseURL</key><string>https://archive.org/download/macosx-snowleopard-archive/10.6.7-10J3250-MBP8X-OSX.dmg</string><key>Name</key><string>Mac OS X Snow Leopard</string><key>Version</key><string>10.6.7</string><key>Assembly</key><string>restore-dvd</string><key>Files</key><array>
 <dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://archive.org/download/macosx-snowleopard-archive/10.6.7-10J3250-MBP8X-OSX.dmg</string></dict>
-</array></dict>
+</array><key>HostUpdates</key><dict>
+<key>Recipe</key><string>snowleopard-10.6.8-security</string>
+<key>CatalogURL</key><string>https://swscan.apple.com/content/catalogs/others/index-leopard-snowleopard.merged-1.sucatalog</string>
+<key>Steps</key><array>
+<dict><key>Role</key><string>ComboPart0</string><key>Product</key><string>zzz041-98179</string><key>Package</key><string>MacOSXUpdCombo10.6.8.Part0.pkg</string></dict>
+<dict><key>Role</key><string>ComboPart1</string><key>Product</key><string>zzz041-98179</string><key>Package</key><string>MacOSXUpdCombo10.6.8.Part1.pkg</string></dict>
+<dict><key>Role</key><string>ComboPart2</string><key>Product</key><string>zzz041-98179</string><key>Package</key><string>MacOSXUpdCombo10.6.8.Part2.pkg</string></dict>
+<dict><key>Role</key><string>ComboPart3</string><key>Product</key><string>zzz041-98179</string><key>Package</key><string>MacOSXUpdCombo10.6.8.Part3.pkg</string></dict>
+<dict><key>Role</key><string>ComboPart4</string><key>Product</key><string>zzz041-98179</string><key>Package</key><string>MacOSXUpdCombo10.6.8.Part4.pkg</string></dict>
+<dict><key>Role</key><string>ComboPart5</string><key>Product</key><string>zzz041-98179</string><key>Package</key><string>MacOSXUpdCombo10.6.8.Part5.pkg</string></dict>
+<dict><key>Role</key><string>ComboPart6</string><key>Product</key><string>zzz041-98179</string><key>Package</key><string>MacOSXUpdCombo10.6.8.Part6.pkg</string></dict>
+<dict><key>Role</key><string>ComboPart7</string><key>Product</key><string>zzz041-98179</string><key>Package</key><string>MacOSXUpdCombo10.6.8.Part7.pkg</string></dict>
+<dict><key>Role</key><string>ComboPart8</string><key>Product</key><string>zzz041-98179</string><key>Package</key><string>MacOSXUpdCombo10.6.8.Part8.pkg</string></dict>
+<dict><key>Role</key><string>ComboPart9</string><key>Product</key><string>zzz041-98179</string><key>Package</key><string>MacOSXUpdCombo10.6.8.Part9.pkg</string></dict>
+<dict><key>Role</key><string>ComboPart10</string><key>Product</key><string>zzz041-98179</string><key>Package</key><string>MacOSXUpdCombo10.6.8.Part10.pkg</string></dict>
+<dict><key>Role</key><string>ComboPart11</string><key>Product</key><string>zzz041-98179</string><key>Package</key><string>MacOSXUpdCombo10.6.8.Part11.pkg</string></dict>
+<dict><key>Role</key><string>ComboPart12</string><key>Product</key><string>zzz041-98179</string><key>Package</key><string>MacOSXUpdCombo10.6.8.Part12.pkg</string></dict>
+<dict><key>Role</key><string>ComboBase</string><key>Product</key><string>zzz041-98179</string><key>Package</key><string>SUBaseSystemCombo10.6.8.pkg</string></dict>
+<dict><key>Role</key><string>ComboX11</string><key>Product</key><string>zzz041-98179</string><key>Package</key><string>X11ForCombo10.6.8.pkg</string></dict>
+<dict><key>Role</key><string>ComboRosetta</string><key>Product</key><string>zzz041-98179</string><key>Package</key><string>RosettaForCombo10.6.8.pkg</string></dict>
+<dict><key>Role</key><string>Security</string><key>Product</key><string>zzz041-91751</string><key>Package</key><string>SecUpd2013-004.pkg</string></dict>
+</array></dict></dict>
 <dict><key>Guest</key><string>lion</string><key>Name</key><string>Mac OS X Lion</string><key>Version</key><string>10.7.5</string><key>Assembly</key><string>installer-dmg</string><key>Files</key><array>
 <dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://updates.cdn-apple.com/2021/macos/041-7683-20210614-E610947E-C7CE-46EB-8860-D26D71F0D3EA/InstallMacOSX.dmg</string><key>SHA256</key><string>DB0B2300DE719FA3E4EE132B55AFD4E689211AD5332760FE5FE7A30351C9E75C</string></dict>
-</array></dict>
+</array><key>HostUpdates</key><dict>
+<key>Recipe</key><string>lion-10.7.5-security</string>
+<key>CatalogURL</key><string>https://swscan.apple.com/content/catalogs/others/index-lion-snowleopard-leopard.merged-1.sucatalog</string>
+<key>Steps</key><array>
+<dict><key>Role</key><string>Security</string><key>Product</key><string>zzz041-84761</string><key>Package</key><string>SecUpd2014-004Lion.pkg</string></dict>
+</array></dict></dict>
 <dict><key>Guest</key><string>mountainlion</string><key>Name</key><string>OS X Mountain Lion</string><key>Version</key><string>10.8.5</string><key>Assembly</key><string>installer-dmg</string><key>Files</key><array>
 <dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://updates.cdn-apple.com/2021/macos/031-0627-20210614-90D11F33-1A65-42DD-BBEA-E1D9F43A6B3F/InstallMacOSX.dmg</string><key>SHA256</key><string>B006A6D63F20D0B369493469699D42D5CBCA91C295B40B273F6FE9EECA3484CE</string></dict>
-</array></dict>
+</array><key>HostUpdates</key><dict>
+<key>Recipe</key><string>mountainlion-10.8.5-security</string>
+<key>CatalogURL</key><string>https://swscan.apple.com/content/catalogs/others/index-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog</string>
+<key>Steps</key><array>
+<dict><key>Role</key><string>Security</string><key>Product</key><string>zzz041-88224</string><key>Package</key><string>SecUpd2015-006MtLion.pkg</string></dict>
+</array></dict></dict>
 <dict><key>Guest</key><string>mavericks</string><key>Recovery</key><dict><key>SessionURL</key><string>https://osrecovery.apple.com/</string><key>PayloadURL</key><string>https://osrecovery.apple.com/InstallationPayload/OSInstaller</string></dict><key>Name</key><string>OS X Mavericks</string><key>Version</key><string>10.9</string><key>Assembly</key><string>recovery-esd</string><key>Files</key><array>
-<dict><key>Role</key><string>esd</string><key>URL</key><string>http://oscdn.apple.com/content/downloads/33/62/031-10295/gho4r94w66f5v4ujm0sz7k1m0hua68i6oo/OSInstaller/InstallESD.dmg</string><key>SHA256</key><string>C861FD59E82BF777496809A0D2A9B58F66691EE56738031F55874A3FE1D7C3FF</string></dict>
-</array></dict>
+<dict><key>Role</key><string>esd</string><key>URL</key><string>http://oscdn.apple.com/content/downloads/33/62/031-10295/gho4r94w66f5v4ujm0sz7k1m0hua68i6oo/OSInstaller/InstallESD.dmg</string><key>Size</key><integer>5318660434</integer><key>SHA256</key><string>C861FD59E82BF777496809A0D2A9B58F66691EE56738031F55874A3FE1D7C3FF</string></dict>
+</array><key>HostUpdates</key><dict>
+<key>Recipe</key><string>mavericks-10.9.5-security</string>
+<key>CatalogURL</key><string>https://swscan.apple.com/content/catalogs/others/index-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog</string>
+<key>Steps</key><array>
+<dict><key>Role</key><string>Security</string><key>Product</key><string>zzz041-88446</string><key>Package</key><string>SecUpd2016-004Mavericks.pkg</string></dict>
+</array></dict></dict>
 <dict><key>Guest</key><string>yosemite</string><key>Name</key><string>OS X Yosemite</string><key>Version</key><string>10.10.5</string><key>Assembly</key><string>installer-dmg</string><key>Files</key><array>
-<dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://updates.cdn-apple.com/2019/cert/061-41343-20191023-02465f92-3ab5-4c92-bfe2-b725447a070d/InstallMacOSX.dmg</string></dict>
-</array></dict>
+<dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://updates.cdn-apple.com/2019/cert/061-41343-20191023-02465f92-3ab5-4c92-bfe2-b725447a070d/InstallMacOSX.dmg</string><key>SHA256</key><string>DE869907CE4289FE948CBD2DEA7479FF9C369BBF47B06D5CB5290D78FB2932C6</string></dict>
+</array><key>HostUpdates</key><dict>
+<key>Recipe</key><string>yosemite-10.10.5-security</string>
+<key>CatalogURL</key><string>https://swscan.apple.com/content/catalogs/others/index-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog</string>
+<key>Steps</key><array>
+<dict><key>Role</key><string>Security</string><key>Product</key><string>041-89045</string><key>Package</key><string>SecUpd2017-003Yosemite.pkg</string></dict>
+</array></dict></dict>
 <dict><key>Guest</key><string>elcapitan</string><key>Name</key><string>OS X El Capitan</string><key>Version</key><string>10.11.6</string><key>Assembly</key><string>installer-dmg</string><key>Files</key><array>
-<dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://updates.cdn-apple.com/2019/cert/061-41424-20191024-218af9ec-cf50-4516-9011-228c78eda3d2/InstallMacOSX.dmg</string></dict>
-</array></dict>
+<dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://updates.cdn-apple.com/2019/cert/061-41424-20191024-218af9ec-cf50-4516-9011-228c78eda3d2/InstallMacOSX.dmg</string><key>SHA256</key><string>BCA6D2B699FC03E7876BE9C9185D45BF4574517033548A47CB0D0938C5732D59</string></dict>
+</array><key>HostUpdates</key><dict>
+<key>Recipe</key><string>elcapitan-10.11.6-security</string>
+<key>CatalogURL</key><string>https://swscan.apple.com/content/catalogs/others/index-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog</string>
+<key>Steps</key><array>
+<dict><key>Role</key><string>Security</string><key>Product</key><string>041-90802</string><key>Package</key><string>SecUpd2018-004ElCapitan.pkg</string></dict>
+<dict><key>Role</key><string>FullBundle</string><key>Product</key><string>041-90802</string><key>Package</key><string>FullBundleUpdate.pkg</string></dict>
+</array></dict></dict>
 <dict><key>Guest</key><string>sierra</string><key>Name</key><string>macOS Sierra</string><key>Version</key><string>10.12.6</string><key>Assembly</key><string>installer-dmg</string><key>Files</key><array>
-<dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://updates.cdn-apple.com/2019/cert/061-39476-20191023-48f365f4-0015-4c41-9f44-39d3d2aca067/InstallOS.dmg</string></dict>
+<dict><key>Role</key><string>diskimage</string><key>URL</key><string>https://updates.cdn-apple.com/2019/cert/061-39476-20191023-48f365f4-0015-4c41-9f44-39d3d2aca067/InstallOS.dmg</string><key>SHA256</key><string>C793C9AAE9B59302B4B01A52AAD387D7E4873CF00C48352AFC1FFCC826CB0208</string></dict>
+</array><key>HostUpdates</key><dict>
+<key>Recipe</key><string>sierra-10.12.6-security</string>
+<key>CatalogURL</key><string>https://swscan.apple.com/content/catalogs/others/index-10.12-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog</string>
+<key>Steps</key><array>
+<dict><key>Role</key><string>Security</string><key>Product</key><string>061-41803</string><key>Package</key><string>SecUpd2019-005Sierra.pkg</string></dict>
+<dict><key>Role</key><string>FullBundle</string><key>Product</key><string>061-41803</string><key>Package</key><string>FullBundleUpdate.pkg</string></dict>
+</array></dict></dict>
+<dict><key>Guest</key><string>highsierra</string><key>Name</key><string>macOS High Sierra</string><key>Version</key><string>10.13.6</string><key>Assembly</key><string>split-legacy</string>
+<key>HostUpdates</key><dict><key>Recipe</key><string>highsierra-10.13.6-security</string><key>CatalogURL</key><string>https://swscan.apple.com/content/catalogs/others/index-10.13-10.12-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog</string><key>Steps</key><array>
+<dict><key>Role</key><string>HopSecurity</string><key>Product</key><string>001-48382</string><key>Package</key><string>SecUpd2020-005HighSierra.pkg</string></dict>
+<dict><key>Role</key><string>HopFullBundle</string><key>Product</key><string>001-48382</string><key>Package</key><string>FullBundleUpdate.pkg</string></dict>
+<dict><key>Role</key><string>Security</string><key>Product</key><string>001-72525</string><key>Package</key><string>SecUpd2020-006HighSierra.pkg</string></dict>
+<dict><key>Role</key><string>FullBundle</string><key>Product</key><string>001-72525</string><key>Package</key><string>FullBundleUpdate.pkg</string></dict>
+<dict><key>Role</key><string>Boot</string><key>Product</key><string>001-72525</string><key>Package</key><string>SecureBoot.pkg</string></dict>
+<dict><key>Role</key><string>UpdateEngine</string><key>Product</key><string>001-72525</string><key>Package</key><string>macOSBrain.pkg</string></dict>
+<dict><key>Role</key><string>Recovery</string><key>Product</key><string>001-72525</string><key>Package</key><string>SecUpd2020-006HighSierra.RecoveryHDUpdate.pkg</string></dict>
+</array></dict><key>Files</key><array>
+<dict><key>Role</key><string>assistant</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/06/50/041-91758-A_M8T44LH2AW/b5r4og05fhbgatve4agwy4kgkzv07mdid9/InstallAssistantAuto.pkg</string><key>SHA256</key><string>A06DF157A8474CB518A360B812EC68E405E24BF64E2A1106820DA80F7E067C8F</string></dict>
+<dict><key>Role</key><string>recovery</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/06/50/041-91758-A_M8T44LH2AW/b5r4og05fhbgatve4agwy4kgkzv07mdid9/RecoveryHDMetaDmg.pkg</string><key>SHA256</key><string>DB948A49FF4022DAF924A1C1A7B1DED2E84F8BC993C19EE21A946EF1361CF7C2</string></dict>
+<dict><key>Role</key><string>esd</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/06/50/041-91758-A_M8T44LH2AW/b5r4og05fhbgatve4agwy4kgkzv07mdid9/InstallESDDmg.pkg</string><key>SHA256</key><string>F922284FC560D34ECA84752AE9C030D2C37FF00115ED87B32BAAF78D98EBB1BF</string></dict>
 </array></dict>
-<dict><key>Guest</key><string>highsierra</string><key>Name</key><string>macOS High Sierra</string><key>Version</key><string>10.13.6</string><key>Assembly</key><string>split-legacy</string><key>Files</key><array>
-<dict><key>Role</key><string>assistant</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/06/50/041-91758-A_M8T44LH2AW/b5r4og05fhbgatve4agwy4kgkzv07mdid9/InstallAssistantAuto.pkg</string></dict>
-<dict><key>Role</key><string>recovery</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/06/50/041-91758-A_M8T44LH2AW/b5r4og05fhbgatve4agwy4kgkzv07mdid9/RecoveryHDMetaDmg.pkg</string></dict>
-<dict><key>Role</key><string>esd</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/06/50/041-91758-A_M8T44LH2AW/b5r4og05fhbgatve4agwy4kgkzv07mdid9/InstallESDDmg.pkg</string></dict>
+<dict><key>Guest</key><string>mojave</string><key>Name</key><string>macOS Mojave</string><key>Version</key><string>10.14.6</string><key>Assembly</key><string>split-legacy</string>
+<key>HostUpdates</key><dict><key>Recipe</key><string>mojave-10.14.6-security</string><key>CatalogURL</key><string>https://swscan.apple.com/content/catalogs/others/index-10.14-10.13-10.12-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog</string><key>Steps</key><array>
+<dict><key>Role</key><string>Security</string><key>Product</key><string>071-44390</string><key>Package</key><string>SecUpd2021-005Mojave.pkg</string></dict>
+<dict><key>Role</key><string>FullBundle</string><key>Product</key><string>071-44390</string><key>Package</key><string>FullBundleUpdate.pkg</string></dict>
+<dict><key>Role</key><string>Boot</string><key>Product</key><string>071-44390</string><key>Package</key><string>SecureBoot.pkg</string></dict>
+<dict><key>Role</key><string>UpdateEngine</string><key>Product</key><string>071-44390</string><key>Package</key><string>macOSBrain.pkg</string></dict>
+<dict><key>Role</key><string>Recovery</string><key>Product</key><string>071-44390</string><key>Package</key><string>SecUpd2021-005Mojave.RecoveryHDUpdate.pkg</string></dict>
+</array></dict><key>Files</key><array>
+<dict><key>Role</key><string>assistant</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/17/32/061-26589-A_8GJTCGY9PC/25fhcu905eta7wau7aoafu8rvdm7k1j4el/InstallAssistantAuto.pkg</string><key>SHA256</key><string>59A18D4E71CB21280954406B940D61CE3B5F67D1BFBF83F215AC1D761B17AF32</string></dict>
+<dict><key>Role</key><string>recovery</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/17/32/061-26589-A_8GJTCGY9PC/25fhcu905eta7wau7aoafu8rvdm7k1j4el/RecoveryHDMetaDmg.pkg</string><key>SHA256</key><string>FEE67D1A4423998AE1929095D3E83E405A00830E415B32426F2C24192B21C2CB</string></dict>
+<dict><key>Role</key><string>esd</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/17/32/061-26589-A_8GJTCGY9PC/25fhcu905eta7wau7aoafu8rvdm7k1j4el/InstallESDDmg.pkg</string><key>SHA256</key><string>DEFD3E8FDAAED4B816EBDD7FDD92EBC44F12410A0DEEB93E34486C3D7390FFB7</string></dict>
 </array></dict>
-<dict><key>Guest</key><string>mojave</string><key>Name</key><string>macOS Mojave</string><key>Version</key><string>10.14.6</string><key>Assembly</key><string>split-legacy</string><key>Files</key><array>
-<dict><key>Role</key><string>assistant</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/17/32/061-26589-A_8GJTCGY9PC/25fhcu905eta7wau7aoafu8rvdm7k1j4el/InstallAssistantAuto.pkg</string></dict>
-<dict><key>Role</key><string>recovery</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/17/32/061-26589-A_8GJTCGY9PC/25fhcu905eta7wau7aoafu8rvdm7k1j4el/RecoveryHDMetaDmg.pkg</string></dict>
-<dict><key>Role</key><string>esd</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/17/32/061-26589-A_8GJTCGY9PC/25fhcu905eta7wau7aoafu8rvdm7k1j4el/InstallESDDmg.pkg</string></dict>
+<dict><key>Guest</key><string>catalina</string><key>Name</key><string>macOS Catalina</string><key>Version</key><string>10.15.7</string><key>Assembly</key><string>split-legacy</string>
+<key>HostUpdates</key><dict><key>Recipe</key><string>catalina-10.15.8-security</string><key>CatalogURL</key><string>https://swscan.apple.com/content/catalogs/others/index-10.15-10.14-10.13-10.12-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog</string><key>Steps</key><array>
+<dict><key>Role</key><string>Security</string><key>Product</key><string>047-49516</string><key>Package</key><string>SecUpd2026-001Catalina.pkg</string></dict>
+<dict><key>Role</key><string>FullBundle</string><key>Product</key><string>047-49516</string><key>Package</key><string>FullBundleUpdate.pkg</string></dict>
+<dict><key>Role</key><string>Boot</string><key>Product</key><string>047-49516</string><key>Package</key><string>SecureBoot.pkg</string></dict>
+<dict><key>Role</key><string>UpdateEngine</string><key>Product</key><string>047-49516</string><key>Package</key><string>macOSBrain.pkg</string></dict>
+<dict><key>Role</key><string>Recovery</string><key>Product</key><string>047-49516</string><key>Package</key><string>SecUpd2026-001Catalina.RecoveryHDUpdate.pkg</string></dict>
+</array></dict><key>Files</key><array>
+<dict><key>Role</key><string>assistant</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/26/37/001-68446/r1dbqtmf3mtpikjnd04cq31p4jk91dceh8/InstallAssistantAuto.pkg</string><key>SHA256</key><string>012A9D0BECACE9FEAFAC9757FDC454C7F8DAB32F51832E497C90174C9709D74A</string></dict>
+<dict><key>Role</key><string>recovery</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/26/37/001-68446/r1dbqtmf3mtpikjnd04cq31p4jk91dceh8/RecoveryHDMetaDmg.pkg</string><key>SHA256</key><string>63C217A050660550A5DECFDFB18ECC206B4EC84E9AF89CC5F0114FE1D3222265</string></dict>
+<dict><key>Role</key><string>esd</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/26/37/001-68446/r1dbqtmf3mtpikjnd04cq31p4jk91dceh8/InstallESDDmg.pkg</string><key>SHA256</key><string>0805A61EEBFAA6FBF20B1A70C56B8BAEDDB83EBDF1CA70320C6F13E3CD412C96</string></dict>
 </array></dict>
-<dict><key>Guest</key><string>catalina</string><key>Name</key><string>macOS Catalina</string><key>Version</key><string>10.15.7</string><key>Assembly</key><string>split-legacy</string><key>Files</key><array>
-<dict><key>Role</key><string>assistant</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/26/37/001-68446/r1dbqtmf3mtpikjnd04cq31p4jk91dceh8/InstallAssistantAuto.pkg</string></dict>
-<dict><key>Role</key><string>recovery</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/26/37/001-68446/r1dbqtmf3mtpikjnd04cq31p4jk91dceh8/RecoveryHDMetaDmg.pkg</string></dict>
-<dict><key>Role</key><string>esd</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/26/37/001-68446/r1dbqtmf3mtpikjnd04cq31p4jk91dceh8/InstallESDDmg.pkg</string></dict>
-</array></dict>
-<dict><key>Guest</key><string>bigsur</string><key>Name</key><string>macOS Big Sur</string><key>Version</key><string>11.7.11</string><key>Assembly</key><string>assistant-pkg</string><key>Files</key><array>
+<dict><key>Guest</key><string>bigsur</string><key>Name</key><string>macOS Big Sur</string><key>Version</key><string>11.7.11</string><key>Assembly</key><string>assistant-pkg</string><key>SoftwareUpdate</key><dict><key>CatalogURL</key><string>https://swscan.apple.com/content/catalogs/others/index-27-26-15-14-13-12-10.16-10.15-10.14-10.13-10.12-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog</string><key>MajorVersion</key><string>11</string></dict><key>Files</key><array>
 <dict><key>Role</key><string>assistant</string><key>URL</key><string>https://swcdn.apple.com/content/downloads/10/18/047-32248-A_Y7S9K47C9M/rqg3zuwb6dkofsdilmz22awvxtq2sxwr15/InstallAssistant.pkg</string></dict>
 </array></dict>
+<dict><key>Guest</key><string>monterey</string><key>Name</key><string>macOS Monterey</string><key>Version</key><string>12</string><key>Assembly</key><string>assistant-pkg</string><key>SoftwareUpdate</key><dict><key>CatalogURL</key><string>https://swscan.apple.com/content/catalogs/others/index-27-26-15-14-13-12-10.16-10.15-10.14-10.13-10.12-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog</string><key>MajorVersion</key><string>12</string></dict><key>Files</key><array/></dict>
+<dict><key>Guest</key><string>ventura</string><key>Name</key><string>macOS Ventura</string><key>Version</key><string>13</string><key>Assembly</key><string>assistant-pkg</string><key>SoftwareUpdate</key><dict><key>CatalogURL</key><string>https://swscan.apple.com/content/catalogs/others/index-27-26-15-14-13-12-10.16-10.15-10.14-10.13-10.12-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog</string><key>MajorVersion</key><string>13</string></dict><key>Files</key><array/></dict>
+<dict><key>Guest</key><string>sonoma</string><key>Name</key><string>macOS Sonoma</string><key>Version</key><string>14</string><key>Assembly</key><string>assistant-pkg</string><key>SoftwareUpdate</key><dict><key>CatalogURL</key><string>https://swscan.apple.com/content/catalogs/others/index-27-26-15-14-13-12-10.16-10.15-10.14-10.13-10.12-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog</string><key>MajorVersion</key><string>14</string></dict><key>Files</key><array/></dict>
+<dict><key>Guest</key><string>sequoia</string><key>Name</key><string>macOS Sequoia</string><key>Version</key><string>15</string><key>Assembly</key><string>assistant-pkg</string><key>SoftwareUpdate</key><dict><key>CatalogURL</key><string>https://swscan.apple.com/content/catalogs/others/index-27-26-15-14-13-12-10.16-10.15-10.14-10.13-10.12-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog</string><key>MajorVersion</key><string>15</string></dict><key>Files</key><array/></dict>
+<dict><key>Guest</key><string>tahoe</string><key>Name</key><string>macOS Tahoe</string><key>Version</key><string>26</string><key>Assembly</key><string>assistant-pkg</string><key>SoftwareUpdate</key><dict><key>CatalogURL</key><string>https://swscan.apple.com/content/catalogs/others/index-27-26-15-14-13-12-10.16-10.15-10.14-10.13-10.12-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog</string><key>MajorVersion</key><string>26</string></dict><key>Files</key><array/></dict>
 </array></dict></plist>

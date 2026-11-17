@@ -80,7 +80,7 @@
 				MODULE_NAME = local.pvg.IOSurfaceABI;
 				MODULE_START = PVGIOSurfaceABI_kern_start;
 				MODULE_STOP = PVGIOSurfaceABI_kern_stop;
-				MODULE_VERSION = 1.6.3;
+				MODULE_VERSION = 1.6.4;
 				ONLY_ACTIVE_ARCH = YES;
 				OTHER_CFLAGS = ("-mmmx", "-msse", "-msse2", "-msse3", "-mfpmath=sse", "-mssse3", "-fno-non-call-exceptions", "-fno-builtin", "-fno-asynchronous-unwind-tables", "-Wno-unknown-warning-option", "-Wno-ossharedptr-misuse", "-Wno-vla");
 				OTHER_LDFLAGS = "-static";

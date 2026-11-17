@@ -71,7 +71,7 @@
 @property CFTimeInterval lastFingerprintAt, lastDistinctAt;
 @property id<MTLTexture> lastPresentedTexture;
 @property(nonatomic, copy) NSString *diagnosticsDirectory;
-@property NSMutableSet<NSString *> *pressedKeys;
+@property NSMutableSet *pressedKeys;
 @property NSTrackingArea *mouseTracking;
 @property NSCursor *guestCursor;
 @property NSCursor *hiddenCursor;
@@ -90,14 +90,6 @@
 @property CFRunLoopSourceRef eventTapSource;
 @property CGFloat wheelRemainderX;
 @property CGFloat wheelRemainderY;
-// The real NSCursor always tracks the host's own pointer position, which in
-// relative mode has no relation to the guest's actual (delta-accumulated)
-// cursor position - so it stays hidden there (see -effectiveCursor) and this
-// sprite, independently positioned, stands in for it instead.
-@property NSImage *guestCursorImage;
-@property NSPoint guestCursorHotspotPoints;
-@property NSImageView *relativeCursorView;
-@property NSPoint relativeCursorPoint;
 - (void)routeCapturedKey:(NSEvent *)event;
 - (void)cancelPendingSurface;
 - (void)drainPendingSurface;
@@ -310,6 +302,7 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
 }
 - (instancetype)initWithFrame:(NSRect)frame {
     if ((self = [super initWithFrame:frame])) {
+        self.releaseWithControlOption=YES;
         self.diagnosticsDirectory=NSProcessInfo.processInfo.environment[@"VIM_FRAME_DIAGNOSTICS"];
         self.measurePresentation=[NSProcessInfo.processInfo.environment[@"VIM_DISPLAY_TIMING"] isEqualToString:@"1"];
         self.device = MTLCreateSystemDefaultDevice(); self.queue = [self.device newCommandQueue];
@@ -337,10 +330,6 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
     return self;
 }
 - (void)dealloc {
-    // Never leave the real Mac's own pointer decoupled from its hardware -
-    // that would strand the person's mouse system-wide, well outside this
-    // view/VM, if the window closed while relative mode was still active.
-    if(_relativeMouseMode)CGAssociateMouseAndMouseCursorPosition(true);
     [self cancelPendingSurface];
     if(self.keyMonitor)[NSEvent removeMonitor:self.keyMonitor];
     if(self.focusObserver)[NSNotificationCenter.defaultCenter removeObserver:self.focusObserver];
@@ -369,27 +358,14 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
     [self refreshNativeCursor];
 }
 - (void)releaseInputCapture {
-    // Also called on focus loss (see the NSWindowDidResignKeyNotification
-    // observer below): leaving relative mode on while some other app is
-    // frontmost would strand the real pointer there too, decoupled from the
-    // hardware well outside this VM's window.
-    self.relativeMouseMode=NO;
     self.inputCaptured=NO;[self releasePressedKeys];
     self.wheelRemainderX=0;self.wheelRemainderY=0;
     if(self.eventTap)CGEventTapEnable(self.eventTap,false);
     [self refreshNativeCursor];
 }
 - (void)routeCapturedKey:(NSEvent *)event {
-    // The capture tap intercepts every keyDown/keyUp system-wide while
-    // captured, including this app's own menu key equivalents - an ordinary
-    // keystroke-based shortcut (unlike the modifier-only combo just below)
-    // never reaches AppKit's menu matching at all, it would just get
-    // forwarded to the guest as a regular keypress. Handle it here instead.
-    if(event.type==NSEventTypeKeyDown&&(event.modifierFlags&NSEventModifierFlagDeviceIndependentFlagsMask)==(NSEventModifierFlagCommand|NSEventModifierFlagShift)&&
-       [event.charactersIgnoringModifiers.lowercaseString isEqualToString:@"m"]) {
-        self.relativeMouseMode=!self.relativeMouseMode;return;
-    }
-    if((event.modifierFlags&(NSEventModifierFlagCommand|NSEventModifierFlagOption))==(NSEventModifierFlagCommand|NSEventModifierFlagOption)) {
+    NSEventModifierFlags release=NSEventModifierFlagOption|(self.releaseWithControlOption?NSEventModifierFlagControl:NSEventModifierFlagCommand);
+    if((event.modifierFlags&release)==release) {
         [self releaseInputCapture];
         // Releasing only the tap leaves AppKit's first responder forwarding
         // Command equivalents (and later key-ups) straight back to the guest.
@@ -471,58 +447,13 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
     _softwareCursor=value;
     [self refreshNativeCursor];
 }
-- (void)setRelativeMouseMode:(BOOL)value {
-    if(_relativeMouseMode==value)return;
-    _relativeMouseMode=value;
-    if(value){CGRect frame=self.presentationLayer.frame;self.relativeCursorPoint=NSMakePoint(NSMidX(frame),NSMidY(frame));}
-    // Decouple the real cursor from physical mouse movement instead of
-    // clamping it at the window edge: it just sits still wherever it already
-    // was (invisible - see -effectiveCursor) while NSEvent's deltaX/deltaY
-    // keep reporting raw hardware motion regardless of screen edges, exactly
-    // like any other game's captured mouse-look. Restore normal coupling
-    // when leaving relative mode so the pointer can be seen/used again.
-    CGAssociateMouseAndMouseCursorPosition(!value);
-    [self refreshNativeCursor];[self updateRelativeCursorView];
-    if(self.relativeMouseModeObserver)self.relativeMouseModeObserver();
-}
-- (void)updateRelativeCursorView {
-    if(!self.relativeMouseMode||!self.guestCursorVisible||!self.guestCursorImage){self.relativeCursorView.hidden=YES;return;}
-    if(!self.relativeCursorView) {
-        self.relativeCursorView=[[NSImageView alloc] initWithFrame:NSZeroRect];
-        self.relativeCursorView.imageScaling=NSImageScaleNone;self.relativeCursorView.editable=NO;
-        [self addSubview:self.relativeCursorView];
-    }
-    self.relativeCursorView.image=self.guestCursorImage;
-    NSSize size=self.guestCursorImage.size;
-    // The hotspot is measured down from the image's top edge; this view's
-    // frame origin is its bottom-left corner in the (non-flipped) superview.
-    self.relativeCursorView.frame=NSMakeRect(self.relativeCursorPoint.x-self.guestCursorHotspotPoints.x,
-        self.relativeCursorPoint.y-(size.height-self.guestCursorHotspotPoints.y),size.width,size.height);
-    self.relativeCursorView.hidden=NO;
-}
-- (void)setGuestCursorTrackedPosition:(NSPoint)guestPixelPosition {
-    // drawableSize is the guest's current framebuffer resolution in pixels
-    // (the same quantity -updateGuestCursorScale divides by to convert the
-    // cursor glyph's own pixel size to view points); frame is where that
-    // framebuffer is actually presented within this view, in points.
-    CGSize pixels=self.presentationLayer.drawableSize;CGRect frame=self.presentationLayer.frame;
-    if(pixels.width<=0||pixels.height<=0||frame.size.width<=0||frame.size.height<=0)return;
-    CGFloat normalizedX=MAX(0,MIN(1,guestPixelPosition.x/pixels.width)),
-            normalizedY=MAX(0,MIN(1,guestPixelPosition.y/pixels.height));
-    // This view isn't flipped (Y increases upward); the guest's Y increases
-    // downward from the top, so it inverts here - the same flip
-    // -mouseMoved: already does, just in the opposite direction.
-    self.relativeCursorPoint=NSMakePoint(frame.origin.x+normalizedX*frame.size.width,
-        frame.origin.y+(1-normalizedY)*frame.size.height);
-    if(self.relativeMouseMode)[self updateRelativeCursorView];
-}
 - (BOOL)acceptsFirstMouse:(NSEvent *)event { return YES; }
 - (void)setGuestCursorVisible:(BOOL)visible {
     // QEMU also reports visibility while the mouse moves. Reinstalling the
     // identical cursor invalidates AppKit's cursor rectangles and registers
     // its image with WindowServer on every report, even during window drags.
     if(_guestCursorVisible==visible)return;
-    self.cursorVisibilityUpdates++;_guestCursorVisible=visible;[self refreshNativeCursor];[self updateRelativeCursorView];
+    self.cursorVisibilityUpdates++;_guestCursorVisible=visible;[self refreshNativeCursor];
 }
 - (void)setGuestCursorPixels:(NSData *)pixels width:(NSUInteger)width height:(NSUInteger)height hotspot:(NSPoint)hotspot {
     if(!width||!height||width>256||height>256||pixels.length!=width*height*4||!isfinite(hotspot.x)||!isfinite(hotspot.y)||hotspot.x<0||hotspot.y<0||hotspot.x>=width||hotspot.y>=height)return;
@@ -546,9 +477,7 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
         kCGBitmapByteOrder32Little|(CGBitmapInfo)kCGImageAlphaPremultipliedFirst,provider,NULL,NO,kCGRenderingIntentDefault);
     if(cg) {
         NSImage *image=[[NSImage alloc] initWithCGImage:cg size:NSMakeSize(width/scale,height/scale)];
-        NSPoint hotspotPoints=NSMakePoint(hotspot.x/scale,hotspot.y/scale);
-        self.guestCursor=[[NSCursor alloc] initWithImage:image hotSpot:hotspotPoints];
-        self.guestCursorImage=image;self.guestCursorHotspotPoints=hotspotPoints;[self updateRelativeCursorView];
+        self.guestCursor=[[NSCursor alloc] initWithImage:image hotSpot:NSMakePoint(hotspot.x/scale,hotspot.y/scale)];
         CGImageRelease(cg);[self refreshNativeCursor];
     }
     CGColorSpaceRelease(color);CGDataProviderRelease(provider);
@@ -560,13 +489,7 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
     // overlay a second host cursor while the installer view owns focus.
     BOOL hideSoftware=self.softwareCursor&&self.window.isKeyWindow&&
         (self.inputCaptured||self.ownsResponderFocus);
-    // The glyph this app shows always tracks the host's own mouse position,
-    // correct only while that position IS the guest's cursor position
-    // (absolute/tablet mode). In relative mode the guest's actual cursor is
-    // wherever accumulated deltas have left it - no relation to where the
-    // host pointer is on screen - so showing it here would just mislead
-    // about where a click will actually land. Show nothing instead.
-    if(self.relativeMouseMode||hideSoftware||(self.inputCaptured&&!self.guestCursorVisible)) {
+    if(hideSoftware||(self.inputCaptured&&!self.guestCursorVisible)) {
         if(!self.hiddenCursor)self.hiddenCursor=[[NSCursor alloc] initWithImage:[[NSImage alloc] initWithSize:NSMakeSize(1,1)] hotSpot:NSZeroPoint];
         cursor=self.hiddenCursor;
     }return cursor;
@@ -602,22 +525,37 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
     [self addTrackingArea:self.mouseTracking];
 }
 - (void)emit:(NSArray *)events { if(self.inputHandler)self.inputHandler(events); }
-- (void)sendKey:(NSString *)key down:(BOOL)down {
+// Most physical keys have a QCode. JIS keypad comma only has a QNUM in
+// QEMU's keycodemapdb; retain that numeric identity through key-up/focus loss.
+- (NSDictionary *)inputKeyValue:(id)key {
+    return @{@"type":[key isKindOfClass:NSNumber.class]?@"number":@"qcode",@"data":key};
+}
+- (void)sendKey:(id)key down:(BOOL)down {
     if([self.pressedKeys containsObject:key]==down)return;
-    [self emit:@[@{@"type":@"key",@"data":@{@"down":@(down),@"key":@{@"type":@"qcode",@"data":key}}}]];
+    [self emit:@[@{@"type":@"key",@"data":@{@"down":@(down),@"key":[self inputKeyValue:key]}}]];
     if(down)[self.pressedKeys addObject:key];else [self.pressedKeys removeObject:key];
 }
-- (NSString *)keyName:(unsigned short)code {
+- (id)keyName:(unsigned short)code {
+    // IOHIDKeyboard::deviceType swaps USB usages 0x35/0x64 for ISO keyboards.
+    // NSEvent has already normalized the physical board into Carbon positions;
+    // reverse that translation for the virtual ISO device, not for ANSI/JIS.
+    if(self.appleISOKeyboard) {
+        if(code==10)return @"grave_accent";
+        if(code==50)return @"less";
+    }
     static NSDictionary *keys;static dispatch_once_t once;
-    dispatch_once(&once, ^{keys=@{@0:@"a",@1:@"s",@2:@"d",@3:@"f",@4:@"h",@5:@"g",@6:@"z",@7:@"x",@8:@"c",@9:@"v",@11:@"b",
+    // Carbon virtual-key positions, not event.characters: the guest's keyboard
+    // layout and IME own text composition (including dead keys and AltGr).
+    dispatch_once(&once, ^{keys=@{@0:@"a",@1:@"s",@2:@"d",@3:@"f",@4:@"h",@5:@"g",@6:@"z",@7:@"x",@8:@"c",@9:@"v",@10:@"less",@11:@"b",
         @12:@"q",@13:@"w",@14:@"e",@15:@"r",@16:@"y",@17:@"t",@18:@"1",@19:@"2",@20:@"3",@21:@"4",@22:@"6",@23:@"5",
         @24:@"equal",@25:@"9",@26:@"7",@27:@"minus",@28:@"8",@29:@"0",@30:@"bracket_right",@31:@"o",@32:@"u",@33:@"bracket_left",
         @34:@"i",@35:@"p",@36:@"ret",@37:@"l",@38:@"j",@39:@"apostrophe",@40:@"k",@41:@"semicolon",@42:@"backslash",@43:@"comma",
         @44:@"slash",@45:@"n",@46:@"m",@47:@"dot",@48:@"tab",@49:@"spc",@50:@"grave_accent",@51:@"backspace",@53:@"esc",
         @54:@"meta_r",@55:@"meta_l",@56:@"shift",@58:@"alt",@59:@"ctrl",@60:@"shift_r",@61:@"alt_r",@62:@"ctrl_r",
-        @65:@"kp_decimal",@67:@"kp_multiply",@69:@"kp_add",@75:@"kp_divide",@76:@"kp_enter",@78:@"kp_subtract",@82:@"kp_0",
+        @64:@"f17",@65:@"kp_decimal",@67:@"kp_multiply",@69:@"kp_add",@71:@"num_lock",@72:@"volumeup",@73:@"volumedown",@74:@"audiomute",@75:@"kp_divide",@76:@"kp_enter",@78:@"kp_subtract",@79:@"f18",@80:@"f19",@81:@"kp_equals",@82:@"kp_0",
         @83:@"kp_1",@84:@"kp_2",@85:@"kp_3",@86:@"kp_4",@87:@"kp_5",@88:@"kp_6",@89:@"kp_7",@91:@"kp_8",@92:@"kp_9",
-        @96:@"f5",@97:@"f6",@98:@"f7",@99:@"f3",@100:@"f8",@101:@"f9",@103:@"f11",@109:@"f10",@111:@"f12",
+        @90:@"f20",@93:@"yen",@94:@"ro",@95:@0x5c,
+        @96:@"f5",@97:@"f6",@98:@"f7",@99:@"f3",@100:@"f8",@101:@"f9",@102:@"lang2",@103:@"f11",@104:@"lang1",@105:@"f13",@106:@"f16",@107:@"f14",@109:@"f10",@111:@"f12",@113:@"f15",@114:@"help",
         @115:@"home",@116:@"pgup",@117:@"delete",@118:@"f4",@119:@"end",@120:@"f2",@121:@"pgdn",@122:@"f1",@123:@"left",@124:@"right",@125:@"down",@126:@"up"};});
     return keys[@(code)];
 }
@@ -646,14 +584,14 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
     // not silently recaptured until the user clicks back into the guest.
     if(!self.inputCaptured&&self.window.isKeyWindow&&self.window.firstResponder==self)[self captureInput];
     if(!self.inputCaptured){[super keyDown:event];return;}
-    [self synchronizeModifiers:event];NSString *key=[self keyName:event.keyCode];if(key&&!event.isARepeat)[self sendKey:key down:YES];
+    [self synchronizeModifiers:event];id key=[self keyName:event.keyCode];if(key&&!event.isARepeat)[self sendKey:key down:YES];
 }
-- (void)keyUp:(NSEvent *)event { if(!self.inputCaptured)return;[self synchronizeModifiers:event];NSString *key=[self keyName:event.keyCode];if(key)[self sendKey:key down:NO]; }
+- (void)keyUp:(NSEvent *)event { if(!self.inputCaptured)return;[self synchronizeModifiers:event];id key=[self keyName:event.keyCode];if(key)[self sendKey:key down:NO]; }
 - (BOOL)performKeyEquivalent:(NSEvent *)event {
     if(self.inputCaptured && self.window.firstResponder==self && (event.modifierFlags & NSEventModifierFlagCommand)) {
         // AppKit does not reliably deliver keyUp for consumed command equivalents.
         [self synchronizeModifiers:event];
-        NSString *key=[self keyName:event.keyCode];
+        id key=[self keyName:event.keyCode];
         if(key){[self sendKey:key down:YES];[self sendKey:key down:NO];}
         return YES;
     }
@@ -671,7 +609,7 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
         // retain the physical-keycode fallback, but a cleared aggregate is
         // always an UP, never a toggle which can manufacture a held modifier.
         if(!(event.modifierFlags&([group[3] unsignedIntegerValue]|[group[4] unsignedIntegerValue]))) {
-            NSString *key=[self keyName:event.keyCode];
+            id key=[self keyName:event.keyCode];
             [self sendKey:key down:(event.modifierFlags&[group[0] unsignedIntegerValue])&&![self.pressedKeys containsObject:key]];
         }
         break;
@@ -681,13 +619,13 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
         // macOS can consume a command shortcut's key-up. Do not leave its
         // ordinary key held when the final Command modifier is released.
         NSSet *modifiers=[NSSet setWithArray:@[@"meta_l",@"meta_r",@"shift",@"shift_r",@"ctrl",@"ctrl_r",@"alt",@"alt_r"]];
-        for(NSString *key in self.pressedKeys.allObjects)if(![modifiers containsObject:key])[self sendKey:key down:NO];
+        for(id key in self.pressedKeys.allObjects)if(![modifiers containsObject:key])[self sendKey:key down:NO];
     }
 }
 - (void)releasePressedKeys {
     NSMutableArray *events=[NSMutableArray array];
-    for(NSString *key in self.pressedKeys)
-        [events addObject:@{@"type":@"key",@"data":@{@"down":@NO,@"key":@{@"type":@"qcode",@"data":key}}}];
+    for(id key in self.pressedKeys)
+        [events addObject:@{@"type":@"key",@"data":@{@"down":@NO,@"key":[self inputKeyValue:key]}}];
     [self.pressedKeys removeAllObjects];
     for(NSString *button in @[@"left",@"right",@"middle"])
         [events addObject:@{@"type":@"btn",@"data":@{@"button":button,@"down":@NO}}];
@@ -696,31 +634,22 @@ static NSArray<NSArray *> *VIMModifierGroups(void) {
     [self emit:events];
 }
 - (void)mouseMoved:(NSEvent *)event {
-    if(!self.window.isKeyWindow)return;
-    if(self.relativeMouseMode) {
-        // deltaX/deltaY are already the host's raw per-event motion, exactly
-        // what a real relative mouse's HID reports would carry - no need to
-        // derive it from successive absolute positions (which would also
-        // break at the window edge, where the tablet's clamped position
-        // stops moving but the physical mouse keeps going).
-        int dx=(int)MAX(-127,MIN(127,event.deltaX)),dy=(int)MAX(-127,MIN(127,event.deltaY));
-        // Only the deltas are sent here; the sprite's own position comes
-        // from -setGuestCursorTrackedPosition:, the guest's own authoritative
-        // tracked position, not a host-side estimate accumulated from these
-        // same deltas (which drifted from the guest's real, accelerated
-        // position the more the mouse moved).
-        if(dx||dy)[self emit:@[@{@"type":@"rel",@"data":@{@"axis":@"x",@"value":@(dx)}},
-                               @{@"type":@"rel",@"data":@{@"axis":@"y",@"value":@(dy)}}]];
-        return;
-    }
+    if(!self.window.isKeyWindow||event.window!=self.window)return;
     NSPoint p=[self convertPoint:event.locationInWindow fromView:nil];CGRect frame=self.presentationLayer.frame;
     if(frame.size.width<=0||frame.size.height<=0)return;
+    BOOL dragging=event.type==NSEventTypeLeftMouseDragged||event.type==NSEventTypeRightMouseDragged||event.type==NSEventTypeOtherMouseDragged;
+    // AppKit can deliver mouseMoved to the first responder after the pointer
+    // leaves its tracking area. Do not clamp those outside hovers into guest
+    // edge motion. A captured drag still needs boundary motion and button-up.
+    if((!NSPointInRect(p,self.bounds)||!CGRectContainsPoint(frame,p))&&!(dragging&&self.inputCaptured))return;
     int x=(int)(MAX(0,MIN(1,(p.x-frame.origin.x)/frame.size.width))*32767);
     int y=(int)(MAX(0,MIN(1,1-(p.y-frame.origin.y)/frame.size.height))*32767);
     [self emit:@[@{@"type":@"abs",@"data":@{@"axis":@"x",@"value":@(x)}},
                  @{@"type":@"abs",@"data":@{@"axis":@"y",@"value":@(y)}}]];
 }
 - (void)button:(NSString *)button event:(NSEvent *)event down:(BOOL)down {
+    if(down&&(event.window!=self.window||
+       !CGRectContainsPoint(self.presentationLayer.frame,[self convertPoint:event.locationInWindow fromView:nil])))return;
     [self.window makeFirstResponder:self];if(down&&!self.inputCaptured)[self captureInput];[self mouseMoved:event];
     [self emit:@[@{@"type":@"btn",@"data":@{@"button":button,@"down":@(down)}}]];
 }

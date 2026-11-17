@@ -1,4 +1,6 @@
 #import "VIMLocalization.h"
+#import "VIMGuestFamilies.h"
+#import "VIMInstallerAssembly.h"
 #import "VIMModernSetup.h"
 #import "VIMMachine.h"
 #import "VIMGuestAgent.h"
@@ -52,6 +54,7 @@ static NSError *SetupError(NSString *text){return [NSError errorWithDomain:@"Vir
         @"VolumeUUID":report[@"VolumeUUID"],@"TargetVolumeUUID":self.target[@"VolumeUUID"],@"Username":self.profile[@"Username"],
         @"FileSharing":self.profile[@"FileSharing"],@"RemoteLogin":self.profile[@"RemoteLogin"],
         @"AutomaticLogin":self.profile[@"AutomaticLogin"]?:@YES} mutableCopy];
+    if([self.profile[@"ScreenSaverDisabled"] isEqual:@YES])request[@"ScreenSaverDisabled"]=@YES;
     NSDictionary *plan=self.state[@"InstallerPlan"];
     if([self.state[@"InstallDispatched"] isEqual:@YES]&&
        [plan[@"MachineIdentifier"] isEqual:request[@"MachineIdentifier"]]&&
@@ -91,13 +94,19 @@ static NSError *SetupError(NSString *text){return [NSError errorWithDomain:@"Vir
             // startosinstall staged the install, but the guest's own reboot
             // can still come back up in the installer media's Recovery; a
             // fresh restart then boots the staged installer. Only a later boot
-            // running from that same Recovery volume is not progress. Big
-            // Sur's staged installer also reports Recovery tools, but from its
-            // own staged volume, and must be left to run.
+            // running from that same Recovery is not progress. Big Sur and
+            // later stage the same BaseSystem image (same volume UUID, also
+            // with Recovery tools), loaded from the target's install data, and
+            // must be left to run: for them, only a boot whose kernel carries
+            // the flags this app writes into its installer media is a bounce.
             NSString *dispatched=self.state[@"DispatchBootSessionUUID"];
             NSString *recoveryVolume=self.state[@"DispatchRecoveryVolumeUUID"];
+            id arguments=report[@"KernelBootArguments"];
+            BOOL fromMedia=[arguments isKindOfClass:NSString.class]&&
+                [[arguments componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet] containsObject:VIMInstallerMediaKernelFlags];
             if([dispatched isKindOfClass:NSString.class]&&![dispatched isEqual:boot]&&
                [recoveryVolume isKindOfClass:NSString.class]&&[recoveryVolume isEqual:report[@"VolumeUUID"]]&&
+               (fromMedia||!VIMIsAssistantGuest(self.machine.guest))&&
                ![self.state[@"RecoveryRestartBootSessionUUID"] isEqual:boot]) {
                 NSUInteger attempts=[self.state[@"RecoveryRestarts"] unsignedIntegerValue];
                 if(attempts>=2){

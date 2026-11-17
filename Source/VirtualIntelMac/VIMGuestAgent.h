@@ -54,6 +54,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)stageFiles:(NSDictionary<NSString *,NSURL *> *)files
           progress:(void (^_Nullable)(uint64_t completed,uint64_t total))progress
         completion:(void (^)(NSDictionary *_Nullable receipt,NSError *_Nullable error))completion;
+/// Run the current small bundled helper in private guest staging, then remove
+/// only its acknowledged temporary file/directory. No installation or replay.
+- (void)runTemporaryTool:(NSURL *)tool arguments:(NSArray<NSString *> *)arguments
+             completion:(void (^)(NSDictionary *_Nullable,NSError *_Nullable))completion;
 /// Installation journals, backups and verification tools must survive macOS
 /// updates, which may remove /var/tmp. Uses root-only /private/var/db staging.
 - (void)stageInstallationFiles:(NSDictionary<NSString *,NSURL *> *)files

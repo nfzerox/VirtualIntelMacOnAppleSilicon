@@ -52,8 +52,10 @@ def mojave_renderer(source, archive):
         return {prefix + str(p.relative_to(bundle)): p.read_bytes()
                 for p in (image, bundle/'Contents/_CodeSignature/CodeResources')}
 
-def build_bigsur(source, output, helpers=None):
-    archive=output/'bigsur.tar.xz'
+ASSISTANT_GUESTS = ('bigsur', 'monterey', 'ventura', 'sonoma', 'sequoia', 'tahoe')
+
+def build_bigsur(source, output, helpers=None, guest='bigsur'):
+    archive=output/(guest+'.tar.xz')
     helpers=helpers or source/'prebuilt/bigsur'
     with archive.open('xb') as file:
         with lzma.LZMAFile(file, 'w', preset=6, check=lzma.CHECK_CRC64) as compressed:
@@ -209,6 +211,32 @@ def build(source, output, surface_helper=None, bigsur_helpers=None, iosurface_ro
                             result.addfile(member)
                         kept.append(relative)
                     if guest == 'mojave':
+                        # Both engines are installed in the existing graphics
+                        # transaction. A tiny entry library chooses at boot;
+                        # ordinary mode changes never regenerate boot caches.
+                        optional=source/'prebuilt/PassthroughOpenGL/mojave'
+                        components=[(optional/'GuestTools/GLEngine','GLEngine'),
+                            (optional/'GuestTools/GLEngineSelector','GLEngineSelector'),
+                            (optional/'GuestTools/libVIMPassthroughOpenGL.dylib','libVIMPassthroughOpenGL.dylib'),
+                            (optional/'Kernel/PassthroughOpenGLTransport.kext','PassthroughOpenGLTransport.kext')]
+                        for component,name in components:
+                            subprocess.run(['/usr/bin/codesign','--verify','--deep','--strict',str(component)],check=True)
+                            if component.is_file():
+                                for arch in ('i386','x86_64'):
+                                    subprocess.run(['/usr/bin/lipo',str(component),'-verify_arch',arch],check=True)
+                            paths=[component,*sorted(component.rglob('*'))] if component.is_dir() else [component]
+                            for path in paths:
+                                relative='GuestHelpers/PassthroughOpenGL/'+name
+                                if path!=component:relative+='/'+path.relative_to(component).as_posix()
+                                if relative in kept or path.is_symlink() or not (path.is_file() or path.is_dir()):
+                                    raise ValueError('Unsupported optional Mojave GL member: '+relative)
+                                member=result.gettarinfo(str(path),'payload/'+relative)
+                                member.uid=member.gid=member.mtime=0
+                                member.uname=member.gname='';member.pax_headers={}
+                                if path.is_file():
+                                    with path.open('rb') as data:result.addfile(member,data)
+                                else:result.addfile(member)
+                                kept.append(relative)
                         # SkyLight itself is regenerated from this guest, but
                         # its Surface2 compatibility dependency is our code.
                         helper = surface_helper or source/'prebuilt/mojave/PVGGLIOKit.dylib'
@@ -236,7 +264,10 @@ def build(source, output, surface_helper=None, bigsur_helpers=None, iosurface_ro
                                    'RequiresGuestStaging': True}
     # Big Sur keeps its own Metal/OpenGL/compiler stack. Only our two small
     # adapters ship; native GPU bundles are prepared from the actual guest.
-    receipt['Guests']['bigsur']=build_bigsur(source,output,bigsur_helpers)
+    # Big Sur and later share this recipe; each release gets its own archive
+    # so its support disc stays self-describing.
+    for guest in ASSISTANT_GUESTS:
+        receipt['Guests'][guest]=build_bigsur(source,output,bigsur_helpers,guest)
     (output/'Payloads.plist').write_bytes(plistlib.dumps(receipt, sort_keys=True))
     return receipt
 

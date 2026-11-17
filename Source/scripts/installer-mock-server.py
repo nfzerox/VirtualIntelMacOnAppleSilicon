@@ -15,11 +15,17 @@ import urllib.parse
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', required=True, type=pathlib.Path)
+    parser.add_argument('--map', action='append', nargs=2, default=[], metavar=('URL_PATH','LOCAL_FILE'),
+                        help='Serve a specific existing installer without duplicating its bytes')
     parser.add_argument('--port', type=int, default=8765)
     parser.add_argument('--bytes-per-second', type=int, default=0)
+    parser.add_argument('--omit-content-length', action='store_true',
+                        help='GET streams to EOF while HEAD still advertises its size')
     parser.add_argument('--ready-file', type=pathlib.Path)
     args = parser.parse_args()
     root = args.root.resolve(strict=True)
+    mapped = {urllib.parse.unquote(path).lstrip('/'): pathlib.Path(local).resolve(strict=True)
+              for path, local in args.map}
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_HEAD(self):
@@ -30,8 +36,13 @@ def main():
 
         def serve(self, body):
             relative = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path).lstrip('/')
-            path = (root / relative).resolve()
-            if not path.is_relative_to(root) or not path.is_file():
+            path = mapped.get(relative)
+            if path is None:
+                path = (root / relative).resolve()
+                if not path.is_relative_to(root):
+                    self.send_error(404)
+                    return
+            if not path.is_file():
                 self.send_error(404)
                 return
             stat = path.stat()
@@ -54,7 +65,8 @@ def main():
                     return
                 status = 206
             self.send_response(status)
-            self.send_header('Content-Length', str(end - start + 1))
+            if not (body and args.omit_content_length):
+                self.send_header('Content-Length', str(end - start + 1))
             self.send_header('Content-Type', 'application/octet-stream')
             self.send_header('Accept-Ranges', 'bytes')
             self.send_header('ETag', etag)

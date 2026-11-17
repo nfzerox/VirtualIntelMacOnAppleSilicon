@@ -38,7 +38,7 @@ def decode(data):
     return output
 
 
-def inventory(kernel):
+def inventory(kernel, bundle_paths=None):
     magic,_,_,_,count,commands,_,_=struct.unpack_from('<8I',kernel)
     if magic!=0xfeedfacf or 32+commands>len(kernel):raise ValueError('Expected a valid x64 Mach-O kernel')
     cursor=32
@@ -73,15 +73,24 @@ def inventory(kernel):
                     result=set()
                     for entry in entries:
                         value=field(entry,'CFBundleIdentifier')
-                        if value is not None and value.tag=='string':result.add(value.text)
+                        if value is not None and value.tag=='string':
+                            result.add(value.text)
+                            path=field(entry,'_PrelinkBundlePath')
+                            if bundle_paths is not None and path is not None and path.tag=='string':
+                                bundle_paths[value.text]=path.text
                     return sorted(result)
         cursor+=size
     raise ValueError('No prelink info section')
 
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('cache',type=Path);a=p.parse_args()
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('cache',type=Path)
+    p.add_argument('--paths',action='store_true',help='Include recorded volume-relative bundle paths')
+    a=p.parse_args()
     data=a.cache.read_bytes();kernel=decode(data) if data[:4]==b'comp' else data
-    print(json.dumps({'DecodedBytes':len(kernel),'IncludedKexts':inventory(kernel)},indent=2))
+    paths={} if a.paths else None
+    result={'DecodedBytes':len(kernel),'IncludedKexts':inventory(kernel,paths)}
+    if paths is not None:result['BundlePaths']=dict(sorted(paths.items()))
+    print(json.dumps(result,indent=2))
 
 if __name__=='__main__':main()

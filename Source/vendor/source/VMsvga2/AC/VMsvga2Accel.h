@@ -206,6 +206,7 @@ public:
 	IOReturn gpuPresentationReady(bool*);
 	IOReturn readGPUSurface(uint32_t,uint64_t,uint32_t,uint32_t,uint32_t,uint32_t,IOMemoryDescriptor*,uint64_t,uint64_t);
 	IOReturn directFramebufferBlit(IOMemoryDescriptor*,uint64_t,uint64_t,uint32_t,void const*);
+	IOReturn readBootFramebuffer(IOMemoryDescriptor*,uint64_t,uint64_t,uint32_t,void const*,int,int);
 	IOReturn directFramebufferControl(uintptr_t,void*,size_t*);
 	IOReturn RingDoorBell();
 	IOReturn SyncToFence(uint32_t fence);

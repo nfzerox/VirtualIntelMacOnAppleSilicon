@@ -3,6 +3,9 @@
 
 @interface VIMGuestAgent (StatusCacheFixture)
 - (void)writeData:(NSData *)data path:(NSString *)path completion:(void (^)(NSError *))completion;
+- (void)runExecutable:(NSString *)path arguments:(NSArray *)arguments standardInput:(NSData *)input
+              timeout:(NSTimeInterval)timeout pollInterval:(NSTimeInterval)interval
+           completion:(void (^)(NSDictionary *,NSError *))completion;
 @end
 @interface StatusAgent : VIMGuestAgent
 @property NSUInteger writes, launches, directories;
@@ -10,15 +13,29 @@
 @property BOOL notRoot, invalidStat, statTimeout, invalidReport;
 @property NSString *build;
 @property NSString *statText;
+@property BOOL holdStatus;
+@property(copy) void (^heldStatus)(NSDictionary *,NSError *);
 @end
 @implementation StatusAgent
+- (void)runExecutable:(NSString *)path arguments:(NSArray *)arguments standardInput:(NSData *)input
+              timeout:(NSTimeInterval)timeout pollInterval:(NSTimeInterval)interval
+           completion:(void (^)(NSDictionary *,NSError *))completion {
+    NSCAssert([path hasSuffix:@"/guest-status"]&&!input&&timeout==0&&interval==1,
+        @"A slow status child stays owned with a per-process one-second cadence");
+    [self runExecutable:path arguments:arguments timeout:timeout completion:completion];
+}
 - (void)writeData:(NSData *)data path:(NSString *)path completion:(void (^)(NSError *))completion {
     self.writes++;self.bytes=data.length;completion(nil);
 }
 - (void)runExecutable:(NSString *)path arguments:(NSArray *)arguments timeout:(NSTimeInterval)timeout
            completion:(void (^)(NSDictionary *,NSError *))completion {
     self.launches++;NSString *out=@"";NSNumber *exit=@0;
-    if([path isEqual:@"/usr/bin/id"])out=self.notRoot?@"501\n":@"0\n";
+    if([path isEqual:@"/bin/sh"]&&
+       [arguments isEqual:@[@"-c",@"test \"${EUID-}\" = 0 && printf '0\\n'"]]) {
+        // Match the real Recovery-compatible identity check. Period recovery
+        // media need not contain /usr/bin/id; do not mock an obsolete path.
+        out=self.notRoot?@"":@"0\n";exit=self.notRoot?@1:@0;
+    }
     else if([path isEqual:@"/usr/bin/mktemp"])
         out=[NSString stringWithFormat:@"/private/var/run/VirtualIntelMacStatus.%06lu\n",(unsigned long)++self.directories];
     else if([path isEqual:@"/usr/bin/stat"]) {
@@ -26,6 +43,7 @@
         out=[NSString stringWithFormat:@"0:40700:2:64\n0:%@:1:%lu\n",self.invalidStat?@"120777":@"100700",(unsigned long)self.bytes];
         if(self.statText)out=self.statText;
     } else if([path hasSuffix:@"/guest-status"]) {
+        if(self.holdStatus){self.heldStatus=completion;return;}
         NSDictionary *report=@{@"ProtocolVersion":@1,@"Ready":@(self.invalidReport),@"ProductBuildVersion":self.build?:@"first"};
         NSData *json=[NSJSONSerialization dataWithJSONObject:report options:0 error:NULL];
         out=[[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding];
@@ -69,6 +87,21 @@ int main(void) {@autoreleasepool {
     StatusAgent *user=[[StatusAgent alloc] initWithSocketPath:@"/unused-fixture"];user.notRoot=YES;
     Collect(user,tool,YES);NSCAssert(user.writes==0,@"Unprivileged agent must not stage a probe");
     [agent close];Collect(agent,tool,YES);NSCAssert(agent.writes==before+1,@"Closed agent cannot use cache");
-    puts("Status cache: fresh evidence, bounded process count, private metadata and failure paths PASS");
+    StatusAgent *slow=[[StatusAgent alloc] initWithSocketPath:@"/unused-fixture"];slow.holdStatus=YES;
+    __block BOOL done=NO;
+    [slow collectStatusWithTool:tool completion:^(NSDictionary *report,NSError *error){
+        NSCAssert(!error&&[report[@"ProductBuildVersion"] isEqual:@"late"],@"Late native evidence is preserved");done=YES;
+    }];
+    NSCAssert(!done&&slow.launches==4&&slow.writes==1,@"Only one status child is running");
+    Collect(slow,tool,YES);
+    NSCAssert(slow.launches==4&&slow.writes==1,@"A concurrent observation cannot spawn another probe");
+    void (^finish)(NSDictionary *,NSError *)=slow.heldStatus;slow.heldStatus=nil;slow.holdStatus=NO;
+    NSData *late=[NSJSONSerialization dataWithJSONObject:@{@"ProtocolVersion":@1,@"Ready":@NO,@"ProductBuildVersion":@"late"} options:0 error:NULL];
+    finish(@{@"exitcode":@0,@"stdout":late,@"stderr":NSData.data},nil);
+    NSCAssert(done,@"Original observation completes from the same child");
+    Collect(slow,tool,NO);
+    NSCAssert(slow.launches==6&&slow.writes==1,@"After exit, a new observation reads fresh state without restaging");
+    [slow close];
+    puts("Status cache: fresh evidence, one slow child, private metadata and failure paths PASS");
     return 0;
 }}

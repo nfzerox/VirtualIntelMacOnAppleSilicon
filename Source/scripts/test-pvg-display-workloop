@@ -1,0 +1,9 @@
+#!/bin/bash
+set -euo pipefail
+source_dir="$(cd "$(dirname "$0")/.." && pwd)"
+mkdir -p "$source_dir/Build/Probes"
+xcrun clang++ -std=c++14 -Wall -Wextra -Werror -mmacosx-version-min=11.0 \
+  -arch x86_64 -arch arm64 -I "$source_dir/compat/PVGIOSurfaceABI" \
+  "$source_dir/probes/pvg-display-workloop.cpp" \
+  -o "$source_dir/Build/Probes/pvg-display-workloop"
+exec "$source_dir/Build/Probes/pvg-display-workloop"

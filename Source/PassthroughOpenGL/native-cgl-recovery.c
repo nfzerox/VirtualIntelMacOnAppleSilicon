@@ -116,6 +116,11 @@ static void VIMFixNativeRecovery(void)
     stage="native allocation-helper call match";
     struct {const unsigned char *bytes;size_t size;unsigned slots;} helpers[]={
         {call_prefix,sizeof(call_prefix),VIM_GLI_DISPATCH_COUNT}
+#if VIM_GLI_DISPATCH_COUNT == 764
+        /* Retail 10A432 uses local20 for the same native allocation result;
+         * the later helper uses local24. Follow its exact call, not an address. */
+        ,{(const unsigned char[]){0x8d,0x4d,0xe0,0x8b,0x55,0x0c,0x89,0xf0,0xe8},9,764}
+#endif
 #if defined(__i386__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ == 1040 && VIM_GLI_DISPATCH_COUNT == 759
         /* The native8S2167 combo reverts to the SDK's686-slot layout. Its
          * six-argument GLI boundary and first686 named slots are identical;
@@ -177,6 +182,18 @@ static void VIMFixNativeRecovery(void)
         0x48,0x8b,0x95,0x28,0xff,0xff,0xff,0x48,0xff,0xc2,
         0x48,0x8b,0xb5,0xd8,0xfe,0xff,0xff,0xff,0xc6,0x4c,0x39,0xc2};
     const size_t highsierra_increment=3;
+#if VIM_GLI_DISPATCH_COUNT == 975
+    /* Actual18G9323 x64 CGLCreateContext: inner LEA RDX,[R13+1] at
+     * +1372 already advances the screen index. The outer ADD R13,2 at
+     * +1384 repeats that increment before advancing the engine/count loop.
+     * The native allocation and traversal both use0x1e90 engine records
+     * (975 pointers plus the three native header fields). Match the entire
+     * surrounding loop sequence, never the file offset or installed build. */
+    static const unsigned char mojave[]={0x49,0x83,0xc5,0x02,
+        0x48,0x8b,0x8d,0x00,0xff,0xff,0xff,0x48,0xff,0xc1,
+        0x48,0x8b,0x95,0xc8,0xfe,0xff,0xff,0xff,0xc2,0x4c,0x39,0xc9};
+    const size_t mojave_increment=3;
+#endif
 #else
     /* 13F1911 i386 CGLCreateContext +0x73c: INC ECX; ADD EDX,2;
      * load/increment next engine; compare count; move screen index to EDI.
@@ -247,11 +264,23 @@ static void VIMFixNativeRecovery(void)
         0x48,0x85,0xdb,0x75,0xa4,0xff,0xc7,0x89,0xbd,0x0c,0xff,0xff,0xff,
         0xff,0x85,0x08,0xff,0xff,0xff,0xff,0x85,0xf4,0xfe,0xff,0xff};
     const size_t snow_increment=14,snow_width=2;
+    /* Original 10A432: identical two INC EDI operations, but short local
+     * displacements and a different inner-loop branch distance. Keep its
+     * 0x17d8 private engine stride and both engine counters unchanged. */
+    static const unsigned char snow_retail[]={0xff,0xc7,0x48,0x8b,0x1b,0x49,0x83,0xc0,0x18,
+        0x48,0x85,0xdb,0x75,0xa7,0xff,0xc7,0x89,0x7d,0x8c,0xff,0x45,0x88,
+        0xff,0x85,0x74,0xff,0xff,0xff,0x48,0x81,0x45,0x80,0xd8,0x17,0x00,0x00};
+    const size_t snow_retail_increment=14;
 #else
     static const unsigned char snow[]={0x8b,0x95,0x3c,0xff,0xff,0xff,0x42,
         0x89,0x95,0x40,0xff,0xff,0xff,0xff,0x85,0x38,0xff,0xff,0xff,
         0xff,0x85,0x18,0xff,0xff,0xff};
     const size_t snow_increment=6,snow_width=1;
+    /* 10A432's inner local68 already counts screens. Remove only the outer
+     * INC EDX before assigning local40; do not change the 0xbec stride. */
+    static const unsigned char snow_retail[]={0x8b,0x55,0x98,0x42,0x89,0x55,0xc0,
+        0xff,0x45,0xbc,0xff,0x45,0x9c,0x8b,0x4d,0xa4,0x39,0x4d,0xbc};
+    const size_t snow_retail_increment=3;
 #endif
 #endif
 #if VIM_GLI_DISPATCH_COUNT == 757
@@ -264,6 +293,14 @@ static void VIMFixNativeRecovery(void)
         0x48,0x81,0x45,0x90,0xc0,0x17,0x00,0x00};
     const size_t leopard_increment=3,leopard_width=2;
     const unsigned char leopard_replacement=0x90;
+    /* Retail 9A581 has the same duplicated EDI increment, but a 0x17d0
+     * private engine-record stride. The original DVD's Xcode 3.0 GLI headers
+     * match the 757-slot SDK exactly; this is not a dispatch-table change.
+     * The inner INC EDI already advanced the screen list, so remove only
+     * the outer INC, retaining both engine counters. */
+    static const unsigned char leopard_retail[]={0xff,0x45,0x98,0xff,0xc7,
+        0xff,0x85,0x78,0xff,0xff,0xff,0x89,0x7d,0x9c,
+        0x48,0x81,0x45,0x90,0xd0,0x17,0x00,0x00};
 #else
     // The 32-bit helper accumulates the already-incremented count then adds
     // one again in LEA EDX,[EDX+ECX+1]. Preserve its count and 0xbe0 stride.
@@ -271,6 +308,11 @@ static void VIMFixNativeRecovery(void)
         0xff,0x45,0x9c,0x39,0x75,0xa4,0x8d,0x54,0x0a,0x01,0x89,0x55,0x98};
     const size_t leopard_increment=19,leopard_width=1;
     const unsigned char leopard_replacement=0;
+    /* Same 9A581 i386 helper: inner local3c counts all screens, then outer
+     * LEA EDX,[EDX+ECX+1] adds an extra 1. The original private stride is
+     * 0xbe8, not 9L30's 0xbe0; keep it and correct only the LEA displacement. */
+    static const unsigned char leopard_retail[]={0x81,0x85,0x78,0xff,0xff,0xff,0xe8,0x0b,0x00,0x00,
+        0xff,0x45,0x9c,0x39,0x75,0xa4,0x8d,0x54,0x0a,0x01,0x89,0x55,0x98};
 #endif
 #endif
 #if VIM_GLI_DISPATCH_COUNT == 686 || VIM_GLI_DISPATCH_COUNT == 759
@@ -286,32 +328,35 @@ static void VIMFixNativeRecovery(void)
     const unsigned char *tiger=vim_native_dispatch_count==686?tiger686:tiger759;
     size_t tiger_size=vim_native_dispatch_count==686?sizeof(tiger686):sizeof(tiger759);
 #endif
-    struct {const unsigned char *bytes;size_t size,increment;unsigned char replacement;size_t width;} variants[]={
+    struct {const unsigned char *bytes;size_t size,increment;unsigned char replacement;size_t width;unsigned slots;} variants[]={
         {pattern,sizeof(pattern),increment,1,1},{earlier,sizeof(earlier),earlier_increment,1,1},
         {lion,sizeof(lion),lion_increment,0,1},
         {yosemite,sizeof(yosemite),yosemite_increment,1,1},
         {elcapitan,sizeof(elcapitan),elcapitan_increment,1,1},
         {sierra,sizeof(sierra),sierra_increment,1,1},
         {highsierra,sizeof(highsierra),highsierra_increment,1,1}
-#if !__LP64__ && VIM_GLI_DISPATCH_COUNT == 975
+#if VIM_GLI_DISPATCH_COUNT == 975
         ,{mojave,sizeof(mojave),mojave_increment,1,1}
 #endif
 #if VIM_GLI_DISPATCH_COUNT == 764
         ,{snow,sizeof(snow),snow_increment,0x90,snow_width}
+        ,{snow_retail,sizeof(snow_retail),snow_retail_increment,0x90,snow_width,760}
 #endif
 #if VIM_GLI_DISPATCH_COUNT == 757
         ,{leopard,sizeof(leopard),leopard_increment,leopard_replacement,leopard_width}
+        ,{leopard_retail,sizeof(leopard_retail),leopard_increment,leopard_replacement,leopard_width}
 #endif
 #if VIM_GLI_DISPATCH_COUNT == 686 || VIM_GLI_DISPATCH_COUNT == 759
         ,{tiger,tiger_size,9,0,1}
 #endif
     };
-    unsigned char *match=NULL,replacement=0;unsigned matches=0;size_t width=0;
+    unsigned char *match=NULL,replacement=0;unsigned matches=0,slots=vim_native_dispatch_count;size_t width=0;
     for(size_t variant=0;variant<sizeof(variants)/sizeof(variants[0]);++variant)
         for(size_t i=0;i+variants[variant].size<=length;++i)
             if(!memcmp(function+i,variants[variant].bytes,variants[variant].size)) {
                 match=function+i+variants[variant].increment;
                 replacement=variants[variant].replacement;width=variants[variant].width;++matches;
+                if(variants[variant].slots)slots=variants[variant].slots;
             }
     stage="instruction match";
     if(matches!=1) goto failed;
@@ -364,6 +409,7 @@ static void VIMFixNativeRecovery(void)
     stage="restore executable code";
     protection=vm_protect(mach_task_self(),page,span,FALSE,original_protection);
     if(protection!=KERN_SUCCESS) goto failed;
+    vim_native_dispatch_count=slots;
     vim_recovery_ready=1;return;
 failed:
     syslog(LOG_ERR,"VIM PassthroughOpenGL: native multi-engine recovery fix unavailable at %s (Mach %d); declining engine initialization",stage,protection);

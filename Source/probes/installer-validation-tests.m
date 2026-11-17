@@ -2,6 +2,7 @@
 // caller. Fixtures are tiny and temporary; real installer apps are read-only.
 #import <Foundation/Foundation.h>
 #import "VIMInstallerAssembly.h"
+#import "VIMGuestFamilies.h"
 
 static void Require(BOOL condition,NSString *message) {
     if(!condition){fprintf(stderr,"FAIL: %s\n",message.UTF8String);exit(1);}
@@ -18,7 +19,7 @@ static NSURL *Fixture(NSURL *root,NSString *guest,NSString *identifier,id system
     if(systemInfo)WritePlist(@{@"System Image Info":systemInfo},[app URLByAppendingPathComponent:@"Contents/SharedSupport/InstallInfo.plist"]);
     BOOL classic=[@[@"lion",@"mountainlion",@"mavericks",@"yosemite",@"elcapitan",@"sierra"] containsObject:guest];
     NSArray *payloads=classic?@[@"Contents/SharedSupport/InstallESD.dmg"]:
-        [guest isEqual:@"bigsur"]?@[@"Contents/Resources/createinstallmedia",@"Contents/SharedSupport/SharedSupport.dmg"]:
+        VIMIsAssistantGuest(guest)?@[@"Contents/Resources/createinstallmedia",@"Contents/SharedSupport/SharedSupport.dmg"]:
         @[@"Contents/Resources/createinstallmedia",@"Contents/SharedSupport/InstallESD.dmg",@"Contents/SharedSupport/BaseSystem.dmg"];
     for(NSString *path in payloads)
         Require([[([path hasSuffix:@"SharedSupport.dmg"]?@"xar!fixture":@"fixture") dataUsingEncoding:NSUTF8StringEncoding] writeToURL:[app URLByAppendingPathComponent:path] atomically:YES],@"write fixture file");
@@ -27,7 +28,7 @@ static NSURL *Fixture(NSURL *root,NSString *guest,NSString *identifier,id system
 static void Accepted(NSURL *app,NSString *guest) {
     NSError *error=nil;
     Require([[VIMInstallerAssembly guestForInstallerApplication:app error:&error] isEqual:guest],error.description?:@"manual detection");
-    for(NSString *expected in @[@"lion",@"mountainlion",@"mavericks",@"yosemite",@"elcapitan",@"sierra",@"highsierra",@"mojave",@"catalina",@"bigsur"])
+    for(NSString *expected in @[@"lion",@"mountainlion",@"mavericks",@"yosemite",@"elcapitan",@"sierra",@"highsierra",@"mojave",@"catalina",@"bigsur",@"monterey",@"ventura",@"sonoma",@"sequoia",@"tahoe"])
         Require([VIMInstallerAssembly validateInstallerApplication:app guest:expected error:nil]==[expected isEqual:guest],@"resume OS match/mismatch");
     printf("PASS: manual detection and resume: %s (%s)\n",app.path.UTF8String,guest.UTF8String);
 }
@@ -67,7 +68,7 @@ int main(int argc,const char **argv){@autoreleasepool {
     Require([VIMInstallerAssembly validatePreparedMedia:media guest:@"mavericks" error:nil],@"complete prepared image accepted");
     for(NSString *container in @[@"APM",@"HFS",@"ISO",@"UDF"]) {
         bootBlocks=[NSMutableData dataWithLength:36864];char *bytes=bootBlocks.mutableBytes;
-        if([container isEqual:@"APM"]){memcpy(bytes,"ER",2);memcpy(bytes+512,"PM",2);}
+        if([container isEqual:@"APM"]){memcpy(bytes,"ER",2);bytes[2]=2;memcpy(bytes+512,"PM",2);}
         if([container isEqual:@"HFS"])memcpy(bytes+1024,"H+",2);
         if([container isEqual:@"ISO"])memcpy(bytes+32769,"CD001",5);
         if([container isEqual:@"UDF"])memcpy(bytes+32769,"BEA01",5);
@@ -114,7 +115,9 @@ int main(int argc,const char **argv){@autoreleasepool {
     for(id system in @[@{@"version":@"10.15.7"},@{@"version":@"10.140.1"},@{@"version":@"10.14.bad"},@{@"version":@14},@"malformed"])
         Require(![VIMInstallerAssembly guestForInstallerApplication:Fixture(root,@"mojave",@"com.apple.InstallAssistant.Mojave",system) error:nil],@"wrong/malformed OS version rejected without crashing");
     Require(![VIMInstallerAssembly guestForInstallerApplication:Fixture(root,@"bigsur",@"com.apple.InstallAssistant.BigSur",nil) error:nil],@"incorrect old Big Sur ID rejected");
-    Require(![VIMInstallerAssembly guestForInstallerApplication:Fixture(root,@"bigsur",@"com.apple.InstallAssistant.macOSMonterey",nil) error:nil],@"unsupported OS rejected");
+    for(NSString *guest in @[@"monterey",@"ventura",@"sonoma",@"sequoia",@"tahoe"])
+        Accepted(Fixture(root,guest,VIMInstallAssistantBundleIdentifier(guest),nil),guest);
+    Require(![VIMInstallerAssembly guestForInstallerApplication:Fixture(root,@"bigsur",@"com.apple.InstallAssistant.macOSGoldenGate",nil) error:nil],@"unsupported OS rejected");
     Require(![VIMInstallerAssembly guestForInstallerApplication:Fixture(root,@"bigsur",@"com.apple.InstallAssistant.macOSBigSur",@"malformed") error:nil],@"malformed optional metadata rejected");
     NSURL *brokenBigSur=Fixture(root,@"bigsur",@"com.apple.InstallAssistant.macOSBigSur",nil);
     Require([[@"inner disk image without signed XAR wrapper" dataUsingEncoding:NSUTF8StringEncoding]

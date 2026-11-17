@@ -57,6 +57,15 @@ static void DGTraceAssemblyTexture(struct DGHostContext *c,GLenum target,GLint t
     if(status==GL_FRAMEBUFFER_COMPLETE_EXT){
         glReadBuffer(GL_COLOR_ATTACHMENT0_EXT);glReadPixels(0,0,width,height,GL_RGBA,GL_UNSIGNED_BYTE,pixels);error=glGetError();
         if(!error){
+            // Small lookup images are useful for a standalone shader replay.
+            // Explicit diagnostics only; reuse this already bounded readback.
+            const char *folder=getenv("VIM_PASSTHROUGH_OPENGL_TRACE_DIR");
+            if(folder && height==1 && width<=256){
+                char path[2048];
+                if(snprintf(path,sizeof(path),"%s/lut-%d-%p-%d-%u.rgba",folder,getpid(),(void *)c,texture,unit)<(int)sizeof(path)){
+                    FILE *lut=fopen(path,"wb");if(lut){fwrite(pixels,4,(size_t)width,lut);fclose(lut);}
+                }
+            }
             unsigned minimum=255,maximum=0,zero=0,opaque=0,unassociated=0;
             for(size_t i=0;i<(size_t)width*height;++i){
                 const unsigned char *p=pixels+4*i;unsigned a=p[3];
@@ -208,7 +217,9 @@ static void DGTraceProgram(struct DGHostContext *c,struct DGMessage *m,
     int assembly=!program && glIsEnabled(GL_FRAGMENT_PROGRAM_ARB);
     if(assembly)glGetProgramivARB(GL_FRAGMENT_PROGRAM_ARB,GL_PROGRAM_BINDING_ARB,&program);
     GLint viewport[4]={0};glGetIntegerv(GL_VIEWPORT,viewport);
-    if(!program) return;
+    // The explicit geometry capture also needs fixed-function games. Their
+    // rejected/missing meshes have no shader object to use as a trace key.
+    if(!program && !geometry) return;
     // Window-size changes must not exhaust the budget before menu/effect
     // shaders appear. Capture each actual shader program once per context.
     uint64_t key=(uint32_t)program | (assembly?UINT64_C(1)<<63:0);
@@ -254,12 +265,24 @@ static void DGTraceProgram(struct DGHostContext *c,struct DGMessage *m,
     fprintf(file,"DRAW op=%x mode=%llx first=%llu count=%llu\n",m->op,m->args[0],m->args[1],m->args[2]);
     GLenum keys[]={GL_DRAW_BUFFER,GL_READ_BUFFER,GL_STENCIL_FUNC,GL_STENCIL_REF,GL_STENCIL_VALUE_MASK,
         GL_STENCIL_FAIL,GL_STENCIL_PASS_DEPTH_FAIL,GL_STENCIL_PASS_DEPTH_PASS,GL_DEPTH_FUNC,
-        GL_BLEND_SRC,GL_BLEND_DST,GL_BLEND_EQUATION,GL_ALPHA_TEST_FUNC};
+        GL_BLEND_SRC,GL_BLEND_DST,GL_BLEND_EQUATION,GL_ALPHA_TEST_FUNC,GL_FRONT_FACE,GL_CULL_FACE_MODE,
+        GL_DEPTH_WRITEMASK};
     for(unsigned i=0;i<sizeof(keys)/sizeof(keys[0]);++i) { GLint value=0;glGetIntegerv(keys[i],&value);fprintf(file,"STATE %x = %x\n",keys[i],value); }
     GLint scissor[4];GLboolean mask[4];GLfloat reference;
     glGetIntegerv(GL_SCISSOR_BOX,scissor);glGetBooleanv(GL_COLOR_WRITEMASK,mask);glGetFloatv(GL_ALPHA_TEST_REF,&reference);
     fprintf(file,"SCISSOR %d,%d,%d,%d COLOR_MASK %u,%u,%u,%u ALPHA_REF %g\n",
         scissor[0],scissor[1],scissor[2],scissor[3],mask[0],mask[1],mask[2],mask[3],reference);
+    if(geometry && !program){
+        GLdouble depth_range[2]={0},depth_clear=0;
+        glGetDoublev(GL_DEPTH_RANGE,depth_range);glGetDoublev(GL_DEPTH_CLEAR_VALUE,&depth_clear);
+        fprintf(file,"FIXED_DEPTH range=%g,%g clear=%g lighting=%u normalize=%u\n",
+            depth_range[0],depth_range[1],depth_clear,glIsEnabled(GL_LIGHTING),glIsEnabled(GL_NORMALIZE));
+        GLfloat fog[4]={0};GLint fog_mode=0;
+        glGetIntegerv(GL_FOG_MODE,&fog_mode);glGetFloatv(GL_FOG_DENSITY,fog);
+        glGetFloatv(GL_FOG_START,fog+1);glGetFloatv(GL_FOG_END,fog+2);
+        fprintf(file,"FIXED_FOG enabled=%u mode=%x density=%g start=%g end=%g\n",
+            glIsEnabled(GL_FOG),fog_mode,fog[0],fog[1],fog[2]);
+    }
     GLenum transfer[]={GL_RED_SCALE,GL_GREEN_SCALE,GL_BLUE_SCALE,GL_ALPHA_SCALE,
         GL_RED_BIAS,GL_GREEN_BIAS,GL_BLUE_BIAS,GL_ALPHA_BIAS,GL_MAP_COLOR};
     for(unsigned i=0;i<sizeof(transfer)/sizeof(*transfer);++i) {
@@ -270,22 +293,26 @@ static void DGTraceProgram(struct DGHostContext *c,struct DGMessage *m,
         GLfloat values[16];glGetFloatv(matrices[i],values);fprintf(file,"MATRIX %x",matrices[i]);
         for(unsigned j=0;j<16;++j) fprintf(file," %g",values[j]);fputc('\n',file);
     }
-    GLint active=0;glGetIntegerv(GL_ACTIVE_TEXTURE,&active);
-    for(unsigned unit=0;unit<3;++unit) {
+    GLint active=0,fixed_units=0;glGetIntegerv(GL_ACTIVE_TEXTURE,&active);
+    if(c->profile==kCGLOGLPVersion_Legacy)glGetIntegerv(GL_MAX_TEXTURE_UNITS,&fixed_units);
+    for(unsigned unit=0;unit<16 && unit<(unsigned)c->texture_units;++unit) {
         glActiveTexture(GL_TEXTURE0+unit);
-        GLfloat texture_matrix[16];glGetFloatv(GL_TEXTURE_MATRIX,texture_matrix);
-        fprintf(file,"TEXTURE_MATRIX unit=%u",unit);
-        for(unsigned j=0;j<16;++j)fprintf(file," %g",texture_matrix[j]);fputc('\n',file);
+        if(unit<(unsigned)fixed_units){
+            GLfloat texture_matrix[16];glGetFloatv(GL_TEXTURE_MATRIX,texture_matrix);
+            fprintf(file,"TEXTURE_MATRIX unit=%u",unit);
+            for(unsigned j=0;j<16;++j)fprintf(file," %g",texture_matrix[j]);fputc('\n',file);
+        }
         GLenum targets[]={GL_TEXTURE_2D,GL_TEXTURE_RECTANGLE_ARB};
         GLenum bindings[]={GL_TEXTURE_BINDING_2D,GL_TEXTURE_BINDING_RECTANGLE_ARB};
         for(unsigned j=0;j<2;++j) {
-            GLint texture=0,width=0,height=0,min=0,mag=0,wraps=0,wrapt=0;
+            GLint texture=0,width=0,height=0,min=0,mag=0,wraps=0,wrapt=0,internal=0;
             glGetIntegerv(bindings[j],&texture);if(!texture) continue;
             glGetTexLevelParameteriv(targets[j],0,GL_TEXTURE_WIDTH,&width);
             glGetTexLevelParameteriv(targets[j],0,GL_TEXTURE_HEIGHT,&height);
+            glGetTexLevelParameteriv(targets[j],0,GL_TEXTURE_INTERNAL_FORMAT,&internal);
             glGetTexParameteriv(targets[j],GL_TEXTURE_MIN_FILTER,&min);glGetTexParameteriv(targets[j],GL_TEXTURE_MAG_FILTER,&mag);
             glGetTexParameteriv(targets[j],GL_TEXTURE_WRAP_S,&wraps);glGetTexParameteriv(targets[j],GL_TEXTURE_WRAP_T,&wrapt);
-            fprintf(file,"TEXTURE unit=%u target=%x name=%d size=%d,%d filter=%x,%x wrap=%x,%x\n",unit,targets[j],texture,width,height,min,mag,wraps,wrapt);
+            fprintf(file,"TEXTURE unit=%u target=%x name=%d size=%d,%d filter=%x,%x wrap=%x,%x internal=%x\n",unit,targets[j],texture,width,height,min,mag,wraps,wrapt,internal);
             if(assembly)DGTraceAssemblyTexture(c,targets[j],texture,width,height,unit,file);
             if(unit==0 && targets[j]==GL_TEXTURE_RECTANGLE_ARB &&
                ((width==256 && height==256) || (width>0 && width<=8192 && height>0 && height<=64))) {
@@ -341,7 +368,7 @@ static void DGTraceProgram(struct DGHostContext *c,struct DGMessage *m,
             GLfloat local[4]={0};glGetProgramLocalParameterfvARB(GL_FRAGMENT_PROGRAM_ARB,i,local);
             fprintf(file,"ARB_LOCAL %u = %g,%g,%g,%g\n",i,local[0],local[1],local[2],local[3]);
         }
-    }else{
+    }else if(program){
     GLuint shaders[8]={0};GLsizei n=0;glGetAttachedShaders((GLuint)program,8,&n,shaders);
     for(int i=0;i<n;++i) {
         GLint length=0,type=0;glGetShaderiv(shaders[i],GL_SHADER_SOURCE_LENGTH,&length);glGetShaderiv(shaders[i],GL_SHADER_TYPE,&type);
@@ -386,6 +413,6 @@ static void DGTraceProgram(struct DGHostContext *c,struct DGMessage *m,
             fputc('\n',file);
         }
     }
-    if(!assembly)DGTraceDestinationAlpha(c,m,arrays,count,program,file);
+    if(program && !assembly)DGTraceDestinationAlpha(c,m,arrays,count,program,file);
     fclose(file);fprintf(stderr,"direct draw state captured: %s\n",path);
 }

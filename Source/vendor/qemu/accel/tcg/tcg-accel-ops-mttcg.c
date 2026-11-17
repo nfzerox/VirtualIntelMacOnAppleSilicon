@@ -33,6 +33,7 @@
 #include "qemu/guest-random.h"
 #include "hw/core/boards.h"
 #include "accel/tcg/cpu-loop.h"
+#include "accel/tcg/handoff.h"
 #include "tcg/startup.h"
 #include "tcg-accel-ops.h"
 #include "tcg-accel-ops-mttcg.h"
@@ -132,6 +133,9 @@ static void *mttcg_cpu_thread_fn(void *arg)
                  * Usually cpu->halted is set, but may have already been
                  * reset by another thread by the time we arrive here.
                  */
+                break;
+            case EXCP_HANDOFF:
+                tcg_handoff->run(cpu);
                 break;
             case EXCP_ATOMIC:
                 bql_unlock();

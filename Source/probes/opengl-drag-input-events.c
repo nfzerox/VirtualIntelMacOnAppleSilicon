@@ -14,7 +14,7 @@
 #include <unistd.h>
 
 struct VIMMouseObservation { uint32_t type;int32_t x,y;uint64_t event_ns,callback_mach; };
-static struct VIMMouseObservation observations[128];
+static struct VIMMouseObservation observations[2048];
 static unsigned events, disabled;
 static void stop(CFRunLoopTimerRef timer,void *context)
 { (void)timer;(void)context;CFRunLoopStop(CFRunLoopGetCurrent()); }
@@ -35,7 +35,7 @@ static CGEventRef observe(CGEventTapProxy proxy,CGEventType type,CGEventRef even
         ++disabled;printf("FAILED event tap disabled type=%u\n",type);
         CFRunLoopStop(CFRunLoopGetCurrent());return event;
     }
-    if(events>=128) {
+    if(events>=sizeof(observations)/sizeof(observations[0])) {
         printf("FAILED mouse observation budget exhausted\n");++disabled;
         CFRunLoopStop(CFRunLoopGetCurrent());return event;
     }

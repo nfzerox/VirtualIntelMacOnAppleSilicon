@@ -1,4 +1,5 @@
 #pragma once
+#import "VIMGuestFamilies.h"
 #import <Foundation/Foundation.h>
 
 // Retain the existing primary optical/disk slot. Additional ISO/DMG images
@@ -8,7 +9,7 @@
 // keep older guests on the proven EHCI path.
 static const NSUInteger VIMImageSlotCount=4;
 static inline BOOL VIMImageUsesUSB3(NSString *guest) {
-    return [@[@"elcapitan",@"sierra",@"highsierra",@"mojave",@"catalina",@"bigsur"] containsObject:guest];
+    return [@[@"elcapitan",@"sierra",@"highsierra"] containsObject:guest]||VIMIsModernGuest(guest);
 }
 static inline NSString *VIMImageUSBBus(NSString *guest) {
     return VIMImageUsesUSB3(guest)?@"xhci.0":@"usb.0";

@@ -1096,6 +1096,7 @@ void process_queued_cpu_work(CPUState *cpu);
  * Record that a CPU has started execution and can be interrupted with
  * cpu_exit.
  */
+bool cpu_exclusive_pending(void);
 void cpu_exec_start(CPUState *cpu);
 
 /**

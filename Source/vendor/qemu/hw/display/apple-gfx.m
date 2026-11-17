@@ -25,6 +25,7 @@
 #include "ui/console.h"
 #include "apple-gfx.h"
 #include "trace.h"
+#include "apple-gfx-packed422.h"
 
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
@@ -1260,6 +1261,7 @@ bool apple_gfx_common_realize(AppleGFXState *s, DeviceState *dev,
     }
 
     s->cursor_show = true;
+    VIMInstallPacked422Backing();
 
     /* The deprecated symbol is absent from the macOS 27 link stub. */
     id<PGDevice> (*create_device)(PGDeviceDescriptor *) =

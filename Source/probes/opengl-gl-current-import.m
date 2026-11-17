@@ -122,6 +122,10 @@ static void checkPattern(GLuint texture,GLuint fbo,int w,int h,int iw,int ih,int
         GLint front=getenv("VIM_CURRENT_IMPORT_FRONT_LEFT")?GL_FRONT_LEFT:GL_FRONT;
         if(getenv("VIM_CURRENT_IMPORT_MENU_FLAGS"))front=0x404;
         GLint record[]={ids[2],GL_TEXTURE_RECTANGLE_ARB,GL_RGBA,iw,ih,0,front,0};unsigned key=operations[op];
+        // Native Lion WindowServer passes nonzero word7 even for RECT.
+        // Verify the private importer keeps the same live level-zero image;
+        // this is not a public glGenerateMipmap(RECT) acceptance test.
+        if(key==0x3e5 && getenv("VIM_CURRENT_IMPORT_RECT_MIPMAP_WORD"))record[7]=1;
         fprintf(stderr,"self-import operation=%x\n",key);paint(w,h,0,0,1);glFlush();
         glBindTexture(GL_TEXTURE_RECTANGLE_ARB,source);glTexParameteri(GL_TEXTURE_RECTANGLE_ARB,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
         glTexParameteri(GL_TEXTURE_RECTANGLE_ARB,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
@@ -168,8 +172,8 @@ static void checkPattern(GLuint texture,GLuint fbo,int w,int h,int iw,int ih,int
 @end
 int main(void){@autoreleasepool {
     [NSApplication sharedApplication];[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
-#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1070
-    // Snow predates automatic-switching formats. Select online Intel BEFORE
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ <= 1070
+    // Snow/Lion predate this automatic-switching format. Select Intel BEFORE
     // context creation on the reference; the owned VM keeps its real renderer.
     GLint selected=0;
     io_service_t vm=IOServiceGetMatchingService(kIOMasterPortDefault,IOServiceMatching("VMsvga2"));

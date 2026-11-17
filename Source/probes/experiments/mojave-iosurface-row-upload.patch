@@ -1,0 +1,196 @@
+diff --git a/Source/PassthroughOpenGL/passthrough-opengl-client.c b/Source/PassthroughOpenGL/passthrough-opengl-client.c
+index 423d5c85..3f24f3da 100644
+--- a/Source/PassthroughOpenGL/passthrough-opengl-client.c
++++ b/Source/PassthroughOpenGL/passthrough-opengl-client.c
+@@ -160,6 +160,7 @@ static void DGUnsupported(struct DGContext *,unsigned);
+ static void DGFreeClientSyncs(struct DGConnection *);
+ static void DGFreeClientMaps(struct DGConnection *);
+ static int DGImportDrawableRows(const void *,int,int,size_t,int);
++static int DGImportIOSurfaceRows(unsigned,unsigned,unsigned,int,int,const void *,size_t,unsigned,int);
+ static int DGImportDrawablePatchRows(const void *,int,int,int,int,size_t,int);
+ static int DGTightTexSubImage2D(struct DGContext *,GLenum,GLint,GLint,GLint,GLsizei,GLsizei,GLenum,GLenum,const void *);
+ 
+@@ -2104,6 +2105,12 @@ int DGImportIOSurfaceTextureFormat(unsigned internal,unsigned format,unsigned ty
+        (uint64_t)(height-1)*stride+(uint64_t)width*element_bytes>DG_IOSURFACE_MAX_BYTES){
+         c->error=GL_INVALID_VALUE;return 0;
+     }
++    if((uint64_t)width*height*element_bytes>=256u*1024u && c->connection->row_upload_supported) {
++        int uploaded=DGImportIOSurfaceRows(internal,format,type,width,height,pixels,stride,element_bytes,packed);
++        if(uploaded>=0)return uploaded;
++        // Only a refused preparation may use the copied path. An import
++        // whose prefix/pixels were submitted must never be replayed.
++    }
+     unsigned chunked=(uint64_t)(height-1)*stride+(uint64_t)width*element_bytes>DG_MAX_BYTES;
+     if(chunked && !(c->connection->capabilities&DG_CAP_IOSURFACE_ROWS)){c->error=GL_OUT_OF_MEMORY;return 0;}
+     for(unsigned y=0;y<(unsigned)height;){
+diff --git a/Source/PassthroughOpenGL/passthrough-opengl-scatter-client.c b/Source/PassthroughOpenGL/passthrough-opengl-scatter-client.c
+index 42d8fe10..033ab4ad 100644
+--- a/Source/PassthroughOpenGL/passthrough-opengl-scatter-client.c
++++ b/Source/PassthroughOpenGL/passthrough-opengl-scatter-client.c
+@@ -142,13 +142,14 @@ static int DGUploadMessageRows(struct DGContext *c,const struct DGMessage *comma
+     size_t span=(height-1)*stride+row_bytes;
+     if(span>VIM_GL_SCATTER_MAX_BYTES || (uintptr_t)pixels>UINTPTR_MAX-span)return -1;
+     uint32_t bytes=row_bytes*height;
+-    if(command->bytes!=bytes || command->flags)return -1;
++    int replying=command->flags==(DG_REPLY|DG_INPUT_ONLY);
++    if(command->bytes!=bytes || (command->flags&&!replying))return -1;
+     struct { struct VIMGLScatterRequest header;struct VIMGLScatterRows rows; } prepare={
+         {4,height,0,bytes},{(uintptr_t)pixels,stride,row_bytes,!!reverse}};
+     struct DGConnection *connection=c->connection;pthread_mutex_lock(&connection->lock);
+     if(connection->dead) { pthread_mutex_unlock(&connection->lock);c->error=GL_INVALID_OPERATION;return 0; }
+     struct VIMGLScatterResult result={0};size_t size=sizeof(result);
+-    if(connection->row_upload_transaction_supported) {
++    if(connection->row_upload_transaction_supported && !replying) {
+         struct { struct VIMGLScatterRequest header;struct VIMGLScatterUpload upload;struct DGMessage command; } transaction={
+             {6,height,0,bytes},{{(uintptr_t)pixels,stride,row_bytes,!!reverse},sizeof(*command),0},*command};
+         _Static_assert(sizeof(transaction)==sizeof(struct VIMGLScatterRequest)+sizeof(struct VIMGLScatterUpload)+sizeof(struct DGMessage),
+@@ -185,11 +186,33 @@ static int DGUploadMessageRows(struct DGContext *c,const struct DGMessage *comma
+             connection->row_upload_source_bytes+=span;
+         }
+     }
++    struct DGReply reply={0};
++    if(!failed && replying)
++        failed=DGConnectionTransfer(connection,&reply,sizeof(reply),0) || reply.bytes;
+     struct VIMGLScatterRequest release={2,0,token,0};size=sizeof(result);
+     error=IOConnectCallStructMethod(connection->device,kIOVM2DDirectGLScatter,&release,sizeof(release),&result,&size);
+     if(error || size!=sizeof(result) || result.count || result.token)failed=1;
+     if(failed) { connection->dead=1;c->error=GL_INVALID_OPERATION; }
+-    pthread_mutex_unlock(&connection->lock);return !failed;
++    else if(replying && (reply.error || reply.result!=1))c->error=reply.error?reply.error:GL_INVALID_OPERATION;
++    pthread_mutex_unlock(&connection->lock);
++    return !failed && (!replying || (!reply.error && reply.result==1));
++}
++/* A complete input-only IOSurface import uses the existing prepared upload
++ * contract, then consumes its normal result before releasing CPU ownership.
++ * Pitch gaps are not sent. The native import, format rules and texture/FBO
++ * lifetime stay exactly the same as the copied command. */
++static int DGImportIOSurfaceRows(unsigned internal,unsigned format,unsigned type,int width,int height,
++    const void *pixels,size_t stride,unsigned element_bytes,int packed)
++{
++    uint64_t row=(uint64_t)width*element_bytes,bytes=row*height;
++    if(bytes>DG_MAX_BYTES || row>UINT32_MAX)return -1;
++    // Keep the copied packet's cache/error-witness invalidation too.
++    struct DGPacket packet=DGPacketNew(dg_current,packed?DG_IOSURFACE_TEXTURE_PACKED:DG_IOSURFACE_TEXTURE);
++    struct DGMessage command=packet.message;
++    command.flags=DG_REPLY|DG_INPUT_ONLY;command.bytes=(uint32_t)bytes;
++    command.args[0]=internal;command.args[1]=width;command.args[2]=height;command.args[3]=row;
++    if(packed){command.args[6]=format;command.args[7]=type;}
++    return DGUploadMessageRows(dg_current,&command,pixels,(unsigned)row,(unsigned)height,stride,0);
+ }
+ static int DGUploadDrawableRows(const void *pixels,int x,int y,int width,int height,size_t stride,int top_down,uint32_t operation)
+ {
+diff --git a/Source/probes/opengl-direct-iosurface-float.c b/Source/probes/opengl-direct-iosurface-float.c
+index 1a471e75..8fcc96d6 100644
+--- a/Source/probes/opengl-direct-iosurface-float.c
++++ b/Source/probes/opengl-direct-iosurface-float.c
+@@ -45,6 +45,6 @@ int main(void)
+ {
+     alarm(30);unsigned char shadow[16*16*4]={0};
+     struct DGContext *c=DGCreateContext(NULL,NULL);assert(c&&DGMakeCurrent(c,shadow,GL_UNSIGNED_BYTE,16,16));
+-    run(17,19,8);run(17,19,16);run(3062,3062,8);
++    run(17,19,8);run(17,19,16);run(513,257,8);run(513,257,16);run(3062,3062,8);
+     DGDestroyContext(c);return 0;
+ }
+diff --git a/Source/probes/opengl-direct-iosurface-writes-wire.c b/Source/probes/opengl-direct-iosurface-writes-wire.c
+index 7d48ea07..fb6e89b7 100644
+--- a/Source/probes/opengl-direct-iosurface-writes-wire.c
++++ b/Source/probes/opengl-direct-iosurface-writes-wire.c
+@@ -3,23 +3,41 @@
+  * No guest installation, substitute renderer, or claimed desktop FPS. */
+ #include "../PassthroughOpenGL/passthrough-opengl-client.c"
+ #include <assert.h>
+-int main(void)
++static int orderTime(const void *a,const void *b)
++{ double x=*(const double *)a,y=*(const double *)b;return (x>y)-(x<y); }
++int main(int argc,char **argv)
+ {
+-    enum {W=17,H=19,Stride=80,Bytes=(H-1)*Stride+W*4};
++    int copied=argc==2&&!strcmp(argv[1],"--copied");assert(argc==1||copied);
++    // Larger than one copied device chunk; odd dimensions and row padding
++    // exercise complete-image upload preparation, not merely the small path.
++    enum {W=1025,H=513,Stride=4160,Bytes=(H-1)*Stride+W*4};
+     struct DGContext *c=DGCreateContext(NULL,NULL);assert(c);
+-    unsigned char shadow[W*H*4]={0},input[Bytes],output[Bytes];
++    unsigned char *shadow=calloc(W*H,4),*input=malloc(Bytes),*output=malloc(Bytes);assert(shadow&&input&&output);
+     assert(DGMakeCurrent(c,shadow,GL_UNSIGNED_BYTE,W,H));
+     printf("renderer=%s transport=%s\n",glGetString(GL_RENDERER),DGTransportName());
+     assert(c->connection->capabilities&DG_CAP_IOSURFACE_WRITES);
++    if(copied)c->connection->row_upload_supported=0;
++    unsigned prepared=c->connection->device&&c->connection->row_upload_supported;
+     struct DGContext *consumer=DGCreateContext(NULL,c);assert(consumer);
+     assert(DGMakeCurrent(c,shadow,GL_UNSIGNED_BYTE,W,H));
+-    memset(input,0x35,sizeof(input));memset(output,0xa5,sizeof(output));
++    memset(input,0x35,Bytes);memset(output,0xa5,Bytes);
++    for(unsigned y=0;y<H;++y)for(unsigned x=0;x<W;++x){
++        unsigned char *p=input+y*Stride+x*4;p[0]=(unsigned char)y;p[1]=(unsigned char)(x*3);p[2]=(unsigned char)(x^y);p[3]=255;
++    }
+     GLuint texture=0,fbo=0;glGenTextures(1,&texture);glBindTexture(GL_TEXTURE_RECTANGLE_ARB,texture);
+     glPixelStorei(GL_UNPACK_ROW_LENGTH,13);
++    uint64_t uploads=c->connection->direct_write_bytes;
++    glEnable(0xffffffffu); // Import must not conceal an earlier native error.
+     assert(DGImportIOSurfaceTexture(GL_RGBA8,W,H,input,Stride)==1);
++    assert(glGetError()==GL_INVALID_ENUM&&!glGetError());
++    assert(c->connection->direct_write_bytes==uploads+(prepared?W*H*4:0));
+     glGenFramebuffersEXT(1,&fbo);glBindFramebufferEXT(GL_FRAMEBUFFER_EXT,fbo);
+     glFramebufferTexture2DEXT(GL_FRAMEBUFFER_EXT,GL_COLOR_ATTACHMENT0_EXT,GL_TEXTURE_RECTANGLE_ARB,texture,0);
+     assert(glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT)==GL_FRAMEBUFFER_COMPLETE_EXT);
++    for(unsigned end=0;end<2;++end){
++        unsigned y=end?H-1:0;unsigned char p[4]={0};glReadPixels(7,y,1,1,GL_RGBA,GL_UNSIGNED_BYTE,p);
++        assert(p[0]==(unsigned char)(7^y)&&p[1]==21&&p[2]==(unsigned char)y&&p[3]==255&&!glGetError());
++    }
+     glClearColor(1,0,1,1);glClear(GL_COLOR_BUFFER_BIT);glBindFramebufferEXT(GL_FRAMEBUFFER_EXT,0);
+     struct DGIosurfaceWrite writes[2]={{0}};unsigned count=0;uint32_t draw=UINT32_MAX;
+     assert(DGMakeCurrent(consumer,shadow,GL_UNSIGNED_BYTE,W,H));
+@@ -48,8 +66,8 @@ int main(void)
+     glClearColor(0,1,1,1);glClear(GL_COLOR_BUFFER_BIT);glBindFramebufferEXT(GL_FRAMEBUFFER_EXT,0);
+     assert(DGMakeCurrent(c,shadow,GL_UNSIGNED_BYTE,W,H));
+     assert(DGFlushIOSurfaceState(0,&draw,writes,2,&count)==1&&!count);
+-    memset(output,0xa5,sizeof(output));assert(!DGReadIOSurfaceTexture(texture,serial,W,H,output,Stride));
+-    for(unsigned i=0;i<sizeof(output);++i)assert(output[i]==0xa5);
++    memset(output,0xa5,Bytes);assert(!DGReadIOSurfaceTexture(texture,serial,W,H,output,Stride));
++    for(unsigned i=0;i<Bytes;++i)assert(output[i]==0xa5);
+     assert(DGMakeCurrent(consumer,shadow,GL_UNSIGNED_BYTE,W,H));
+     glFlush(); /* Also qualify the ordinary typed native Flush codec. */
+     assert(DGMakeCurrent(c,shadow,GL_UNSIGNED_BYTE,W,H));
+@@ -57,16 +75,38 @@ int main(void)
+     serial=writes[0].serial;assert(DGReadIOSurfaceTexture(texture,serial,W,H,output,Stride));
+     for(unsigned y=0;y<H;++y)for(unsigned x=0;x<W;++x){const unsigned char *p=output+y*Stride+x*4;
+         assert(p[0]==255&&p[1]==255&&!p[2]&&p[3]==255);}
+-    memset(output,0xa5,sizeof(output));assert(!DGReadIOSurfaceTexture(texture,serial+1,W,H,output,Stride));
+-    for(unsigned i=0;i<sizeof(output);++i)assert(output[i]==0xa5);
++    memset(output,0xa5,Bytes);assert(!DGReadIOSurfaceTexture(texture,serial+1,W,H,output,Stride));
++    for(unsigned i=0;i<Bytes;++i)assert(output[i]==0xa5);
+     /* A new CPU import supersedes that old writer generation. */
+     glBindTexture(GL_TEXTURE_RECTANGLE_ARB,texture);assert(DGImportIOSurfaceTexture(GL_RGBA8,W,H,input,Stride)==1);
+     assert(DGFlushIOSurfaceState(0,&draw,writes,2,&count)==1&&!count);
+     assert(!DGReadIOSurfaceTexture(texture,serial,W,H,output,Stride));
++    // A complete native-error reply is not a framing/transport failure.
++    glBindTexture(GL_TEXTURE_RECTANGLE_ARB,0);
++    assert(!DGImportIOSurfaceTexture(GL_RGBA8,W,H,input,Stride));
++    assert(glGetError()==GL_INVALID_OPERATION&&!c->connection->dead);
++    glBindTexture(GL_TEXTURE_RECTANGLE_ARB,texture);
++    assert(DGImportIOSurfaceTexture(GL_RGBA8,W,H,input,Stride)==1&&!glGetError());
++    printf("IOSurface upload prepared=%u completed_bytes=%llu\n",prepared,
++        (unsigned long long)(c->connection->direct_write_bytes-uploads));
++    if(prepared){
++        double timings[2][12];mach_timebase_info_data_t clock;mach_timebase_info(&clock);
++        for(unsigned round=0;round<12;++round)for(unsigned mode=0;mode<2;++mode){
++            c->connection->row_upload_supported=mode;
++            uint64_t before=mach_absolute_time();
++            assert(DGImportIOSurfaceTexture(GL_RGBA8,W,H,input,Stride)==1);
++            timings[mode][round]=(mach_absolute_time()-before)*(double)clock.numer/clock.denom/1000.;
++        }
++        c->connection->row_upload_supported=1;
++        for(unsigned mode=0;mode<2;++mode){qsort(timings[mode],12,sizeof(double),orderTime);
++            printf("IOSurface import %s bytes=%u median_us=%.3f\n",mode?"prepared":"copied",W*H*4,
++                (timings[mode][5]+timings[mode][6])*.5);
++        }
++    }
+     glDeleteFramebuffersEXT(1,&fbo);glDeleteTextures(1,&texture);
+     assert(!glGetError()&&!c->connection->dead);
+     assert(DGMakeCurrent(consumer,shadow,GL_UNSIGNED_BYTE,W,H));glDeleteFramebuffersEXT(1,&consumer_fbo);
+-    assert(!glGetError());DGDestroyContext(consumer);DGDestroyContext(c);
++    assert(!glGetError());DGDestroyContext(consumer);DGDestroyContext(c);free(shadow);free(input);free(output);
+     puts("PASS typed unbound/shared writer submission, actual GPU bytes, padding/state, stale rejection and CPU supersession");
+     return 0;
+ }

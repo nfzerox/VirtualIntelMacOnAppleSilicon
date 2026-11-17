@@ -1,7 +1,7 @@
-/* Native-host GL client. The default transport uses the framebuffer's shared
+/* Guest OpenGL client. The default transport uses the framebuffer's shared
  * VRAM/RAM path; a guest-local socket relay remains a diagnostic fallback. Scalar
  * void calls are batched; queries drain the batch once and return real data.
- * This is deliberately separate from supported-guest production payloads. */
+ * Production payloads use the same compiled command path. */
 #include <OpenGL/gl.h>
 #include <OpenGL/glext.h>
 #include <arpa/inet.h>
@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include "period-stderr.h"
 #include <stdlib.h>
+#include <dlfcn.h>
 #include <limits.h>
 #include <syslog.h>
 #include <sys/sysctl.h>
@@ -78,7 +79,11 @@ static void DGLoadInprocessClient(void)
 }
 #endif
 
-struct DGConnection { int fd,dead;io_connect_t device;unsigned refs,features,features2,features3;uint64_t capabilities;
+/* A guest process owns one VM endpoint. Reuse its successful HELLO witness
+ * during renderer enumeration instead of opening another cold connection
+ * just to describe an accumulation format. Failed connects are not cached. */
+static int dg_accumulation_support=-1;
+struct DGConnection { int fd,dead,headless;io_connect_t device;unsigned refs,features,features2,features3;uint64_t capabilities;
 #ifdef VIM_PASSTHROUGH_OPENGL_INPROCESS_CLIENT
     void *inprocess;
 #endif
@@ -153,7 +158,8 @@ const char *DGTransportName(void)
 #ifdef VIM_PASSTHROUGH_OPENGL_INPROCESS_CLIENT
     if(dg_current && dg_current->connection->inprocess)return "in-process native executor";
 #endif
-    return !dg_current ? "none" : dg_current->connection->device ? "shared VRAM device" : "socket";
+    return !dg_current ? "none" : dg_current->connection->device ?
+        (dg_current->connection->headless ? "headless shared-memory device" : "shared VRAM device") : "socket";
 }
 static void DGUnsupported(struct DGContext *,unsigned);
 static void DGFreeClientSyncs(struct DGConnection *);
@@ -161,6 +167,7 @@ static void DGFreeClientMaps(struct DGConnection *);
 static int DGImportDrawableRows(const void *,int,int,size_t,int);
 static int DGImportDrawablePatchRows(const void *,int,int,int,int,size_t,int);
 static int DGTightTexSubImage2D(struct DGContext *,GLenum,GLint,GLint,GLint,GLsizei,GLsizei,GLenum,GLenum,const void *);
+#include "headless-upload-client.h"
 
 #ifdef VIM_PASSTHROUGH_OPENGL_CLIENT_PROFILE
 #define DGConnectionTransfer DGConnectionTransferProfileBody
@@ -182,6 +189,13 @@ static int DGConnectionTransfer(struct DGConnection *c,void *buffer,size_t bytes
 #else
         return DGTransfer(c->fd,buffer,bytes,writing);
 #endif
+    }
+    if(writing && c->headless && c->row_upload_supported &&
+       bytes>VIM_GL_CHUNK && bytes<=VIM_GL_SCATTER_MAX_BYTES){
+        int sent=DGHeadlessWritePrepared(c->device,buffer,bytes);
+        if(sent>=0){if(sent)c->direct_write_bytes+=bytes;return sent?0:-1;}
+        // Preparation failed before consuming this payload. Its stream header
+        // may already be queued: continue with the body only, never replay it.
     }
     unsigned char *p=buffer;
     while(bytes) {
@@ -284,7 +298,14 @@ static int DGConnect(struct DGConnection *c)
     }
 #endif
     if(!server && !getenv("VIM_PASSTHROUGH_OPENGL_SOCKET_ONLY")) {
-        io_service_t service=VIMIOServiceForClass("VMsvga2Accel");
+        io_service_t service=0;
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 101400
+        /* Headless Mojave command transport does not replace PVG's display.
+         * Older shipped clients retain their exact discovery path. */
+        service=VIMIOServiceForClass("PassthroughOpenGLTransport");
+        c->headless=service!=0;
+#endif
+        if(!service)service=VIMIOServiceForClass("VMsvga2Accel");
         if(service) {
             IOReturn error=IOServiceOpen(service,mach_task_self(),2,&c->device);IOObjectRelease(service);
             struct VIMGLTransfer request={1,0,0};struct VIMGLResult result={0};size_t size=sizeof(result);
@@ -359,7 +380,7 @@ enum { DG_COMMON_VIEWPORT=1u, DG_COMMON_FRAMEBUFFER=2u, DG_COMMON_DRAW_BUFFER=4u
     DG_COMMON_CORE=15u,DG_COMMON_ALL=63u };
 #include "direct-common-neutral-ops.inc"
 static volatile int dg_common_neutral_reuse=1; // Owned-process A/B only.
-static struct DGPacket DGPacketNew(struct DGContext *c,uint32_t op)
+static void DGPrepareCommand(struct DGContext *c,uint32_t op)
 {
     // Retain actual native values only across explicitly audited unrelated
     // operations. An error check still executes normally and clears only GL
@@ -382,7 +403,33 @@ static struct DGPacket DGPacketNew(struct DGContext *c,uint32_t op)
     // pixel/version changes are not viewport/matrix/binding mutations.
     // Drawable retargeting and unknown service calls still invalidate all.
     if(c){c->common_state_valid&=retained;c->error_observed_empty=0;}
+}
+static struct DGPacket DGPacketNew(struct DGContext *c,uint32_t op)
+{
+    DGPrepareCommand(c,op);
     struct DGPacket p={0};p.message.op=op;p.message.context=c ? c->id : 0;return p;
+}
+/* The three measured Core Image immediate-mode scalar calls need no packet
+ * ownership/output/error-reply machinery. Only append to an existing compact
+ * run; all negotiation, first-record, capacity/drain and failure cases keep
+ * their ordinary path. Context state is still invalidated exactly as before.
+ */
+static int DGTrySubmitImmediateScalars(struct DGContext *context,uint32_t op,const uint64_t *args,unsigned words)
+{
+    if(!context || !args || !((words==2 && (op==DG_OP_tex_coord2f || op==DG_OP_vertex2f)) ||
+       (words==3 && op==DG_OP_multi_tex_coord2f)))return 0;
+    struct DGConnection *c=context->connection;
+    if(!dg_compact_scalar_override || !(c->capabilities&DG_CAP_COMPACT_SCALARS))return 0;
+#ifdef VIM_PASSTHROUGH_OPENGL_CLIENT_PROFILE
+    struct DGClientProfileStamp lock_profile=DGClientProfileBegin(5,0,0);
+#endif
+    pthread_mutex_lock(&c->lock);
+#ifdef VIM_PASSTHROUGH_OPENGL_CLIENT_PROFILE
+    DGClientProfileEnd(lock_profile);
+#endif
+    int appended=!c->dead && DGCompactAppendScalars(c,op,context->id,args,words);
+    if(appended)DGPrepareCommand(context,op);
+    pthread_mutex_unlock(&c->lock);return appended;
 }
 static int DGPacketOwn(struct DGPacket *p,size_t capacity)
 {
@@ -1240,6 +1287,20 @@ int DGQueryNativeRenderer(struct DGNativeRendererInfo *info)
 {return DGClientNativeRendererCommand(0,0,info);}
 int DGSelectNativeRenderer(unsigned software,struct DGNativeRendererInfo *info)
 {return DGClientNativeRendererCommand(1,software,info);}
+static pthread_once_t dg_frontend_once=PTHREAD_ONCE_INIT;
+static uint64_t dg_frontend_flags;
+static void DGInitializeFrontendCapabilities(void)
+{
+    /* Resolve from Apple's already-loaded public framework, not from this
+     * backend's own exports. Tiger's older frontend may lack an entry point
+     * even though the shared command codec can execute it. No library load,
+     * guest version guess, host pointer transfer or per-frame lookup. */
+    void *framework=dlopen("/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",RTLD_LAZY|RTLD_NOLOAD);
+    if(framework){
+        if(dlsym(framework,"glBlitFramebufferEXT"))dg_frontend_flags|=DG_FRONTEND_FRAMEBUFFER_BLIT;
+        dlclose(framework);
+    }
+}
 const GLubyte *glGetString(GLenum key)
 {
     int index=key==GL_VENDOR ? 0 : key==GL_RENDERER ? 1 : key==GL_VERSION ? 2 : key==GL_EXTENSIONS ? 3 : key==GL_SHADING_LANGUAGE_VERSION ? 4 : key==GL_PROGRAM_ERROR_STRING_ARB ? 5 : -1;
@@ -1267,6 +1328,8 @@ const GLubyte *glGetString(GLenum key)
             packet.message.args[3]=DG_COMPAT_DISPATCH_REVISION;
             packet.message.args[4]=dg_current->connection->features;
             packet.message.args[5]=dg_current->connection->features2;
+            pthread_once(&dg_frontend_once,DGInitializeFrontendCapabilities);
+            packet.message.args[6]=dg_frontend_flags;
             packet.message.args[2]=dg_current->connection->capabilities&
                 (DG_CAP_APPLE_VIDEO_TEXTURES|DG_CAP_PIXEL_BUFFERS);
         }
@@ -1383,6 +1446,8 @@ void *DGCreateContext(const int *attrs,void *shared)
             if(features.magic2==DG_HELLO_FEATURES2_MAGIC)connection->features2=features.features2;
             if(features.magic3==DG_HELLO_FEATURES3_MAGIC)connection->features3=features.features3;
         }
+        if(hello.valid_reply)__atomic_store_n(&dg_accumulation_support,
+            !!(connection->features3&DG_FEATURE3_ACCUMULATION_BUFFER),__ATOMIC_RELEASE);
         DGPacketFree(&hello);
         if(c->error) { DGConnectionRelease(connection);free(c);return NULL; }
     }
@@ -1399,8 +1464,12 @@ void *DGCreateContext(const int *attrs,void *shared)
     for(unsigned i=0;attrs && attrs[i] && i<64;i+=2) {
         if(attrs[i]==0x30) packet.message.args[1]=attrs[i+1];
         if(attrs[i]==0x31) packet.message.args[2]=attrs[i+1];
+        if(attrs[i]==0x56494d03)packet.message.args[6]=attrs[i+1];
         if(attrs[i]==0x56494d01) packet.message.args[3]=attrs[i+1];
         if(attrs[i]==0x56494d02)c->profile=attrs[i+1];
+    }
+    if(packet.message.args[6] && !(c->connection->features3&DG_FEATURE3_ACCUMULATION_BUFFER)){
+        DGConnectionRelease(c->connection);free(c);return NULL;
     }
     if(c->profile!=0x1000 && (!(c->connection->capabilities&DG_CAP_CORE_PROFILE) ||
        (c->profile!=0x3200 && (c->profile!=DG_CGL_PROFILE_GL4 ||
@@ -1505,6 +1574,13 @@ int DGQueryRendererDetailsWithGL4(GLint *video,GLint *texture,struct DGNativeRen
 }
 int DGQueryRendererDetails(GLint *video,GLint *texture,struct DGNativeRendererInfo *native)
 {return DGQueryRendererDetailsWithGL4(video,texture,native,NULL);}
+int DGSupportsAccumulation(void)
+{
+    int known=__atomic_load_n(&dg_accumulation_support,__ATOMIC_ACQUIRE);if(known>=0)return known;
+    struct DGContext *c=DGCreateContext(NULL,NULL);if(!c)return -1;
+    int supported=!!(c->connection->features3&DG_FEATURE3_ACCUMULATION_BUFFER);
+    DGDestroyContext(c);return supported;
+}
 int DGQueryRendererMemory(GLint *video,GLint *texture)
 {return DGQueryRendererDetails(video,texture,NULL);}
 int DGDrawableDamage(int32_t bounds[4],int reset)
@@ -1550,6 +1626,7 @@ int DGFlushIOSurfaceState(int finish,uint32_t *draw_framebuffer,struct DGIosurfa
     if(!good&&!c->error)c->error=GL_INVALID_OPERATION;
     DGPacketFree(&packet);return good;
 }
+static int DGReadIOSurfaceRowsPrepared(GLuint,uint64_t,unsigned,unsigned,void *,size_t,unsigned);
 int DGReadIOSurfaceTextureElements(GLuint texture,uint64_t serial,unsigned width,unsigned height,void *pixels,size_t stride,unsigned element_bytes)
 {
     struct DGContext *c=dg_current;
@@ -1559,6 +1636,13 @@ int DGReadIOSurfaceTextureElements(GLuint texture,uint64_t serial,unsigned width
                            !((element_bytes==8||element_bytes==16)&&(c->connection->capabilities&DG_CAP_IOSURFACE_FLOAT)))||
        !width||!height||width>8192||height>8192||stride<(size_t)width*element_bytes||stride>DG_MAX_BYTES||
        (uint64_t)(height-1)*stride+(uint64_t)width*element_bytes>DG_IOSURFACE_MAX_BYTES)return 0;
+    if((uint64_t)width*height*element_bytes>=64u*1024u && DGSupportsRAMScatterReads() &&
+       (c->connection->features&DG_FEATURE_IOSURFACE_OUTPUT_READ)) {
+        int prepared=DGReadIOSurfaceRowsPrepared(texture,serial,width,height,pixels,stride,element_bytes);
+        if(prepared>=0)return prepared;
+        // Only an unsupported/preparation refusal may take the copied path;
+        // never replay an IOSurface read whose response was already consumed.
+    }
     unsigned chunked=(uint64_t)(height-1)*stride+(uint64_t)width*element_bytes>DG_MAX_BYTES;
     if(chunked && !(c->connection->capabilities&DG_CAP_IOSURFACE_ROWS))return 0;
     for(unsigned y=0;y<height;){

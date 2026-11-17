@@ -19,7 +19,12 @@ SOURCE=Path(__file__).resolve().parents[1]
 ARCHIVE=SOURCE/'prebuilt/PassthroughOpenGL/common/host-wire.tar.xz'
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
-def generators():return {p:sha(SOURCE/'scripts'/p) for p in ('generate-passthrough-opengl.py','generate-opengl-gli.py')}
+def generators():
+    # Only this generator produces the captured executor declarations. The
+    # GLI generator adapts guest dispatch ABI and does not change these files;
+    # a guest-only fix must not prevent a host build without a period SDK.
+    name='generate-passthrough-opengl.py'
+    return {name:sha(SOURCE/'scripts'/name)}
 
 def capture(directory):
     names=('direct-opcodes.h','direct-layout.h','direct-declarations.inc','direct-get-counts.inc',
@@ -38,7 +43,7 @@ def build(output):
     for p in (Path(__file__).resolve(),ARCHIVE,SOURCE/'vendor/qemu/include/hw/display/vim-passthrough-opengl-inprocess.h',
               SOURCE/'vendor/source/VMsvga2/vminclude/vim_gl_pixel_formats.h',
               SOURCE/'vendor/source/VMsvga2/vminclude/vim_gl_surface_service.h',
-              SOURCE/'scripts/generate-passthrough-opengl.py',SOURCE/'scripts/generate-opengl-gli.py'):
+              SOURCE/'scripts/generate-passthrough-opengl.py'):
         inputs[p.relative_to(SOURCE).as_posix()]=sha(p)
     tools=subprocess.check_output(['xcrun','clang','--version'],text=True).split('InstalledDir:')[0]
     sdk_build=subprocess.check_output(['xcrun','--sdk','macosx','--show-sdk-build-version'],text=True).strip()

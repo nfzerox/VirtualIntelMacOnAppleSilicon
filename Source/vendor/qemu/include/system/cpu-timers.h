@@ -30,6 +30,9 @@ void cpu_disable_ticks(void);
  */
 int64_t cpu_get_ticks(void);
 
+/* Host-tick offset of the running VM clock, without subtracting two samples. */
+int64_t cpu_get_ticks_offset(void);
+
 /*
  * Returns the monotonic time elapsed in VM, i.e.,
  * the time between vm_start and vm_stop

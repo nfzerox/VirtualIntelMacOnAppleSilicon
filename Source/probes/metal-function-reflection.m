@@ -74,6 +74,10 @@ int main(void) {
 #endif
         id<MTLBuffer> textureReadback=[d newBufferWithLength:256 options:MTLResourceStorageModeShared];
         for(int i=0;i<20;i++) {
+            // Shared buffers are CPU/GPU coherent without didModifyRange.
+            // Reuse a resource while changing its bytes, as glyph colors and
+            // compositor uniforms do between submissions.
+            for(int j=0;j<16;j++)((float *)in.contents)[j]=i+2;
             id<MTLCommandBuffer> cb=[q commandBuffer];id<MTLComputeCommandEncoder> e=[cb computeCommandEncoder];
             [e setComputePipelineState:pipeline];[e setBuffer:in offset:0 atIndex:0];[e setBuffer:out offset:0 atIndex:3];
             [e setTexture:a atIndex:1];[e setTexture:b atIndex:4];
@@ -82,9 +86,9 @@ int main(void) {
             id<MTLBlitCommandEncoder> blit=[cb blitCommandEncoder];
             [blit copyFromTexture:b sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0,0,0) sourceSize:MTLSizeMake(16,1,1) toBuffer:textureReadback destinationOffset:0 destinationBytesPerRow:256 destinationBytesPerImage:256];
             [blit endEncoding];[cb commit];[cb waitUntilCompleted];if(cb.status!=MTLCommandBufferStatusCompleted)return 5;
+            for(int j=0;j<16;j++)if(((float *)out.contents)[j]!=i+2.25f){fprintf(stderr,"buffer update submission=%d pixel=%d value=%g expected=%g\n",i,j,((float *)out.contents)[j],i+2.25f);return 6;}
         }
-        for(int i=0;i<16;i++)if(((float *)out.contents)[i]!=2.25f)return 6;
-        for(int i=0;i<64;i++)if(((float *)textureReadback.contents)[i]!=2.25f){fprintf(stderr,"texture pixel[%d]=%g\n",i,((float *)textureReadback.contents)[i]);return 7;}
+        for(int i=0;i<64;i++)if(((float *)textureReadback.contents)[i]!=21.25f){fprintf(stderr,"texture pixel[%d]=%g\n",i,((float *)textureReadback.contents)[i]);return 7;}
         puts("PASS buffers + texture pixels; 20 submissions");
         printf("input read references=%u write references=%u\n",inputReads,inputWrites);
         if(masks && !getenv("PVG_CONSERVATIVE_WRITABILITY") && (inputWrites || inputReads!=40))return 8;

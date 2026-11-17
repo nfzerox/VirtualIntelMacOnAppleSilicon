@@ -17,6 +17,9 @@
 #import "opengl-guest-machine.h"
 #import "opengl-boot-identity.h"
 #import "opengl-desktop-processes.h"
+#import "opengl-account-status.h"
+#import "opengl-graphics-status.h"
+#include "guest-screensaver-preferences.h"
 #include "opengl-state-path.h"
 #include <sys/stat.h>
 #include <sys/file.h>
@@ -67,10 +70,32 @@ static BOOL Save(NSDictionary *value,NSString *leaf){
     NSString *path=[State stringByAppendingPathComponent:leaf];NSData *data=[NSPropertyListSerialization dataWithPropertyList:value format:NSPropertyListXMLFormat_v1_0 options:0 error:NULL];
     return data&&[data writeToFile:path options:NSDataWritingAtomic error:NULL]&&!chmod([path fileSystemRepresentation],0600);
 }
+static BOOL PrepareInitialScreenSaverForUser(NSString *name) {
+    // Older CFPreferences can synchronize a root-side named-user domain
+    // without publishing the console user's CurrentHost preferences. Enter a
+    // fresh, permanently unprivileged child before selecting CurrentUser.
+    NSTask *task=[[[NSTask alloc] init] autorelease];[task setLaunchPath:@"/usr/bin/sudo"];
+    [task setArguments:[NSArray arrayWithObjects:@"-S",@"-H",@"-u",name,
+        @"/Library/Application Support/Virtual Intel Mac/GuestTools/opengl-setup-status",
+        @"--prepare-initial-screen-preferences",nil]];
+    [task setStandardInput:[NSFileHandle fileHandleWithNullDevice]];
+    [task setStandardOutput:[NSFileHandle fileHandleWithNullDevice]];
+    [task setStandardError:[NSFileHandle fileHandleWithNullDevice]];
+    @try{[task launch];[task waitUntilExit];return [task terminationStatus]==0;}
+    @catch(NSException *exception){return NO;}
+}
 int main(int argc,char **argv){@autoreleasepool{
-    BOOL finish=argc==2&&!strcmp(argv[1],"--finish-first-login");if(argc>2||(argc==2&&!finish))return 64;
+    BOOL finish=argc==2&&!strcmp(argv[1],"--finish-first-login");
+    BOOL userPreferences=argc==2&&!strcmp(argv[1],"--prepare-initial-screen-preferences");
+    if(argc>2||(argc==2&&!finish&&!userPreferences))return 64;
     NSDictionary *system=[NSDictionary dictionaryWithContentsOfFile:@"/System/Library/CoreServices/SystemVersion.plist"];
     NSString *version=[system objectForKey:@"ProductVersion"],*build=[system objectForKey:@"ProductBuildVersion"];
+    if(userPreferences) {
+        struct stat console;
+        if(getuid()<501||getuid()!=geteuid()||stat("/dev/console",&console)||console.st_uid!=getuid()||
+           !VIMOpenGLGuestForSystemVersion(version)||!VIMOpenGLGuestMachine())return 77;
+        return VIMPrepareScreenSaverPreferences(CFSTR("com.apple.screensaver"),kCFPreferencesCurrentUser)?0:75;
+    }
     if(geteuid()!=0||!VIMOpenGLGuestForSystemVersion(version))return 77;
     if(!VIMOpenGLGuestMachine())return 77;
     NSDictionary *ownership=Record(@"Ownership.plist"),*graphics=Record(@"Graphics.plist"),*account=Record(@"Account.plist");
@@ -107,6 +132,14 @@ int main(int argc,char **argv){@autoreleasepool{
         BOOL ours=[autoUser isEqual:name]&&Owned(@"/etc/kcpassword")&&
             [[account objectForKey:@"AutoLoginSHA256"] isEqual:SHA([NSData dataWithContentsOfFile:@"/etc/kcpassword"])];
         NSMutableDictionary *completed=[[account mutableCopy] autorelease];
+        // New host-created accounts explicitly request this one-time policy.
+        // Older journals have no flag: never migrate them or undo user changes.
+        if([[completed objectForKey:@"InitialUserPreferencesPrepared"] isEqual:[NSNumber numberWithBool:NO]]) {
+            if(!PrepareInitialScreenSaverForUser(name)) {
+                if(lock>=0)close(lock);[name release];return 75;
+            }
+            [completed setObject:[NSNumber numberWithBool:YES] forKey:@"InitialUserPreferencesPrepared"];
+        }
         if([[completed objectForKey:@"FirstLoginCookieIntent"] boolValue]&&
            ![[completed objectForKey:@"FirstLoginPolicyRetired"] boolValue]){
             if(VIMOpenGLFirstLoginCookie(name,uid,2)<0){if(lock>=0)close(lock);[name release];return 1;}
@@ -174,7 +207,7 @@ int main(int argc,char **argv){@autoreleasepool{
         uuid?:@"",@"VolumeUUID",[ownership objectForKey:@"MachineIdentifier"]?:@"",@"MachineIdentifier",
         [NSNumber numberWithBool:identity],@"OwnershipVerified",[NSNumber numberWithBool:kernelMatches],@"KernelMatchesSystem",
         [NSNumber numberWithBool:desktop],@"DesktopRunning",[NSNumber numberWithUnsignedInt:uid],@"ConsoleUID",name?:@"",@"ConsoleUsername",
-        [NSNumber numberWithBool:accountBusy],@"AccountBusy",graphics?:[NSDictionary dictionary],@"Graphics",account?:[NSDictionary dictionary],@"Account",nil];
+        [NSNumber numberWithBool:accountBusy],@"AccountBusy",VIMOpenGLGraphicsStatus(graphics),@"Graphics",VIMOpenGLAccountStatus(account),@"Account",nil];
     [report setObject:[NSNumber numberWithBool:installationIdentity] forKey:@"InstallationOwnershipVerified"];
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1050
     [report setObject:[NSNumber numberWithBool:graphicsFiles] forKey:@"GraphicsFilesVerified"];

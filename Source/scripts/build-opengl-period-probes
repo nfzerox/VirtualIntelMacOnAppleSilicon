@@ -24,7 +24,7 @@ fi
 names=(period-conformance array-element mixed-index-arrays compiled-index-families interleaved-arrays apple-element-array
     apple-evaluator selection-feedback pixel-maps compatibility-raster
     imaging-parameters imaging texture-readback texture-environment-queries
-    arb-vertex-program arb-fragment-program texture-list-errors raster-list-errors depth-texture)
+    arb-vertex-program arb-fragment-program texture-list-errors raster-list-errors depth-texture leopard-texture-combine)
 for name in "${names[@]}"; do
     # This context-selection hint postdates 10.5/10.6. Zero terminates the
     # attribute list at that point; all these fixtures request legacy GL.

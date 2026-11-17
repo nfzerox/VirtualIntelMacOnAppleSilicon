@@ -100,21 +100,26 @@ static NSDictionary *InstallJSON(NSDictionary *command) {
         }
         state[@"GuestResult"]=result;state[@"Phase"]=result[@"Phase"]?:@"outcome-unknown";
         if(!verify){save(result,nil);return;}
+        // A confirmed rollback is a terminal, uninstalled outcome, not a
+        // failed postboot GPU check. Preserve it so a new prepared transaction
+        // can be authorized; never replay the transaction that was rolled back.
+        if([result[@"Phase"] isEqual:@"rolled-back"]){save(result,nil);return;}
         if(![result[@"Phase"] isEqual:@"awaiting-reboot"]||![result[@"RebootRequired"] isEqual:@YES]) {
             save(result,InstallError([NSString stringWithFormat:VIMLocalized(@"guestinstallation.graphics-installation-is-recorded-as-its-recovery-information-has-been", @"Graphics installation is recorded as “%@”. Its recovery information has been kept; installation was not repeated."),result[@"Phase"]?:@"unknown"]));return;
         }
-        // Early retained verifiers only recognize the blanket AMFI bypass.
-        // A verified preference-first migration supplies a current read-only
-        // verifier, without replacing the old journal/tools or reapplying any
-        // graphics files. All original target/hash/build/volume checks remain.
+        // Normally use the transaction's own verifier; a retained boot-policy
+        // helper may not know its newer target policy. Mojave instead uses the
+        // bundled verifier below to retire two mutable AppKit preference files.
+        // Other guests retain the narrow old-AMFI compatibility fallback.
         NSURL *package=journal.URLByDeletingLastPathComponent.URLByDeletingLastPathComponent;
         NSDictionary *configuration=[NSDictionary dictionaryWithContentsOfURL:[package URLByAppendingPathComponent:@"Machine.plist"]];
         NSString *current=[VIMGuestBootPolicy verifierAtURL:[package URLByAppendingPathComponent:@"State/BootPolicy.plist"]
             guest:configuration[@"Guest"] identifier:configuration[@"Identifier"] volume:result[@"VolumeUUID"]];
-        [agent runExecutable:current?:binary arguments:@[@"--verify-after-reboot",path] timeout:120 completion:^(NSDictionary *reply,NSError *error) {
+        void (^finishVerification)(NSDictionary *,NSError *)=^(NSDictionary *reply,NSError *error) {
             NSString *diagnostic=[[NSString alloc] initWithData:reply[@"stderr"]?:NSData.data encoding:NSUTF8StringEncoding];
+            [state removeObjectForKey:@"VerificationLog"];[state removeObjectForKey:@"VerificationExitCode"];
             if(diagnostic.length)state[@"VerificationLog"]=diagnostic;
-            if(reply[@"exitcode"])state[@"VerificationExitCode"]=reply[@"exitcode"];
+            if([reply[@"exitcode"] intValue]!=0)state[@"VerificationExitCode"]=reply[@"exitcode"];
             NSDictionary *evidence=InstallJSON(reply);
             BOOL valid=[evidence[@"TransactionID"] isEqual:identity]&&
                 [evidence[@"VerifiedAfterReboot"] isEqual:@YES]&&[evidence[@"MetalCommandVerified"] isEqual:@YES]&&
@@ -125,6 +130,25 @@ static NSDictionary *InstallJSON(NSDictionary *command) {
             if(!valid){save(result,error?:InstallError(diagnostic.length?[NSString stringWithFormat:VIMLocalized(@"guestinstallation.graphics-verification-couldn-t-finish-the-installer-has-been-kept", @"Graphics verification couldn’t finish: %@. The installer has been kept."),[diagnostic stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]]:VIMLocalized(@"guestinstallation.graphics-verification-couldn-t-finish-the-installer-has-been-kept-2", @"Graphics verification couldn’t finish. The installer has been kept; you can check again after the desktop is ready.")));return;}
             state[@"PostBootVerification"]=evidence;state[@"Phase"]=@"graphics-verified";
             save(evidence,nil);
+        };
+        if([configuration[@"Guest"] isEqual:@"mojave"]) {
+            // Old verifiers hash AppKit preferences as graphics files. Users
+            // may edit them, and the retired override must not force a driver
+            // reinstall. The current verifier checks every graphics target and
+            // the real GPU, excluding only those two mutable preference files.
+            NSURL *tool=[NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"Runtime/GuestTools/guest-install"];
+            [agent runTemporaryTool:tool arguments:@[@"--verify-after-reboot",path] completion:finishVerification];
+            return;
+        }
+        [agent runExecutable:binary arguments:@[@"--verify-after-reboot",path] timeout:120 completion:^(NSDictionary *reply,NSError *error) {
+            NSString *diagnostic=[[NSString alloc] initWithData:reply[@"stderr"]?:NSData.data encoding:NSUTF8StringEncoding];
+            BOOL oldAdmission=[reply[@"exitcode"] isEqual:@65]&&!reply[@"signal"]&&
+                [[diagnostic stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]
+                    isEqual:@"Required guest AMFI boot policy is missing; restart using the app-provided EFI configuration"];
+            if(oldAdmission&&current&&![current isEqual:binary]) {
+                state[@"LegacyVerificationLog"]=diagnostic;
+                [agent runExecutable:current arguments:@[@"--verify-after-reboot",path] timeout:120 completion:finishVerification];
+            } else finishVerification(reply,error);
         }];
     }];
 }

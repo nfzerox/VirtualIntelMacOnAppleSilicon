@@ -1,7 +1,5 @@
-// Mojave's AppKit admits root layer backing through this per-application
-// preference. Aperture predates that default and otherwise presents through
-// the incompatible legacy direct-window GL surface path. No injection,
-// executable patch, global AppKit preference, or per-frame work is needed.
+// Compatibility with old payload-refresh commands only. Neither GL backend
+// should force AppKit root layer backing. Preserve unrelated preferences.
 static void PrepareAperturePolicy(NSString *input,NSString *output) {
     NSMutableDictionary *policy=[NSMutableDictionary dictionary];
     struct stat st;
@@ -12,7 +10,7 @@ static void PrepareAperturePolicy(NSString *input,NSString *output) {
         Check(original!=nil,@"Aperture compatibility preferences are invalid; no preferences were replaced");
         [policy addEntriesFromDictionary:original];
     } else Check(errno==ENOENT,@"Cannot read Aperture compatibility preferences");
-    policy[@"NSViewAllowsRootLayerBacking"]=@YES;
+    [policy removeObjectForKey:@"NSViewAllowsRootLayerBacking"];
     NSError *error=nil;
     NSData *data=[NSPropertyListSerialization dataWithPropertyList:policy
         format:NSPropertyListBinaryFormat_v1_0 options:0 error:&error];

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build the small guest EFI policy driver and boot-argument-gated GL registrar."""
 import argparse
+import fcntl
 import hashlib
 import os
 import platform
@@ -37,7 +38,13 @@ def main():
     if not 1<=args.jobs<=64:parser.error('--jobs must be between 1 and 64')
     from firmware_source import extract
     args.work=args.work.resolve();args.work.mkdir(parents=True,exist_ok=True)
-    root=args.work/'edk2';edk=extract(SOURCE,root)
+    lock=(args.work/'Build.lock').open('a')
+    fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    # Native BaseTools .d files store absolute SDK header paths. An Xcode
+    # update or move can remove those paths even when the EDK source is unchanged.
+    host_tools=freshness.identity({'Toolchain':freshness.toolchain('firmware'),
+        'SDKPath':freshness.command_version('xcrun','--sdk','macosx','--show-sdk-path')})[:16]
+    root=args.work/('edk2-'+host_tools);edk=extract(SOURCE,root)
     package=root/'VIMBootPolicy';shutil.copytree(SOURCE/'compat/BootPolicy',package,dirs_exist_ok=True)
     builder=runpy.run_path(str(SOURCE/'scripts/build-guest-firmware.py'))
     builder['patch_sources'](root)

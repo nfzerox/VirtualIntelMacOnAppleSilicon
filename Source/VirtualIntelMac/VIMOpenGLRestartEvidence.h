@@ -1,6 +1,12 @@
 #pragma once
 #import <Foundation/Foundation.h>
 
+// Explicit local opt-in only. The caller still validates the completed
+// installation and uses its existing graceful, once-per-boot restart path.
+static inline BOOL VIMGraphicsSetupRestartsAutomatically(BOOL automatic,NSUserDefaults *defaults) {
+    return automatic||[defaults boolForKey:@"VIMDevelopmentAutoRestartGraphicsSupport"];
+}
+
 static inline BOOL VIMOpenGLInitialGraphicsCanResume(NSDictionary *report,NSString *machine,
         NSString *volume,BOOL installing,BOOL systemMatches) {
     id graphics=report[@"Graphics"];
@@ -16,6 +22,13 @@ static inline BOOL VIMOpenGLInitialGraphicsCanResume(NSDictionary *report,NSStri
 
 static inline BOOL VIMOpenGLBundledSupportMatches(NSString *guest,NSDictionary *report,NSDictionary *expected) {
     NSDictionary *graphics=report[@"Graphics"];
+    NSInteger bundled=[expected[@"GraphicsSupportRevision"] integerValue];
+    if(bundled>0) {
+        // A rebuild/path/signature difference is not an upgrade. Preserve
+        // same/newer support (including developer replacements); the caller
+        // separately checks the installed OS build for OS-update repair.
+        return [graphics[@"GraphicsSupportRevision"] integerValue]>=bundled;
+    }
     BOOL pair=[graphics[@"EngineSHA256"] isEqual:expected[@"EngineSHA256"]]&&
         [graphics[@"BackendSHA256"] isEqual:expected[@"BackendSHA256"]];
     // Tiger already uses its separate boot-fenced installer; its graphics

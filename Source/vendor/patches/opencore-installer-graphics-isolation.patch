@@ -97,11 +97,11 @@
    Status = PrelinkedContextInit (&Context, Kernel, *KernelSize, AllocatedSize, Is32Bit);
  
    if (!EFI_ERROR (Status)) {
-+    // Native Sierra recovery gives its dummy SMC claimant priority over
-+    // AppleSMC, leaving protected fontd pages waiting for DSMOS forever.
-+    // Use the upstream Disable operation, not Exclude: its prelink metadata
-+    // shares XML IDs with other drivers. Installed boots are untouched.
-+    if (VimDisableInstallerDrizzle (mVimInstallerKernel, DarwinVersion / 10000)) {
++    // Sierra's original recovery and installed Essentials prelink can give
++    // its dummy SMC priority over AppleSMC, stalling protected page faults.
++    // Disable just that initializer, not Exclude: the XML shares IDs with
++    // other drivers. No entry in a rebuilt prelink means no modification.
++    if (VimDisableSierraDrizzle (DarwinVersion / 10000)) {
 +      Status = PrelinkedContextBlock (
 +                 &Context,
 +                 "com.apple.driver.DrizzlePlatformSupport",
@@ -109,7 +109,7 @@
 +                 );
 +      DEBUG ((
 +        DEBUG_INFO,
-+        "VIM: Sierra recovery native SMC matching - %r\n",
++        "VIM: Sierra native SMC matching - %r\n",
 +        Status
 +        ));
 +    }

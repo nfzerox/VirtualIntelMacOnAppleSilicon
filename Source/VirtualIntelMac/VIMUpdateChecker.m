@@ -30,7 +30,7 @@ static NSString * const VIMReleasePage = @"https://github.com/nfzerox/VirtualInt
 }
 - (void)showTitle:(NSString *)title detail:(NSString *)detail release:(BOOL)release {
     NSAlert *alert = [NSAlert new]; alert.messageText = title; alert.informativeText = detail;
-    if (release) [alert addButtonWithTitle:VIMLocalized(@"updatechecker.view-release", @"View Release")]; [alert addButtonWithTitle:VIMLocalized(@"common.ok", @"OK")];
+    if (release) [alert addButtonWithTitle:VIMLocalized(@"updatechecker.view-release", @"View Releases")]; [alert addButtonWithTitle:VIMLocalized(@"common.ok", @"OK")];
     VIMPresentAlert(alert,nil,^(NSModalResponse response){
         if(response==NSAlertFirstButtonReturn&&release)[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:VIMReleasePage]];
     });
@@ -90,7 +90,7 @@ static NSString * const VIMReleasePage = @"https://github.com/nfzerox/VirtualInt
             } else {
                 [self publishResult:[NSString stringWithFormat:VIMLocalized(@"updatechecker.you-re-up-to-date", @"You’re up to date (%@)."),current]];
                 if(interactive)[self showTitle:VIMLocalized(@"updatechecker.you-re-up-to-date-2", @"You’re Up to Date") detail:[NSString stringWithFormat:
-                    VIMLocalized(@"updatechecker.you-re-using-virtual-intel-mac-no-newer-stable-release", @"You’re using Virtual Intel Mac %@. No newer stable release is available."), current] release:NO];
+                    VIMLocalized(@"updatechecker.you-re-using-virtual-intel-mac-no-newer-stable-release", @"You’re using Virtual Intel Mac %@."), current] release:YES];
             }
         });
     }] resume];

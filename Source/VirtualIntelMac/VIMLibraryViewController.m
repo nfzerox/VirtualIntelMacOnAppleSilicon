@@ -7,6 +7,8 @@
 #import "VIMNewMachineWindow.h"
 #import "VIMPlayButton.h"
 #import "VIMAlerts.h"
+#import "VIMToolbarAppearance.h"
+#import "VIMGuestFamilies.h"
 #import <QuartzCore/QuartzCore.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <fcntl.h>
@@ -237,7 +239,7 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
     NSToolbar *toolbar=[[NSToolbar alloc] initWithIdentifier:@"VIMLibraryToolbar"];
     toolbar.delegate=self;toolbar.displayMode=NSToolbarDisplayModeIconOnly;
     self.view.window.title=VIMLocalized(@"app.virtual-intel-mac-library", @"Virtual Intel Mac Library");self.view.window.titleVisibility=NSWindowTitleVisible;
-    self.view.window.toolbar=toolbar;self.view.window.toolbarStyle=NSWindowToolbarStyleUnifiedCompact;
+    self.view.window.toolbar=toolbar;VIMApplyToolbarAppearance(self.view.window);
     self.view.window.tabbingMode=NSWindowTabbingModeDisallowed;
     [self sizeLibraryWindow];
     [self updateLibraryVisibility];
@@ -252,13 +254,20 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
         item.label=VIMLocalized(@"library.new-mac-2", @"New Mac");item.toolTip=VIMLocalized(@"library.new-mac-2", @"New Mac");
         item.image=[NSImage imageWithSystemSymbolName:@"plus" accessibilityDescription:VIMLocalized(@"library.new-mac-2", @"New Mac")];
         item.target=self;item.action=@selector(newMac:);
+        if(@available(macOS 26.0,*)){}else item.view=VIMToolbarButton(item.image,item.label,item.target,item.action);
     } else if([identifier isEqual:@"density"]) {
         NSSegmentedControl *density=[NSSegmentedControl segmentedControlWithImages:@[
             [NSImage imageWithSystemSymbolName:@"rectangle.grid.1x2" accessibilityDescription:VIMLocalized(@"library.large-thumbnails", @"Large thumbnails")],
             [NSImage imageWithSystemSymbolName:@"list.bullet" accessibilityDescription:VIMLocalized(@"library.compact-list", @"Compact list")]]
             trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(changeDensity:)];
         density.selectedSegment=self.compact?1:0;
+        if(@available(macOS 26.0,*)){}else {
+            density.controlSize=NSControlSizeRegular;density.segmentStyle=NSSegmentStyleTexturedRounded;
+            for(NSInteger i=0;i<2;i++){[density setImage:VIMToolbarSymbolImage([density imageForSegment:i]) forSegment:i];[density setWidth:32 forSegment:i];}
+            density.translatesAutoresizingMaskIntoConstraints=NO;density.clipsToBounds=NO;[density sizeToFit];
+        }
         [density setToolTip:VIMLocalized(@"library.large-thumbnails", @"Large thumbnails") forSegment:0];[density setToolTip:VIMLocalized(@"library.compact-list", @"Compact list") forSegment:1];
+        density.clipsToBounds=NO;[density sizeToFit];
         item.label=VIMLocalized(@"library.view", @"View");item.view=density;
     } else {
         self.search=[[NSSearchField alloc] initWithFrame:NSMakeRect(0,0,150,24)];
@@ -276,11 +285,14 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
     for(NSToolbarItem *item in self.view.window.toolbar.items)if([item.itemIdentifier isEqual:@"density"]&&[item.view isKindOfClass:NSSegmentedControl.class])[(NSSegmentedControl *)item.view setSelectedSegment:self.compact?1:0];
 }
 - (VIMMachine *)selectedMachine {return [self selected];}
-- (NSString *)arrangement {return [NSUserDefaults.standardUserDefaults stringForKey:[@"VIMLibraryArrange-" stringByAppendingString:VIMLibraryLocation.currentURL.path]]?:@"None";}
+- (NSString *)arrangement {return [NSUserDefaults.standardUserDefaults stringForKey:[@"VIMLibraryArrange-" stringByAppendingString:VIMLibraryLocation.currentURL.path]]?:@"macOS Release";}
+- (NSString *)arrangementReverseKey {return [@"VIMLibraryArrangeReverse-" stringByAppendingString:VIMLibraryLocation.currentURL.path];}
 - (void)setDensityFromMenu:(NSMenuItem *)sender {
     NSSegmentedControl *control=[NSSegmentedControl segmentedControlWithLabels:@[@"Expanded",@"Compact"] trackingMode:NSSegmentSwitchTrackingSelectOne target:nil action:nil];control.selectedSegment=sender.tag;[self changeDensity:control];
 }
 - (void)arrangeFromMenu:(NSMenuItem *)sender {
+    BOOL repeated=[self.arrangement isEqual:sender.representedObject]&&![sender.representedObject isEqual:@"None"];
+    [NSUserDefaults.standardUserDefaults setBool:repeated?![NSUserDefaults.standardUserDefaults boolForKey:self.arrangementReverseKey]:NO forKey:self.arrangementReverseKey];
     [NSUserDefaults.standardUserDefaults setObject:sender.representedObject forKey:[@"VIMLibraryArrange-" stringByAppendingString:VIMLibraryLocation.currentURL.path]];[self applyFilter];
 }
 - (void)sizeLibraryWindow {
@@ -359,11 +371,19 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
 }
 - (BOOL)moveMachineAtPath:(NSString *)path beforeVisibleRow:(NSInteger)row {
     if(!path||row<0||row>self.visibleMachines.count)return NO;
-    NSUInteger source=[self.machines indexOfObjectPassingTest:^BOOL(VIMMachine *machine,NSUInteger index,BOOL *stop){return [machine.URL.path isEqual:path];}];
+    NSMutableArray *ordered=[self.machines mutableCopy];
+    // Turning a sorted view into a manual arrangement must preserve the
+    // displayed order, rather than snap the other rows back to scan order.
+    // A filtered view leaves hidden rows in their existing relative places.
+    if(![self.arrangement isEqual:@"None"]){
+        NSSet *visible=[NSSet setWithArray:self.visibleMachines];NSUInteger next=0;
+        for(NSUInteger i=0;i<ordered.count;i++)if([visible containsObject:ordered[i]])ordered[i]=self.visibleMachines[next++];
+    }
+    NSUInteger source=[ordered indexOfObjectPassingTest:^BOOL(VIMMachine *machine,NSUInteger index,BOOL *stop){return [machine.URL.path isEqual:path];}];
     if(source==NSNotFound)return NO;
     VIMMachine *before=row<self.visibleMachines.count?self.visibleMachines[row]:nil;
-    VIMMachine *moving=self.machines[source];if(before==moving)return YES;
-    NSMutableArray *ordered=[self.machines mutableCopy];[ordered removeObjectAtIndex:source];
+    VIMMachine *moving=ordered[source];if(before==moving)return YES;
+    [ordered removeObjectAtIndex:source];
     NSUInteger destination=before?[ordered indexOfObject:before]:ordered.count;if(destination==NSNotFound)destination=ordered.count;
     [ordered insertObject:moving atIndex:destination];self.machines=ordered;
     [NSUserDefaults.standardUserDefaults setObject:@"None" forKey:[@"VIMLibraryArrange-" stringByAppendingString:VIMLibraryLocation.currentURL.path]];
@@ -402,6 +422,13 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
                 [machines addObject:machine];NSString *identifier=machine.configuration[@"Identifier"]?:path;[identifiers addObject:identifier];
                 updated[machine.URL.path]=@{@"Name":machine.name,@"Guest":machine.guest,@"Identifier":identifier};
             } else {
+                // A new ExFAT publication may briefly reserve its name with
+                // an empty directory. Never hide a previously known Mac.
+                if(!known[path]&&![registered containsObject:path]) {
+                    NSArray *entries=[NSFileManager.defaultManager contentsOfDirectoryAtURL:URL
+                        includingPropertiesForKeys:nil options:0 error:nil];
+                    if(entries&&!entries.count)continue;
+                }
                 VIMUnavailableMac *row=[VIMUnavailableMac new];row.missingURL=URL;row.savedName=known[path][@"Name"]?:URL.lastPathComponent.stringByDeletingPathExtension;
                 row.savedGuest=known[path][@"Guest"]?:@"";row.reason=VIMLocalized(@"library.mac-unavailable", @"Mac Unavailable");[missing addObject:row];
             }
@@ -445,16 +472,19 @@ static NSString *VIMLibraryResources(VIMMachine *machine) {
         for(VIMMachine *machine in self.visibleMachines) {
             id value=machine.name;
             if([arrange isEqual:@"Type"])value=machine.guest;
+            else if([arrange isEqual:@"macOS Release"])value=@([VIMSupportedGuests() indexOfObject:machine.guest?:@""]);
             else if([arrange isEqual:@"Date Last Opened"])value=lastOpened[machine.configuration[@"Identifier"]?:machine.URL.path]?:NSDate.distantPast;
             else if([arrange isEqual:@"Date Created"]){[machine.URL getResourceValue:&value forKey:NSURLCreationDateKey error:nil];if(![value isKindOfClass:NSDate.class])value=NSDate.distantPast;}
             else if([arrange isEqual:@"Size"]){value=@0;NSString *disk=machine.configuration[@"Disk"];if(disk.length)[[machine.URL URLByAppendingPathComponent:disk] getResourceValue:&value forKey:NSURLTotalFileAllocatedSizeKey error:nil];if(![value isKindOfClass:NSNumber.class])value=@0;}
             else if([arrange isEqual:@"Tags"]){NSArray *tags=nil;[machine.URL getResourceValue:&tags forKey:NSURLTagNamesKey error:nil];value=[tags isKindOfClass:NSArray.class]?[[tags sortedArrayUsingSelector:@selector(localizedStandardCompare:)] componentsJoinedByString:@", "]:@"";}
             values[machine.URL.path]=value?:@"";
         }
+        BOOL reverse=[NSUserDefaults.standardUserDefaults boolForKey:self.arrangementReverseKey];
         self.visibleMachines=[self.visibleMachines sortedArrayUsingComparator:^NSComparisonResult(VIMMachine *a,VIMMachine *b){
             id x=values[a.URL.path],y=values[b.URL.path];NSComparisonResult order=[x isKindOfClass:NSString.class]?[x localizedStandardCompare:y]:[x compare:y];
             if([arrange hasPrefix:@"Date "]||[arrange isEqual:@"Size"])order=-order;
-            return order==NSOrderedSame?[a.name localizedStandardCompare:b.name]:order;
+            if(order==NSOrderedSame)order=[a.name localizedStandardCompare:b.name];
+            return reverse?-order:order;
         }];
     }
     [self.table reloadData];

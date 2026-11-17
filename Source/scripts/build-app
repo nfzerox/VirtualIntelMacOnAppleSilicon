@@ -73,6 +73,7 @@ if args.package_release:
     args.output = directory/'Virtual Intel Mac.app'
 sys.path.insert(0, str(source/'scripts'))
 from build_signing import resolve_identity
+from build_launch_policy import apply_launch_minimum
 import build_freshness as freshness
 def source_state():
     revision = subprocess.check_output(['git','-C',str(source),'rev-parse','HEAD'],text=True).strip()
@@ -238,7 +239,7 @@ command = ['xcodebuild', '-project', str(source/'VirtualIntelMac.xcodeproj'),
            '-scheme', 'Virtual Intel Mac', '-configuration', args.configuration,
            '-derivedDataPath', str(derived), 'CODE_SIGNING_ALLOWED=NO',
            'ARCHS=arm64 x86_64', 'ONLY_ACTIVE_ARCH=NO',
-           'MACOSX_DEPLOYMENT_TARGET=15.0', '__DIAGNOSE_INVALID_DEPLOYMENT_TARGET_AS_ERROR=NO',
+           'MACOSX_DEPLOYMENT_TARGET=11.0', '__DIAGNOSE_INVALID_DEPLOYMENT_TARGET_AS_ERROR=NO',
            'OTHER_CFLAGS=$(inherited) -Werror=unguarded-availability-new', 'clean', 'build']
 print('Building Virtual Intel Mac…', flush=True)
 with log.open('w') as stream:
@@ -248,8 +249,8 @@ if result.returncode:
     sys.exit(result.returncode)
 app = derived/'Build/Products'/args.configuration/'Virtual Intel Mac.app'
 app_info = plistlib.loads((app/'Contents/Info.plist').read_bytes())
-if app_info.get('LSMinimumSystemVersion') != '15.0':
-    sys.exit('Build refused: the main app must target macOS 15.0; runtime dependencies remain macOS 11.0.')
+if app_info.get('LSMinimumSystemVersion') != '11.0':
+    sys.exit('Build refused: the app and runtime dependencies must target macOS 11.0.')
 icon_name = app_info.get('CFBundleIconName')
 if (icon_name not in ('AppIcon', 'AppIcon26')
         or not (app/'Contents/Resources'/(icon_name+'.icns')).is_file()):
@@ -266,14 +267,17 @@ if args.ui_only:
                                   'app-firmware-inputs.tar.gz', 'app-firmware-SHA256SUMS')
     boot_policy=args.boot_policy_build or source/'prebuilt/firmware/BootPolicy'
     firmware_code, _ = packager['quiet_firmware'](source, args.qemu)
-    for guest in ('mojave', 'catalina', 'bigsur'):
-        boot = firmware_inputs/guest/'BOOT.img'
+    derived = runpy.run_path(str(source/'scripts/build-unified-efi.py'))['DERIVED_PROFILES']
+    for guest in ('mojave', 'catalina', 'bigsur', *derived):
+        base, product = derived.get(guest, (guest, None))
+        boot = firmware_inputs/base/'BOOT.img'
         destination = source/'Build/DevelopmentFirmware'/guest/'EFI.img'
         destination.parent.mkdir(parents=True, exist_ok=True)
         # Generate a new candidate before replacing our derived build output.
         candidate = destination.with_name('EFI-'+datetime.now().strftime('%Y%m%d%H%M%S%f')+'.img')
         policy_options=['--runtime-policy',str(boot_policy)]
-        if guest=='bigsur':policy_options+=['--bigsur-gl-registration',str(boot_policy/'PVGOpenGLProbe.kext')]
+        if 'bigsur' in (guest, base):policy_options+=['--bigsur-gl-registration',str(boot_policy/'PVGOpenGLProbe.kext')]
+        if product:policy_options+=['--product',product]
         subprocess.run([sys.executable, str(source/'scripts/make-efi-disk.py'),
                         str(boot), str(candidate), '--quiet',*policy_options], check=True)
         candidate.replace(destination)
@@ -285,6 +289,9 @@ if args.ui_only:
     # UI-only iterations still read the user's library on removable volumes.
     # Use the same designated identity as packaged builds, not a new unsigned
     # executable that loses the host's existing privacy approvals each time.
+    runpy.run_path(str(source/'scripts/build-rosetta-installer.py'))['build'](
+        source, app, args.signing_identity or '-')
+    apply_launch_minimum(app)
     subprocess.run(['codesign','--force','--sign',args.signing_identity or '-',str(app)],check=True)
     subprocess.run(['codesign','--verify','--deep','--strict',str(app)],check=True)
     print(f'UI/harness build: {app}\nRuntime is not bundled in this mode.')

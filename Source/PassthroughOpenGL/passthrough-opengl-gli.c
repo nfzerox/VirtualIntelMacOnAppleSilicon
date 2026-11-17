@@ -9,6 +9,7 @@
 #include <stdarg.h>
 #include <syslog.h>
 #include "renderer-memory.h"
+#include "native-renderer-properties.h"
 static void VIMGLITrace(const char *format,...)
 {
     static unsigned emitted;
@@ -20,21 +21,21 @@ static void VIMGLITrace(const char *format,...)
 }
 #include "cgs-drawable.c"
 #include "native-cgl-recovery.c"
-#if defined(__i386__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ == 1040 && VIM_GLI_DISPATCH_COUNT == 759
-static unsigned VIMTigerDispatchCount(void)
+#if VIM_GLI_DISPATCH_COUNT == 764 || (defined(__i386__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ == 1040 && VIM_GLI_DISPATCH_COUNT == 759)
+static unsigned VIMNativeDispatchCount(void)
 {
     pthread_once(&vim_recovery_once,VIMFixNativeRecovery);
     return vim_recovery_ready?vim_native_dispatch_count:0;
 }
-static void VIMTigerPopulatePrefix(GLIFunctionDispatch *primary,void *secondary,
+static void VIMPopulateNativePrefix(GLIFunctionDispatch *primary,void *secondary,
     const GLIFunctionDispatch *source,unsigned count)
 {
-    /* Genuine10.4u686 and measured restore759 headers have identical named
-     * prototypes for the first686 entries. Copy only that native prefix,
+    /* Genuine Tiger 686/759 and Snow Leopard 760/764 use compatible named
+     * prefixes within their respective period layouts. Copy only that prefix,
      * retaining the real secondary routing mask. memcpy avoids aliasing
      * differently typed function pointers. This is context creation only;
      * there is no per-command adapter, trampoline or per-frame copy. */
-    _Static_assert(sizeof(GLIFunctionDispatch)==759*sizeof(uintptr_t),"Tiger GLI pointer table");
+    _Static_assert(sizeof(GLIFunctionDispatch)==VIM_GLI_DISPATCH_COUNT*sizeof(uintptr_t),"Period GLI pointer table");
     for(unsigned i=0;i<count;++i){
         size_t offset=i*sizeof(uintptr_t);uintptr_t route=0;
         if(secondary)memcpy(&route,(char *)secondary+offset,sizeof(route));
@@ -76,40 +77,42 @@ _Static_assert(sizeof(struct GLIPixelFormat)==48+sizeof(void *),"audited GLI for
 _Static_assert(offsetof(struct GLIPixelFormat,display_mask)==44+sizeof(void *),"GLI display mask ABI");
 struct GLIRenderer { struct GLIRenderer *next; uint32_t data[32]; };
 _Static_assert(sizeof(struct GLIRenderer)==128+sizeof(void *),"audited GLI renderer ABI");
-static pthread_once_t vim_native_recovery_once=PTHREAD_ONCE_INIT;
-static int vim_native_recovery_available;
-static int vim_native_gl4_available;
-static GLint vim_video_mb,vim_texture_mb;
-static int vim_memory_valid;
+static struct VIMNativeRendererCache vim_native_properties=VIM_NATIVE_RENDERER_CACHE_INIT;
 static uint32_t vim_hardware_display_mask=1,vim_software_display_mask=1;
+#if VIM_GLI_DISPATCH_COUNT == 975
+static uint64_t vim_native_gpu_registry_id;
+#endif
 #if VIM_GLI_DISPATCH_COUNT < 974
 static void (*vim_compat_texture_barrier)(void);
 #endif
-static void VIMQueryNativeRecovery(void)
+static struct VIMNativeRendererProperties VIMGetNativeRendererProperties(void)
 {
     /* One cold context supplies both memory and native availability. No extra
      * dummy framebuffer, TLS switch, or second native context on app launch.
      * Explicit zero retains the old mode for bounded diagnostic comparisons. */
     const char *enabled=getenv("VIM_GL_NATIVE_RECOVERY");
-    struct DGNativeRendererInfo info={0};
-    vim_memory_valid=DGQueryRendererDetailsWithGL4(&vim_video_mb,&vim_texture_mb,
-        enabled&&!strcmp(enabled,"0")?NULL:&info,&vim_native_gl4_available);
-    if(vim_memory_valid)
-        vim_native_recovery_available=(info.flags&(DG_NATIVE_HARDWARE|DG_NATIVE_SOFTWARE))==
-            (DG_NATIVE_HARDWARE|DG_NATIVE_SOFTWARE);
+    return VIMReadNativeRendererProperties(&vim_native_properties,
+        !(enabled&&!strcmp(enabled,"0")),DGQueryRendererDetailsWithGL4);
 }
 static int VIMNativeRecoveryAvailable(void)
-{pthread_once(&vim_native_recovery_once,VIMQueryNativeRecovery);return vim_native_recovery_available;}
+{return VIMGetNativeRendererProperties().recovery;}
 static int VIMNativeGL4Available(void)
 {
     if(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__<1090)return 0;
-    pthread_once(&vim_native_recovery_once,VIMQueryNativeRecovery);
-    return vim_native_gl4_available;
+    return VIMGetNativeRendererProperties().gl4;
+}
+static int VIMNativeAccumulationAvailable(void)
+{
+    static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;static int available=-1;
+    pthread_mutex_lock(&lock);
+    if(available<0)available=DGSupportsAccumulation();
+    int result=available==1;pthread_mutex_unlock(&lock);return result;
 }
 /* High Sierra CGL's native GL4 format mask is 0x40000; context-family
  * flags are separately shifted by CGL before calling gliCreateContext. */
 #define VIM_GLI_GL4_FORMAT 0x40000u
 
+#include "keynote-screen-compatibility.h"
 GLI_EXPORT void gliInitializeLibrary(void *devices,void *plugins,unsigned count,
     void *unbind,void *bind,void *io
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1050
@@ -117,12 +120,21 @@ GLI_EXPORT void gliInitializeLibrary(void *devices,void *plugins,unsigned count,
 #endif
     )
 {
+    VIMApplyKeynoteScreenCompatibility();
     (void)plugins;(void)unbind;(void)io;
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1050
     (void)flags;
 #endif
     vim_native_bind_surface=(VIMNativeBindSurface)bind;
+#if VIM_GLI_DISPATCH_COUNT == 975
+    vim_pvg_flush_surface=dlsym(RTLD_DEFAULT,"SLSFlushSurfaceWithOptionsAndIndex");
+#endif
     vim_native_accelerator=devices && count ? *(const io_service_t *)devices : 0;
+#if VIM_GLI_DISPATCH_COUNT == 975
+    vim_native_gpu_registry_id=0;
+    if(vim_native_accelerator)
+        IORegistryEntryGetRegistryEntryID(vim_native_accelerator,&vim_native_gpu_registry_id);
+#endif
     VIMSetRendererAccelerator(vim_native_accelerator);
 #if VIM_GLI_DISPATCH_COUNT < 974
     // 10.8 cgls still issues private key 300 before sampling queued drawable
@@ -168,7 +180,12 @@ GLI_EXPORT void gliInitializeLibrary(void *devices,void *plugins,unsigned count,
     VIMGLITrace("initialize slots=%u hardware_mask=%x software_mask=%x",count,
         vim_hardware_display_mask,vim_software_display_mask);
 }
-GLI_EXPORT void gliTerminateLibrary(void) {VIMReleaseRendererAccelerator();}
+GLI_EXPORT void gliTerminateLibrary(void) {
+#if VIM_GLI_DISPATCH_COUNT == 975
+    VIMReleaseRetainedBitmapBackings();
+#endif
+    VIMReleaseRendererAccelerator();
+}
 GLI_EXPORT unsigned char gliGetVersion(GLint *major,GLint *minor,GLint *engine)
 {
     if(!major || !minor || !engine) return 0;
@@ -191,7 +208,7 @@ GLI_EXPORT CGLError gliChoosePixelFormat(struct GLIPixelFormat **out,const GLint
             length+=(size_t)snprintf(line+length,sizeof(line)-length," %x",attrs[i]);
         VIMGLITrace("%s",line);
     }
-    GLint depth=0,stencil=0;int double_buffer=0,no_recovery=0,software_only=0,minimum_policy=0;
+    GLint depth=0,stencil=0,accumulation=0;int double_buffer=0,no_recovery=0,software_only=0,minimum_policy=0;
     int full_screen=0,explicit_window=0;
     for(unsigned i=0;attrs[i];++i) {
         switch(attrs[i]) {
@@ -218,14 +235,12 @@ GLI_EXPORT CGLError gliChoosePixelFormat(struct GLIPixelFormat **out,const GLint
          * 32-bit mode forces period WebKit's WebGL chooser into Float. */
         case kCGLPFAColorSize:if(attrs[++i]>32) return kCGLBadPixelFormat;break;
         case kCGLPFAAlphaSize:if(attrs[++i]>8) return kCGLBadPixelFormat;break;
-        /* An explicit zero requests no accumulation storage, which this
-         * format already provides. Tiger iTunes Artwork's default format
-         * includes AccumSize,0; rejecting the selector even at zero makes
-         * AppKit return nil and its saver later calls a null GL dispatch.
-         * Do not advertise or admit nonzero accumulation buffers. */
+        /* Explicit zero still requests no storage (Tiger iTunes Artwork).
+         * Nonzero requests select actual lazy RGBA32F GPU accumulation. */
         case kCGLPFAAccumSize: {
             GLint bits=attrs[++i];if(bits<0)return kCGLBadValue;
-            if(bits)return kCGLBadPixelFormat;
+            if(bits>128 || (bits && !VIMNativeAccumulationAvailable()))return kCGLBadPixelFormat;
+            if(bits)accumulation=kCGLRGBAFloat128Bit;
             break;
         }
 #if VIM_GLI_DISPATCH_COUNT == 757 || __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ == 1040
@@ -278,7 +293,8 @@ GLI_EXPORT CGLError gliChoosePixelFormat(struct GLIPixelFormat **out,const GLint
     // Selected-format buffer flags differ from renderer capability masks:
     // single/monoscopic is represented by absence of double/stereo flags.
     p->buffers=double_buffer ? kCGLDoubleBufferBit : 0;
-    p->color=kCGLARGB8888Bit;p->accum=__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__==1040?0:0x80000000U;
+    p->color=kCGLARGB8888Bit;p->accum=accumulation?accumulation:
+        (__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__==1040?0:0x80000000U);
     p->depth=depth ? kCGL24Bit : kCGL0Bit;
     p->stencil=stencil ? kCGL8Bit : kCGL0Bit;p->display_mask=vim_hardware_display_mask;
     if(recovery||software_only){
@@ -302,8 +318,12 @@ GLI_EXPORT CGLError gliDestroyPixelFormat(struct GLIPixelFormat *p)
 }
 GLI_EXPORT CGLError gliQueryRendererInfo(struct GLIRenderer **out,unsigned mask)
 {
+    VIMGLITrace("query renderer mask=%x hardware=%x software=%x",mask,
+        vim_hardware_display_mask,vim_software_display_mask);
     if(!out) return kCGLBadAddress;
     *out=NULL;
+    struct VIMNativeRendererProperties properties=VIMGetNativeRendererProperties();
+    if(!properties.valid)return kCGLBadRendererInfo;
     int hardware=(mask&vim_hardware_display_mask)!=0;
     int software=(mask&vim_software_display_mask)&&VIMNativeRecoveryAvailable();
     if(!hardware&&!software)return kCGLNoError;
@@ -313,12 +333,20 @@ GLI_EXPORT CGLError gliQueryRendererInfo(struct GLIRenderer **out,unsigned mask)
     r->data[2]=kCGLMonoscopicBit|kCGLSingleBufferBit|kCGLDoubleBufferBit;
     r->data[3]=kCGLARGB8888Bit;r->data[5]=kCGL0Bit|kCGL24Bit;
     r->data[6]=kCGL0Bit|kCGL8Bit;
+    if(VIMNativeAccumulationAvailable())r->data[4]=kCGLRGBAFloat128Bit;
+#if VIM_GLI_DISPATCH_COUNT == 975
+    // Native Mojave DescribeRenderer properties140/141 read these words.
+    // NSIOAccelSurface matches this actual provider registry ID before it
+    // creates the CGL context used to consume an accelerated AppKit surface.
+    r->data[11]=(uint32_t)vim_native_gpu_registry_id;
+    r->data[12]=(uint32_t)(vim_native_gpu_registry_id>>32);
+#endif
 #if VIM_GLI_DISPATCH_COUNT != 757 && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ != 1040
     r->data[7]=vim_hardware_display_mask;
 #endif
-    VIMNativeRecoveryAvailable();
+    VIMGLITrace("renderer memory valid=%d video=%d texture=%d",properties.valid,
+        properties.video_mb,properties.texture_mb);
     if(VIMNativeGL4Available())r->data[1]|=VIM_GLI_GL4_FORMAT;
-    if(!vim_memory_valid) { free(r);return kCGLBadRendererInfo; }
     /* Native CGL prepends one pointer to the GLI record. DescribeRenderer's
      * MB fields are public +0x54/0x5c (64-bit) or +0x4c/0x54 (i386). */
 #if VIM_GLI_DISPATCH_COUNT == 757 || __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ == 1040
@@ -332,17 +360,20 @@ GLI_EXPORT CGLError gliQueryRendererInfo(struct GLIRenderer **out,unsigned mask)
     /* Tiger's compact native records contain bytes, not the later public
      * Megabytes properties queried by the host transport. Preserve units
      * and saturate rather than wrap a modern host's larger GPU budget. */
-    r->data[11]=VIMRendererMemoryBytes(vim_video_mb);
-    r->data[12]=VIMRendererMemoryBytes(vim_texture_mb);
+    r->data[11]=VIMRendererMemoryBytes(properties.video_mb);
+    r->data[12]=VIMRendererMemoryBytes(properties.texture_mb);
 #else
-    r->data[11]=(uint32_t)vim_video_mb;r->data[12]=(uint32_t)vim_texture_mb;
+    r->data[11]=(uint32_t)properties.video_mb;r->data[12]=(uint32_t)properties.texture_mb;
 #endif
 #else
-    r->data[17]=(uint32_t)vim_video_mb;r->data[19]=(uint32_t)vim_texture_mb;
+    r->data[17]=(uint32_t)properties.video_mb;r->data[19]=(uint32_t)properties.texture_mb;
 #endif
     if(software){
         struct GLIRenderer *sw=hardware?calloc(1,sizeof(*sw)):r;if(!sw){free(r);return kCGLBadAlloc;}
         *sw=*r;sw->data[0]=VIM_SOFTWARE_RENDERER_ID;sw->data[1]=__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__==1040?0x65d:0x000626dd;
+#if VIM_GLI_DISPATCH_COUNT == 975
+        sw->data[11]=sw->data[12]=0;
+#endif
         if(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__>=1090 && !VIMNativeGL4Available())
             sw->data[1]&=~VIM_GLI_GL4_FORMAT;
 #if VIM_GLI_DISPATCH_COUNT == 757 || __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ == 1040
@@ -363,8 +394,14 @@ GLI_EXPORT CGLError gliCreateContext(GLIContext *out,const struct GLIPixelFormat
 {
     (void)fallback;
     if(!out || !dispatch) return kCGLBadAddress;
-#if defined(__i386__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ == 1040 && VIM_GLI_DISPATCH_COUNT == 759
-    unsigned native_slots=VIMTigerDispatchCount();
+#if VIM_GLI_DISPATCH_COUNT == 764
+    // 10A432's engine stride is 0x17d8/0xbec, including three pointer-sized
+    // header fields: 760 slots, before the SDK's four appended functions.
+    // Select only after the unique native allocation guard identifies it.
+    unsigned native_slots=VIMNativeDispatchCount();
+    if(native_slots!=760&&native_slots!=764)return kCGLBadState;
+#elif defined(__i386__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ == 1040 && VIM_GLI_DISPATCH_COUNT == 759
+    unsigned native_slots=VIMNativeDispatchCount();
     if(native_slots!=686&&native_slots!=759)return kCGLBadState;
 #endif
     VIMGLITrace("create renderer=%x next=%x flags=%x",p?p->renderer:0,
@@ -390,8 +427,9 @@ GLI_EXPORT CGLError gliCreateContext(GLIContext *out,const struct GLIPixelFormat
     CGLPixelFormatAttribute attrs[]={kCGLPFAAccelerated,kCGLPFADepthSize,
         p->depth==kCGL0Bit ? 0 : 24,kCGLPFAStencilSize,p->stencil==kCGL0Bit ? 0 : 8,
         kCGLPFAOpenGLProfile,(CGLPixelFormatAttribute)profile,
+        kCGLPFAAccumSize,p->accum==kCGLRGBAFloat128Bit?128:0,
         kCGLPFADoubleBuffer,0};
-    if(!(p->buffers&kCGLDoubleBufferBit)) attrs[7]=0;
+    if(!(p->buffers&kCGLDoubleBufferBit)) attrs[9]=0;
     CGLPixelFormatObj pf=NULL;CGLContextObj ctx=NULL;GLint count=0;
     CGLError e=CGLChoosePixelFormat(attrs,&pf,&count);
     if(!e) e=CGLCreateContext(pf,share ? &((struct VIMContext *)share)->api : NULL,&ctx);
@@ -401,6 +439,9 @@ GLI_EXPORT CGLError gliCreateContext(GLIContext *out,const struct GLIPixelFormat
     v->native_renderer_screens=p->next?2:1;
     v->native_renderer_kinds=software?1:p->next?2:0;
     if(software){
+#if VIM_GLI_DISPATCH_COUNT == 975
+        VIMRequireFrontPublication(ctx->rend);
+#endif
         struct VIMSavedBinding previous=VIMSaveGLI(ctx->rend);struct DGNativeRendererInfo info={0};
         int selected=VIMBindGLI(ctx->rend)&&DGSelectNativeRenderer(1,&info)==1;
         if(selected)v->native_renderer_kind=1;
@@ -415,8 +456,8 @@ GLI_EXPORT CGLError gliCreateContext(GLIContext *out,const struct GLIPixelFormat
     // The second table is an in/out routing mask, not a second flat output.
     // Nonzero slots route there; zero slots route to the primary table.
     // WindowServer passes an all-zero dummy which must never be overwritten.
-#if defined(__i386__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ == 1040 && VIM_GLI_DISPATCH_COUNT == 759
-    if(native_slots==686)VIMTigerPopulatePrefix(dispatch,fallback,&ctx->disp,native_slots);
+#if VIM_GLI_DISPATCH_COUNT == 764 || (defined(__i386__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ == 1040 && VIM_GLI_DISPATCH_COUNT == 759)
+    if(native_slots!=VIM_GLI_DISPATCH_COUNT)VIMPopulateNativePrefix(dispatch,fallback,&ctx->disp,native_slots);
     else
 #endif
         VIMPopulateRoutedDispatch(dispatch,fallback,&ctx->disp);
@@ -442,20 +483,15 @@ static void VIMDestroyGLIDrawables(struct VIMContext *v)
     while(v->spare_drawables) {
         d=v->spare_drawables;v->spare_drawables=d->cache_next;d->cache_next=NULL;VIMDestroyDrawable(d);
     }
-#if defined(VIM_GLI_CONNECTION_REUSE_EXPERIMENT)
-    while(v->idle_drawable_connection_count) {
-        unsigned index=--v->idle_drawable_connection_count;
-        IOServiceClose(v->idle_drawable_connections[index]);v->idle_drawable_connections[index]=0;
-    }
-#endif
+    VIMCloseIdleDrawableConnections(v);
 }
 GLI_EXPORT CGLError gliGetInteger(GLIContext c,unsigned key,GLint *value)
 {
     VIMGLITrace("get integer key=%x",key);
     if(!value) return kCGLBadAddress;
     if(key==kCGLCPDispatchTableSize) {
-#if defined(__i386__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ == 1040 && VIM_GLI_DISPATCH_COUNT == 759
-        unsigned slots=VIMTigerDispatchCount();if(!slots)return kCGLBadState;
+#if VIM_GLI_DISPATCH_COUNT == 764 || (defined(__i386__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ == 1040 && VIM_GLI_DISPATCH_COUNT == 759)
+        unsigned slots=VIMNativeDispatchCount();if(!slots)return kCGLBadState;
         *value=slots*sizeof(void *);
 #else
         *value=VIM_GLI_DISPATCH_COUNT*sizeof(void *);
@@ -465,6 +501,11 @@ GLI_EXPORT CGLError gliGetInteger(GLIContext c,unsigned key,GLint *value)
     if(!c) return kCGLBadContext;
     struct VIMContext *v=(struct VIMContext *)c;
     switch(key) {
+#if VIM_GLI_DISPATCH_COUNT == 975
+    case 0x1f6:return VIMGetPVGSurfaceInfo(value);
+    case kCGLCPSwapRectangle:memcpy(value,v->swap_rectangle,sizeof(v->swap_rectangle));break;
+    case kCGLCESwapRectangle:*value=v->swap_rectangle_enabled;break;
+#endif
     /* Native 14F27 CGLGetShareGroup asks the engine for a gfxSharedState*
      * with selector0x3a2, then returns the output without checking CGLError.
      * Our process-local GL object group is NOT a native OpenCL share group.
@@ -488,6 +529,18 @@ GLI_EXPORT CGLError gliSetInteger(GLIContext c,unsigned key,const GLint *value)
     if(!c) return kCGLBadContext;if(!value) return kCGLBadAddress;
     struct VIMContext *v=(struct VIMContext *)c;
     switch(key) {
+#if VIM_GLI_DISPATCH_COUNT == 975
+    // Native Mojave GLEngine stores one pointer for key800. AppKit's
+    // NSCGLSurface registers NSCGLSurfaceFlush here before CGLSetSurface.
+    // It is a presentation callback, not a GLD integer or an ObjC object.
+    case 0x320:memcpy(&v->native_surface_flush,value,sizeof(v->native_surface_flush));break;
+    // Native Mojave Intel accepts/round-trips these state requests. Its
+    // front-buffer readback still sees the full swap in the owned fixture;
+    // this hint must not change application GL scissor state or ordinary
+    // Flush/Finish publication. AppKit/Core Image checks the return value.
+    case kCGLCPSwapRectangle:memcpy(v->swap_rectangle,value,sizeof(v->swap_rectangle));break;
+    case kCGLCESwapRectangle:v->swap_rectangle_enabled=!!*value;break;
+#endif
     case 0x7aa:memcpy(&v->client_storage,value,sizeof(uintptr_t));break;
     case 0x2bd:v->plugin_policy=*value;break;
     case kCGLCPSwapInterval:v->swap_interval=*value;break;
@@ -499,6 +552,13 @@ GLI_EXPORT CGLError gliSetInteger(GLIContext c,unsigned key,const GLint *value)
          * state; do not invent a delay, remove a fence or change vsync. */
         v->swap_limit=!!*value;break;
     case kCGLCPSurfaceOpacity:
+#if VIM_GLI_DISPATCH_COUNT == 975
+        if(v->drawable && v->drawable->backing) {
+            int (*set_opacity)(int,int,unsigned char)=dlsym(RTLD_DEFAULT,"SLSSetWindowOpacity");
+            if(set_opacity && set_opacity(v->drawable->connection,v->drawable->backing,!!*value))
+                return kCGLBadDrawable;
+        }
+#endif
         /* Native Intel's Mercury gldSetInteger explicitly accepts this
          * notification without changing GL state. CGL/CGS own surface opacity;
          * do not rewrite alpha or duplicate their window-state storage. */
@@ -551,6 +611,9 @@ GLI_EXPORT CGLError gliAttachDrawableWithOptions(GLIContext c,unsigned type,cons
      * screen zero; do not assume the driver's original linked-list order. */
     unsigned kind=(v->native_renderer_kinds>>screen)&1;
     if(kind!=v->native_renderer_kind){
+#if VIM_GLI_DISPATCH_COUNT == 975
+        VIMRequireFrontPublication(c);
+#endif
         struct VIMSavedBinding previous=VIMSaveGLI(c);struct DGNativeRendererInfo info={0};
         int selected=VIMBindGLI(c)&&DGSelectNativeRenderer(kind,&info)==1;
         if(selected){v->native_renderer_kind=kind;VIMInvalidateImportedDrawables(v);VIMInvalidateFramebufferAttachments(c);}

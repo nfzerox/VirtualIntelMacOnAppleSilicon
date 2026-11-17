@@ -13,6 +13,20 @@ import tarfile
 import tempfile
 
 
+def configure_boot_graphics(config, guest):
+    if guest != 'mavericks':
+        return
+    # Mavericks boot.efi consumes this variable as "Booting in black mode":
+    # it suppresses the embedded Apple logo AND spinner, not just the gray
+    # background. Keep Apple's normal boot UI rather than drawing a fake one.
+    # Clear persisted values without resetting any other guest NVRAM.
+    guid = '4D1EDE05-38C7-4A6A-9CC6-4BCCA8B38C14'
+    config['NVRAM']['Add'].get(guid, {}).pop('DefaultBackgroundColor', None)
+    deleted = config['NVRAM'].setdefault('Delete', {}).setdefault(guid, [])
+    if 'DefaultBackgroundColor' not in deleted:
+        deleted.append('DefaultBackgroundColor')
+
+
 def set_framebuffer_model(fat, guest):
     # Match the period profile advertised by the accelerated GL renderer.
     # VMsvga2 publishes this name as the PCI device's `model` property; its
@@ -63,6 +77,7 @@ def main():
         parts=fat.parts(name);existing=fat.find(fat.directory(parts[:-1],create=True),parts[-1])
         fat.write(name,content,replace=existing is not None)
     config=plistlib.loads(fat.read('EFI/OC/config.plist'))
+    configure_boot_graphics(config, args.guest)
     # OpenCore regenerates Apple SMBIOS type 131. Its auto-detected Core 2
     # Duo code has no four-core name in AppleSystemInfo. The Penryn Xeon
     # family has period labels for one, two and four cores, including our
@@ -136,15 +151,11 @@ def main():
     loader=source/'prebuilt/PassthroughOpenGL/Firmware/OpenCore'
     loader_receipt=runpy.run_path(str(source/'scripts/build-opengl-opencore.py'))['verify'](loader)
     fat.write('EFI/OC/OpenCore.efi',(loader/'OpenCore.efi').read_bytes(),replace=True)
-    if period:
-        # Native 10.8 DSP symbols also require the source-matched loader's
-        # linkedit file-bounds correction on the installed-system path.
-        if args.guest=='lion':
-            # Apple's Lion recovery cache uses 45 disk fragments. The older
-            # bundled OpenHfsPlus stops at the first eight (4.78 MB), before
-            # the x64 FAT slice. Read its native extent overflow index instead
-            # of thinning/rewriting Apple's cache or changing CPU identity.
-            fat.write('EFI/OC/Drivers/OpenHfsPlus.efi',(loader/'OpenHfsPlus.efi').read_bytes(),replace=True)
+    # Both original recovery caches and host-rebuilt installed caches can
+    # exceed HFS+'s eight inline extents (including updated El Capitan).
+    # Use the existing overflow-aware reader for every profile, not just Lion.
+    # Preserve Apple's cache bytes and native filesystem allocation.
+    fat.write('EFI/OC/Drivers/OpenHfsPlus.efi',(loader/'OpenHfsPlus.efi').read_bytes(),replace=True)
     # Independently compiled against each guest's actual kernel headers.
     # Mavericks also uses an explicit source/byte receipt, not the historical
     # kernel snapshot still present in the base archive. Never silently ship

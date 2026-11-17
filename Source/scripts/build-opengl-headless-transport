@@ -1,0 +1,123 @@
+#!/bin/zsh
+# Mojave transport and paired renderer; never installs or selects it in a VM.
+set -euo pipefail
+repo=${0:A:h:h}
+sdk=${VIM_OPENGL_KERNEL_SDK:-"$repo/resources/xcode/XcodeMojave.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"}
+kernel="$sdk/System/Library/Frameworks/Kernel.framework"
+toolchain="$repo/resources/xcode/XcodeMojave.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+out=${1:-"$repo/Build/MojaveHeadlessTransport"}
+publish=${2:-}
+[[ -z "$publish" || "$publish" == --publish-prebuilt ]] || {
+    print -u2 'usage: build-opengl-headless-transport [OUTPUT_DIRECTORY] [--publish-prebuilt]';exit 64;
+}
+product="$out/PassthroughOpenGLTransport.kext/Contents"
+mkdir -p "$product/MacOS"
+flags=(-arch x86_64 -mmacosx-version-min=10.14 -isysroot "$sdk"
+    -nostdinc -I"$kernel/PrivateHeaders" -I"$kernel/Headers"
+    -DKERNEL -DKERNEL_PRIVATE -DDRIVER_PRIVATE -DAPPLE -DNeXT
+    -mkernel -fno-builtin -fno-common -O2 -Wall -Wextra -Wno-unused-parameter)
+"$toolchain/clang++" $flags -std=gnu++14 -fno-exceptions -fno-rtti -fapple-kext \
+    -c "$repo/compat/PassthroughOpenGLTransport/PassthroughOpenGLTransport.cpp" -o "$out/driver.o"
+"$toolchain/clang" $flags -c "$repo/compat/PassthroughOpenGLTransport/kmod_info.c" -o "$out/info.o"
+"$toolchain/ld" -arch x86_64 -kext -macosx_version_min 10.14 \
+    -o "$product/MacOS/PassthroughOpenGLTransport" "$out/driver.o" "$out/info.o" \
+    -L"$sdk/usr/lib" -lkmod -lkmodc++
+cp "$repo/compat/PassthroughOpenGLTransport/Info.plist" "$product/Info.plist"
+codesign --force --sign - "$out/PassthroughOpenGLTransport.kext"
+# The same finite rendering fixture can now use the real guest endpoint,
+# rather than an in-process test executor. It includes the paired GL client
+# directly, and exports only main so native framework calls cannot interpose.
+pair="$out/GuestPair"
+VIM_OPENGL_MIN_VERSION=10.14 VIM_GUEST_GL_PAIR_BUILD="$pair" \
+    bash "$repo/scripts/build-opengl-guest-gl-pair"
+zsh "$repo/scripts/build-mojave-opengl-selector" "$out/GLEngineSelector"
+"$toolchain/clang" -O2 -fno-omit-frame-pointer -fvisibility=hidden \
+    -arch x86_64 -arch i386 -isysroot "$repo/resources/sdk/MacOSX10.9.sdk" \
+    -mmacosx-version-min=10.14 -I"$pair" -I"$pair/PeriodABI" \
+    "$repo/probes/opengl-direct-inprocess.c" -framework IOKit -framework CoreFoundation \
+    -Wl,-exported_symbol,_main -o "$out/opengl-headless-draw"
+codesign --force --sign - "$out/opengl-headless-draw"
+"$toolchain/clang" -O2 -fvisibility=hidden -arch x86_64 -arch i386 \
+    -isysroot "$repo/resources/sdk/MacOSX10.9.sdk" -mmacosx-version-min=10.14 \
+    -I"$pair" -I"$pair/PeriodABI" "$repo/probes/opengl-headless-scatter.c" \
+    -framework IOKit -framework CoreFoundation -Wl,-exported_symbol,_main \
+    -o "$out/opengl-headless-scatter"
+codesign --force --sign - "$out/opengl-headless-scatter"
+"$toolchain/clang" -O2 -fvisibility=hidden -arch x86_64 -arch i386 \
+    -isysroot "$repo/resources/sdk/MacOSX10.9.sdk" -mmacosx-version-min=10.14 \
+    -I"$pair" -I"$pair/PeriodABI" "$repo/probes/opengl-headless-upload.c" \
+    -framework IOKit -framework CoreFoundation -Wl,-exported_symbol,_main \
+    -o "$out/opengl-headless-upload"
+codesign --force --sign - "$out/opengl-headless-upload"
+"$toolchain/clang" -O2 -arch x86_64 -arch i386 \
+    -isysroot "$repo/resources/sdk/MacOSX10.9.sdk" -mmacosx-version-min=10.14 \
+    "$repo/probes/opengl-headless-lifetime.c" -framework IOKit -framework CoreFoundation \
+    -o "$out/opengl-headless-lifetime"
+codesign --force --sign - "$out/opengl-headless-lifetime"
+"$toolchain/clang" -O2 -arch x86_64 -arch i386 \
+    -isysroot "$repo/resources/sdk/MacOSX10.9.sdk" -mmacosx-version-min=10.9 \
+    "$repo/probes/opengl-mojave-self-back-import.m" -framework Cocoa -framework OpenGL \
+    -o "$out/opengl-mojave-self-back-import"
+codesign --force --sign - "$out/opengl-mojave-self-back-import"
+"$toolchain/clang" -O2 -arch x86_64 -arch i386 \
+    -isysroot "$repo/resources/sdk/MacOSX10.9.sdk" -mmacosx-version-min=10.9 \
+    "$repo/probes/opengl-mojave-window-alpha.m" -framework Cocoa -framework OpenGL \
+    -o "$out/opengl-mojave-window-alpha"
+codesign --force --sign - "$out/opengl-mojave-window-alpha"
+for probe in opengl-mojave-appkit-toolbar opengl-gl-window-destination; do
+    "$toolchain/clang" -O2 -arch x86_64 -arch i386 \
+        -isysroot "$repo/resources/sdk/MacOSX10.9.sdk" -mmacosx-version-min=10.9 \
+        "$repo/probes/$probe.m" -framework Cocoa -framework OpenGL -o "$out/$probe"
+    codesign --force --sign - "$out/$probe"
+done
+for probe in opengl-mojave-front-publication opengl-mojave-drawable-lifetime; do
+    "$toolchain/clang" -O2 -arch x86_64 -arch i386 -fblocks \
+        -isysroot "$repo/resources/sdk/MacOSX10.9.sdk" -mmacosx-version-min=10.14 \
+        "$repo/probes/$probe.m" -framework Cocoa -framework OpenGL -o "$out/$probe"
+    codesign --force --sign - "$out/$probe"
+done
+"$toolchain/clang" -O2 -arch x86_64 -arch i386 \
+    -isysroot "$repo/resources/sdk/MacOSX10.9.sdk" -mmacosx-version-min=10.14 \
+    -DVIM_GLI_DISPATCH_COUNT=975 "$repo/probes/opengl-native-cgl-recovery-check.c" \
+    -framework OpenGL -o "$out/mojave-native-recovery-check"
+codesign --force --sign - "$out/mojave-native-recovery-check"
+"$toolchain/clang" -O2 -arch x86_64 -arch i386 \
+    -isysroot "$repo/resources/sdk/MacOSX10.9.sdk" -mmacosx-version-min=10.14 \
+    "$repo/probes/opengl-pvg-drawable-api.c" \
+    -framework IOKit -framework CoreFoundation -framework IOSurface \
+    -o "$out/opengl-pvg-drawable-api"
+codesign --force --sign - "$out/opengl-pvg-drawable-api"
+"$toolchain/clang" -O2 -arch x86_64 -arch i386 \
+    -isysroot "$repo/resources/sdk/MacOSX10.9.sdk" -mmacosx-version-min=10.9 \
+    "$repo/probes/opengl-gl-renderer-info.c" -framework OpenGL -o "$out/renderer-info"
+codesign --force --sign - "$out/renderer-info"
+# This native AppKit fixture needs no newer APIs. Its period deployment target
+# avoids modern ARC helper imports absent from the 10.9 SDK's linker stubs.
+for name in native-gl-window native-gl-window-core; do
+    profile=()
+    if [[ "$name" == native-gl-window-core ]]; then profile=(-DVIM_GL_WINDOW_CORE=1); fi
+    "$toolchain/clang" -O2 -arch x86_64 -arch i386 \
+        -isysroot "$repo/resources/sdk/MacOSX10.9.sdk" -mmacosx-version-min=10.9 \
+        $profile "$repo/probes/opengl-gl-window.m" -framework Cocoa -framework OpenGL -framework ApplicationServices \
+        -o "$out/$name"
+    codesign --force --sign - "$out/$name"
+done
+# A bare period-compiled CLI does not opt in to Retina AppKit backing. Keep a
+# real high-resolution app fixture beside it so a 1x window cannot stand in for
+# qualification of the mixed PVG/Passthrough OpenGL surface contract.
+window_app="$out/OpenGL Window Probe.app/Contents"
+mkdir -p "$window_app/MacOS"
+cp "$out/native-gl-window" "$window_app/MacOS/native-gl-window"
+cp "$repo/probes/opengl-gl-window-Info.plist" "$window_app/Info.plist"
+/usr/libexec/PlistBuddy -c 'Set :CFBundleExecutable native-gl-window' "$window_app/Info.plist"
+codesign --force --sign - "$out/OpenGL Window Probe.app"
+mkdir -p "$out/WindowResources/GLEngine.bundle"
+cp "$pair/GLEngine" "$out/WindowResources/GLEngine.bundle/GLEngine"
+cp "$pair/libVIMPassthroughOpenGL.dylib" "$out/WindowResources/GLEngine.bundle/"
+if [[ "$publish" == --publish-prebuilt ]]; then
+    frozen="$repo/prebuilt/PassthroughOpenGL/mojave"
+    mkdir -p "$frozen/GuestTools" "$frozen/Kernel"
+    cp "$pair/GLEngine" "$pair/libVIMPassthroughOpenGL.dylib" "$frozen/GuestTools/"
+    cp "$out/GLEngineSelector" "$frozen/GuestTools/"
+    ditto "$out/PassthroughOpenGLTransport.kext" "$frozen/Kernel/PassthroughOpenGLTransport.kext"
+fi

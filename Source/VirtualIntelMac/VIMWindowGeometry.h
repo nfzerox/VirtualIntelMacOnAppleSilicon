@@ -4,9 +4,12 @@
 // Request the actual view geometry, not an artificially narrowed framebuffer.
 // The owned pre-Metal QEMU driver uses tight scanout rows. Only a 2x mode
 // needs even dimensions; 1x modes can represent every whole view point.
-static inline NSSize VIMRequestedGuestPixelSize(NSSize view, CGFloat factor,
-    BOOL preMetal, BOOL retina, BOOL largeOpenGL) {
+static inline NSSize VIMRequestedGuestPixelSizeWithin(NSSize view, CGFloat factor,
+    BOOL preMetal, BOOL retina, BOOL largeOpenGL, CGFloat maxWidth) {
     CGFloat quantum=retina||!preMetal?2:1;
+    // A guest whose compositor cannot use wide displays keeps the window's
+    // shape at a lower density instead of a width it would crash at.
+    if(maxWidth>0&&view.width>0)factor=MIN(factor,maxWidth/view.width);
     // Match the display transport's 8192-pixel limit. Preserve the view's
     // shape if it would need more pixels than the primary can hold.
     if(preMetal&&view.width>0&&view.height>0) {
@@ -25,6 +28,10 @@ static inline NSSize VIMRequestedGuestPixelSize(NSSize view, CGFloat factor,
         width=MAX(640,MIN(8192,width));height=MAX(400,MIN(8192,height));
     }
     return NSMakeSize(width,height);
+}
+static inline NSSize VIMRequestedGuestPixelSize(NSSize view, CGFloat factor,
+    BOOL preMetal, BOOL retina, BOOL largeOpenGL) {
+    return VIMRequestedGuestPixelSizeWithin(view,factor,preMetal,retina,largeOpenGL,0);
 }
 
 // All dimensions are AppKit points, independent of the host's pixel density.

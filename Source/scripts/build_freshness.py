@@ -16,7 +16,7 @@ import sys
 SCHEMA = 1
 DEPENDENCY_RECIPES = ('build-universal-dependencies.py', 'usb_dependency_state.py',
                       'deployment_target.py', 'build_freshness.py')
-RUNTIME_RECIPES = ('build-app-runtime.py', 'build-pvg-oop-helper', 'build_signing.py')
+RUNTIME_RECIPES = ('build-app-runtime.py', 'build-pvg-oop-helper', 'build_signing.py', 'build-hybrid-engine')
 FIRMWARE_RECIPES = ('build-guest-firmware.py', 'firmware_source.py', 'build_freshness.py')
 
 
@@ -102,6 +102,7 @@ def snapshot(source, component, qemu=None):
         groups = [(p, source / p) for p in paths]
         if component == 'runtime':
             groups.append(('qemu', Path(qemu or source/'vendor/qemu')))
+            groups.append(('HybridEngine', source/'HybridHypervisor'))
             if os.environ.get('PVG_OOP_SHADOW_SOURCE'):
                 groups.append(('HelperShadowOverride', Path(os.environ['PVG_OOP_SHADOW_SOURCE'])))
     elif component == 'firmware':

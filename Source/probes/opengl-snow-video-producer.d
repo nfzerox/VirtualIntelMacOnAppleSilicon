@@ -87,7 +87,10 @@ pid$target:*:QTVisualContextCopyImageForTime:return
 }
 
 pid$target:CoreVideo:CVPixelBufferGetPixelFormatType:return,
-pid$target:IOSurface:IOSurfaceGetPixelFormat:return
+/* The public IOSurface getter tail-jumps to this measured native leaf.
+ * Its own pid:return probe fires before the leaf loads the return register
+ * and therefore records a stale value, not the surface's actual FourCC. */
+pid$target:IOSurface:IOSurfaceClientGetPixelFormat:return
 {
     @pixelFormats[probemod,probefunc,(uint32_t)arg1]=count();
 }

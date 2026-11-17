@@ -71,6 +71,18 @@ int64_t cpu_get_ticks(void)
     return ticks;
 }
 
+int64_t cpu_get_ticks_offset(void)
+{
+    int64_t offset;
+
+    qemu_spin_lock(&timers_state.vm_clock_lock);
+    /* Apply the same host-counter discontinuity accounting as RDTSC. */
+    cpu_get_ticks_locked();
+    offset = timers_state.cpu_ticks_offset;
+    qemu_spin_unlock(&timers_state.vm_clock_lock);
+    return offset;
+}
+
 int64_t cpu_get_clock_locked(void)
 {
     int64_t time;

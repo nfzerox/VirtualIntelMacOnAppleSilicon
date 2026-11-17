@@ -1,5 +1,6 @@
 #import "VIMLocalization.h"
 #import "VIMUSBClient.h"
+#import "VIMPrivilegedConnection.h"
 #import "VIMQMPConnection.h"
 #import "../USBHelper/VIMUSBProtocol.h"
 #import <ServiceManagement/ServiceManagement.h>
@@ -14,7 +15,7 @@
 #include <readpassphrase.h>
 
 @interface VIMUSBClient ()
-@property NSXPCConnection *connection;
+@property VIMPrivilegedConnection *connection;
 @property NSMutableDictionary<NSString *,NSDictionary *> *sessions;
 @property NSMutableDictionary<NSString *,NSString *> *retiringCharacters;
 @property BOOL prepared;
@@ -52,10 +53,8 @@ static void InstallUSBHelper(BOOL terminal,void (^completion)(NSError *)) {
 - (instancetype)init {if((self=[super init])){_sessions=[NSMutableDictionary new];_retiringCharacters=[NSMutableDictionary new];}return self;}
 - (void)openConnection {
     [self.connection invalidate];
-    NSXPCConnection *connection=[[NSXPCConnection alloc] initWithMachServiceName:VIM_USB_SERVICE options:NSXPCConnectionPrivileged];
-    connection.remoteObjectInterface=VIMUSBInterface();
     NSString *requirement=NSBundle.mainBundle.infoDictionary[@"SMPrivilegedExecutables"][VIM_USB_SERVICE];
-    if(@available(macOS 13.0,*)){if(requirement.length)[connection setCodeSigningRequirement:requirement];}
+    VIMPrivilegedConnection *connection=[[VIMPrivilegedConnection alloc] initWithMachServiceName:VIM_USB_SERVICE requirement:requirement];
     __weak VIMUSBClient *weakSelf=self;
     connection.invalidationHandler=^{dispatch_async(dispatch_get_main_queue(),^{weakSelf.prepared=NO;});};
     self.connection=connection;[connection resume];

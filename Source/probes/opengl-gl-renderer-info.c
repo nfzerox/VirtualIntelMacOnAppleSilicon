@@ -19,7 +19,8 @@ int main(int argc,char **argv)
             glGetString(GL_VERSION),glGetString(GL_EXTENSIONS));
         CGLSetCurrentContext(NULL);CGLDestroyContext(context);return 0;
     }
-    if(argc!=1)return 64;
+    int registry=argc==2&&!strcmp(argv[1],"--registry");
+    if(argc!=1&&!registry)return 64;
     CGLRendererInfoObj info=NULL;GLint n=0;
     CGLError e=CGLQueryRendererInfo(~0U,&info,&n);
     printf("renderers error=%d count=%d\n",e,n);if(e) return 1;
@@ -29,6 +30,10 @@ int main(int argc,char **argv)
     for(GLint i=0;i<n;++i) {
         printf("renderer %d",i);
         for(unsigned k=0;k<sizeof(keys)/sizeof(keys[0]);++k) { GLint v=0;e=CGLDescribeRenderer(info,i,keys[k],&v);printf(" %s=%d(error=%d)",names[k],v,e); }
+        if(registry)for(unsigned k=140;k<=141;++k){
+            GLint v=0;e=CGLDescribeRenderer(info,i,(CGLRendererProperty)k,&v);
+            printf(" registry_%s=%08x(error=%d)",k==140?"low":"high",(unsigned)v,e);
+        }
         puts("");
     }
     CGLDestroyRendererInfo(info);return 0;
