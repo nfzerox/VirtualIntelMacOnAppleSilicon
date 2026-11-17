@@ -96,6 +96,12 @@ static NSError *VIMQMPError(NSString *message) {
                 [self.buffer replaceBytesInRange:NSMakeRange(0,sentinel-bytes+1) withBytes:NULL length:0];
                 self.awaitingSentinel=NO;continue;
             }
+            // Before the delimiter none of these bytes belongs to the new
+            // reply. Drain stale output incrementally, not into the bounded
+            // JSON buffer; a previous oversized response must not prevent
+            // every subsequent synchronization. The existing deadline still
+            // bounds a peer that never sends its marker.
+            [self.buffer setLength:0];
         }
         const uint8_t *newline=self.awaitingSentinel?NULL:memchr(bytes,'\n',self.buffer.length);
         if(newline) {

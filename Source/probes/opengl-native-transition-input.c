@@ -7,6 +7,7 @@
 #include <ApplicationServices/ApplicationServices.h>
 #include <Carbon/Carbon.h>
 #include <mach/mach_time.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -74,7 +75,13 @@ static int escape(void)
 }
 int main(int argc,char **argv)
 {
-    const char *usage="usage: opengl-native-transition-input mission-control|app-expose|spaces|fullscreen|launchpad|escape|spotlight-toggle|spotlight-typing\n";
+    const char *usage="usage: opengl-native-transition-input [--pid PID] mission-control|app-expose|spaces|fullscreen|launchpad|escape|spotlight-toggle|spotlight-typing|loupe|return\n";
+    pid_t target=0;
+    if(argc==4&&!strcmp(argv[1],"--pid")){
+        char *end=NULL;long value=strtol(argv[2],&end,10);
+        if(!end||*end||value<2||value>INT_MAX){fputs(usage,stderr);return 2;}
+        target=(pid_t)value;argc-=2;argv+=2;
+    }
     if(argc!=2){fputs(usage,stderr);return 2;}
     if(!strcmp(argv[1],"--help")){fputs(usage,stdout);return 0;}
     int spaces=!strcmp(argv[1],"spaces"),fullscreen=!strcmp(argv[1],"fullscreen");
@@ -83,7 +90,21 @@ int main(int argc,char **argv)
     int dismiss=!strcmp(argv[1],"escape");
     int typing=!strcmp(argv[1],"spotlight-typing");
     int spotlight=!strcmp(argv[1],"spotlight-toggle");
-    if(!spaces&&!fullscreen&&!expose&&!mission&&!launchpad&&!dismiss&&!typing&&!spotlight){fputs(usage,stderr);return 2;}
+    int loupe=!strcmp(argv[1],"loupe");
+    int confirm=!strcmp(argv[1],"return");
+    if(!spaces&&!fullscreen&&!expose&&!mission&&!launchpad&&!dismiss&&!typing&&!spotlight&&!loupe&&!confirm){fputs(usage,stderr);return 2;}
+    if(target){
+        ProcessSerialNumber process;
+        if(GetProcessForPID(target,&process)||SetFrontProcess(&process))return 1;
+        int active=0;
+        for(unsigned i=0;i<40;++i){
+            ProcessSerialNumber front;pid_t pid=0;
+            if(!GetFrontProcess(&front)&&!GetProcessPID(&front,&pid)&&pid==target){active=1;break;}
+            usleep(50000);
+        }
+        if(!active){fputs("The requested process did not become frontmost; no key sent\n",stderr);return 1;}
+        fprintf(stderr,"FRONTMOST pid=%d\n",target);
+    }
     mach_timebase_info(&timebase);began=mach_absolute_time();
     source=CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
     if(!source){fputs("CGEvent source unavailable; no input sent\n",stderr);return 1;}
@@ -96,6 +117,10 @@ int main(int argc,char **argv)
     fprintf(stderr,"CLOCK native_begin=%.9f\n",absolute_seconds(began));
     fprintf(stderr,"READY native %s input; require visible transition evidence\n",argv[1]);fflush(stderr);
     if(dismiss)return escape()?0:1;
+    if(confirm)return key(kVK_Return,1)&&pause_for(.05)&&key(kVK_Return,0)?0:1;
+    // Explicit one-shot Aperture comparison. Caller must first visibly select
+    // a photo. Posting is not proof of delivery or rendering correctness.
+    if(loupe)return key(kVK_ANSI_Grave,1)&&pause_for(.05)&&key(kVK_ANSI_Grave,0)?0:1;
     if(spotlight)return key(kVK_Command,1)&&key(kVK_Space,1)&&pause_for(.05)&&
         key(kVK_Space,0)&&key(kVK_Command,0)?0:1;
     if(typing){

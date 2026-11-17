@@ -22,6 +22,7 @@
 #include "qemu/target-info.h"
 #include "accel/tcg/cpu-loop.h"
 #include "accel/tcg/cpu-ops.h"
+#include "accel/tcg/handoff.h"
 #include "accel/tcg/iommu.h"
 #include "accel/tcg/probe.h"
 #include "exec/page-protection.h"
@@ -1167,6 +1168,13 @@ void tlb_reset_dirty(CPUState *cpu, uintptr_t start, uintptr_t length)
     tlb_context_invalidate_locked(cpu, false);
     for (mmu_idx = 0; mmu_idx < NB_MMU_MODES; mmu_idx++) {
         CPUTLBDesc *desc = &cpu->neg.tlb.d[mmu_idx];
+        /* No fill remains and no entry has entered the victim cache since
+         * the last complete flush. Occupancy alone is not sufficient once
+         * victim entries have been used. Avoid scanning untouched tables,
+         * including the unused modes of secondary CPUs during early boot. */
+        if (desc->n_used_entries == 0 && desc->vindex == 0) {
+            continue;
+        }
         CPUTLBDescFast *fast = cpu_tlb_fast(cpu, mmu_idx);
         unsigned int n = tlb_n_entries(fast);
         unsigned int i;
@@ -1584,6 +1592,9 @@ static void notdirty_write(CPUState *cpu, vaddr mem_vaddr, unsigned size,
     ram_addr_t ram_addr = mem_vaddr + full->xlat_offset;
 
     trace_memory_notdirty_write_access(mem_vaddr, ram_addr, size);
+    if (unlikely(tcg_handoff)) {
+        tcg_handoff->note_write(ram_addr, size, true);
+    }
 
     if (!physical_memory_get_dirty_flag(ram_addr, DIRTY_MEMORY_CODE)) {
         tb_invalidate_phys_range_fast(cpu, ram_addr, size, retaddr);
@@ -1688,7 +1699,11 @@ int probe_access_full_mmu(CPUArchState *env, vaddr addr, int size,
     /* Handle clean RAM pages.  */
     if (unlikely(flags & TLB_NOTDIRTY)) {
         int dirtysize = size == 0 ? 1 : size;
-        notdirty_write(env_cpu(env), addr, dirtysize, *pfull, 0);
+        /* A page-table write probe is not a committed store. Keep the
+         * engine's clean/write-protected tracking until a real write. */
+        if (likely(!tcg_handoff)) {
+            notdirty_write(env_cpu(env), addr, dirtysize, *pfull, 0);
+        }
         flags &= ~TLB_NOTDIRTY;
     }
 

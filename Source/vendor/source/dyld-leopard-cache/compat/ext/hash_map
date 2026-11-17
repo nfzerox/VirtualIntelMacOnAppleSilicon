@@ -1,0 +1,21 @@
+#pragma once
+#include <cstring>
+#include <functional>
+#include <unordered_map>
+namespace __gnu_cxx {
+template<class K> struct hash : std::hash<K> {};
+template<> struct hash<const char*> {
+    size_t operator()(const char* key) const {
+        size_t h = 0;
+        for (; *key; ++key) h = 5 * h + (unsigned char)*key;
+        return h;
+    }
+};
+template<class K, class V, class H = hash<K>, class E = std::equal_to<K>>
+class hash_map : public std::unordered_map<K, V, H, E> {
+public:
+    void resize(size_t n) { this->rehash(n); }
+};
+template<class K, class V, class H = hash<K>, class E = std::equal_to<K>>
+using hash_multimap = std::unordered_multimap<K, V, H, E>;
+}

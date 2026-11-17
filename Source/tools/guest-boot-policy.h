@@ -1,5 +1,6 @@
 // Preference-only guest compatibility. No NVRAM, TCC, host settings or kernel
 // changes. The caller admits the live guest and authenticates its identity.
+#include "guest-system-version.h"
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -73,7 +74,7 @@ static NSDictionary *BootPolicyOperation(NSString *requestPath,BOOL configure) {
     Check(count==(ssize_t)data.length,@"Boot-policy request could not be read completely");
     id request=[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
     Check([request isKindOfClass:NSDictionary.class]&&[request[@"ProtocolVersion"] isEqual:@1],@"Invalid boot-policy request");
-    NSString *guest=[live[@"ProductVersion"] hasPrefix:@"10.14."]?@"mojave":([live[@"ProductVersion"] hasPrefix:@"10.15."]?@"catalina":@"bigsur");
+    NSString *guest=VIMGuestForSystemVersion(live[@"ProductVersion"]);
     Check([request[@"Guest"] isEqual:guest]&&[request[@"VolumeUUID"] isEqual:live[@"VolumeUUID"]],@"Boot-policy request belongs to a different guest or volume");
     if(configure)for(NSString *key in @[@"ProductBuildVersion",@"BootSessionUUID"])
         Check([request[key] isEqual:live[key]],@"The guest boot/build changed; no compatibility preference was written");

@@ -2,6 +2,14 @@
 #import "../VirtualIntelMac/VIMOpenGLRestartEvidence.h"
 #include <assert.h>
 int main(void){@autoreleasepool {
+    NSUserDefaults *preferences=[[NSUserDefaults alloc] initWithSuiteName:NSUUID.UUID.UUIDString];
+    [preferences setVolatileDomain:@{@"VIMDevelopmentAutoRestartGraphicsSupport":@NO} forName:NSArgumentDomain];
+    assert(!VIMGraphicsSetupRestartsAutomatically(NO,preferences));
+    assert(VIMGraphicsSetupRestartsAutomatically(YES,preferences));
+    [preferences setVolatileDomain:@{@"VIMDevelopmentAutoRestartGraphicsSupport":@YES} forName:NSArgumentDomain];
+    assert(VIMGraphicsSetupRestartsAutomatically(NO,preferences));
+    [preferences setVolatileDomain:@{@"VIMDevelopmentAutoRestartGraphicsSupport":@NO} forName:NSArgumentDomain];
+    assert(!VIMGraphicsSetupRestartsAutomatically(NO,preferences));
     NSString *old=@"CFAD1CCA-49A1-450C-8559-81FEDA907D98",*now=@"00112233-4455-6677-8899-AABBCCDDEEFF";
     NSMutableDictionary *initial=[@{@"MachineIdentifier":now,@"VolumeUUID":old,
         @"KernelMatchesSystem":@YES,@"Graphics":@{}} mutableCopy];
@@ -29,6 +37,15 @@ int main(void){@autoreleasepool {
     assert(VIMOpenGLBundledSupportMatches(@"leopard",report,expected));
     [report removeObjectForKey:@"GraphicsRestartEvidenceVersion"];
     assert(VIMOpenGLBundledSupportMatches(@"tiger",report,expected));
+    NSDictionary *versioned=@{@"GraphicsSupportRevision":@11,@"EngineSHA256":@"different rebuild",@"BackendSHA256":@"different rebuild"};
+    assert(!VIMOpenGLBundledSupportMatches(@"lion",report,versioned)); // unversioned -> first versioned upgrade
+    graphics[@"GraphicsSupportRevision"]=@10;
+    assert(!VIMOpenGLBundledSupportMatches(@"lion",report,versioned));
+    graphics[@"GraphicsSupportRevision"]=@11;
+    assert(VIMOpenGLBundledSupportMatches(@"lion",report,versioned)); // no rebuild churn
+    graphics[@"GraphicsSupportRevision"]=@12;
+    assert(VIMOpenGLBundledSupportMatches(@"lion",report,versioned)); // no downgrade
+    [graphics removeObjectForKey:@"GraphicsSupportRevision"];
     NSDictionary *ack=@{@"MachineIdentifier":@"machine",@"RequestState":@"acknowledged",@"FromBootSessionUUID":old,@"GuestReport":before};
     assert(VIMOpenGLGraphicsNeedsRestart(report,nil,now));
     assert(VIMOpenGLGraphicsNeedsRestart(report,ack,old));
@@ -40,6 +57,6 @@ int main(void){@autoreleasepool {
     assert(VIMOpenGLGraphicsNeedsRestart(report,ack,now));
     graphics[@"InstalledBootSessionUUID"]=old;
     assert(!VIMOpenGLGraphicsNeedsRestart(report,nil,now));
-    puts("PASS owned first-install resume, same-boot pending change, acknowledged new boot, changed payload and stamped receipts");
+    puts("PASS development restart opt-in/default-off, owned first-install resume, same-boot pending change, acknowledged new boot, changed payload and stamped receipts");
     return 0;
 }}

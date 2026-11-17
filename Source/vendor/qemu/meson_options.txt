@@ -81,6 +81,8 @@ option('whpx', type: 'feature', value: 'auto',
        description: 'WHPX acceleration support')
 option('hvf', type: 'feature', value: 'auto',
        description: 'HVF acceleration support')
+option('hvdbt_engine', type: 'string', value: '',
+       description: 'ARM hybrid x86 engine package with a built release library')
 option('nitro', type: 'feature', value: 'auto',
        description: 'Nitro acceleration support')
 option('nvmm', type: 'feature', value: 'auto',

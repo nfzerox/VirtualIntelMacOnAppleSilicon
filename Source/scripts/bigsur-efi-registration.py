@@ -21,9 +21,9 @@ def add_registration(data, kext):
         if file.is_symlink():raise ValueError('unexpected link in registration kext')
         if file.is_file():fat.write('EFI/OC/Kexts/PVGOpenGLProbe.kext/'+file.relative_to(kext).as_posix(),file.read_bytes())
     entries.append({'Arch':'x86_64','BundlePath':'PVGOpenGLProbe.kext',
-        'Comment':'Virtual Intel Mac prepared Big Sur OpenGL registration',
+        'Comment':'Virtual Intel Mac prepared Big Sur and later OpenGL registration',
         'Enabled':True,'ExecutablePath':'Contents/MacOS/PVGOpenGLProbe',
-        'PlistPath':'Contents/Info.plist','MinKernel':'20.0.0','MaxKernel':'20.99.99'})
+        'PlistPath':'Contents/Info.plist','MinKernel':'20.0.0','MaxKernel':''})
     fat.write('EFI/OC/config.plist',plistlib.dumps(config,sort_keys=False),replace=True)
     # Read through a new parser, not retained directory offsets.
     checked=runpy.run_path(str(Path(__file__).with_name('efi-fat32.py')))['FAT32'](data)

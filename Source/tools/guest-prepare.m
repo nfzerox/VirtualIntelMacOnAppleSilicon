@@ -15,6 +15,7 @@ static void Check(BOOL condition,NSString *message) {
 #include "guest-vpa.h"
 #include "guest-aperture-policy.h"
 #include "guest-signing-policy.h"
+#include "guest-opengl-selection.h"
 static NSString *GuestCodesignAllocator;
 static void Directory(NSString *path) {
     NSError *error=nil;Check([NSFileManager.defaultManager createDirectoryAtPath:path withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:&error],error.localizedDescription);
@@ -39,7 +40,8 @@ static void Run(NSString *path,NSArray<NSString *> *args,NSString *capture) {
           [NSString stringWithFormat:@"%@ rejected preparation (status %d)",path.lastPathComponent,task.terminationStatus]);
 }
 int main(int argc,const char **argv) {@autoreleasepool {
-    if(argc!=4){fprintf(stderr,"usage: guest-prepare GUEST_ROOT PAYLOAD_DIRECTORY TOOLS_DIRECTORY | --extract ARCHIVE NEW_DIRECTORY | --vpa INPUT NEW_OUTPUT | --aperture-policy INPUT NEW_OUTPUT\n");return 64;}
+    BOOL passthroughOpenGL=argc==5&&!strcmp(argv[4],"--passthrough-opengl")&&strncmp(argv[1],"--",2);
+    if(argc!=4&&!passthroughOpenGL){fprintf(stderr,"usage: guest-prepare GUEST_ROOT PAYLOAD_DIRECTORY TOOLS_DIRECTORY [--passthrough-opengl] | --extract ARCHIVE NEW_DIRECTORY | --vpa INPUT NEW_OUTPUT | --aperture-policy INPUT NEW_OUTPUT\n");return 64;}
     @try {
         if(!strcmp(argv[1],"--aperture-policy")) {
             Check(![NSFileManager.defaultManager fileExistsAtPath:@(argv[3])],@"Aperture policy output already exists");
@@ -79,10 +81,24 @@ int main(int argc,const char **argv) {@autoreleasepool {
         NSString *release=version[@"ProductVersion"],*build=version[@"ProductBuildVersion"];
         Check([release isKindOfClass:NSString.class]&&[build isKindOfClass:NSString.class]&&build.length,@"Missing guest version");
         NSString *family=VIMGuestForSystemVersion(release);
-        Check([@[@"mojave",@"catalina",@"bigsur"] containsObject:family?:@""],@"This preparation tool supports Mojave, Catalina and Big Sur guests only");
-        BOOL bigsur=[family isEqual:@"bigsur"],mojave=[family isEqual:@"mojave"];
+        Check([VIMModernGuests() containsObject:family?:@""],@"This preparation tool supports Mojave and later guests only");
+        // Big Sur and later keep their own Metal/OpenGL stack; one recipe.
+        BOOL bigsur=[VIMAssistantGuests() containsObject:family],mojave=[family isEqual:@"mojave"];
+        Check(!passthroughOpenGL||mojave,@"Optional PassthroughOpenGL preparation requires a Mojave guest");
+        // Install both engines and the dormant transport once. Selection is
+        // a VM boot-time PCI choice, not a different installed filesystem.
+        passthroughOpenGL=mojave;
         NSString *patch=[tools stringByAppendingPathComponent:@"guest-image-patch"],*macho=[tools stringByAppendingPathComponent:@"guest-macho"];
         Check([fm isExecutableFileAtPath:patch]&&[fm isExecutableFileAtPath:macho],@"Bundled patch tools are unavailable");
+#ifdef VIM_HOST_PREPARE
+        // Use the bundled native host allocator, not /usr/bin's developer-tool
+        // shim. Explicitly selecting that shim fails codesign's allocator
+        // requirement on macOS 11; resolving it also requires Xcode/CLT.
+        Check(![guest isEqual:@"/"],@"Host preparation requires a detached guest installation tree");
+#endif
+        // Host GraphicsTools and the guest support disc each contain their
+        // appropriate Apple-signed allocator. Never install the host one into
+        // an older guest or re-sign either allocator with our own identity.
         GuestCodesignAllocator=[tools stringByAppendingPathComponent:@"codesign_allocate"];
 #ifndef VIM_GUEST_PREPARE_TESTING
         Check([fm isExecutableFileAtPath:GuestCodesignAllocator],@"The bundled guest code-signature allocator is unavailable");
@@ -138,7 +154,7 @@ int main(int argc,const char **argv) {@autoreleasepool {
                 NSString *native=[@"System/Library/Extensions" stringByAppendingPathComponent:bundle];
                 NSString *helper=metal?@"PVGBigSurMetalCompat.dylib":@"PVGOpenGLMetal.dylib";
                 NSString *helperInput=destination([@"GuestHelpers" stringByAppendingPathComponent:helper]);
-                Check([fm fileExistsAtPath:helperInput],[@"Missing bundled Big Sur adapter: " stringByAppendingString:helper]);
+                Check([fm fileExistsAtPath:helperInput],[@"Missing bundled Metal/OpenGL adapter: " stringByAppendingString:helper]);
                 Check([fm fileExistsAtPath:source([native stringByAppendingPathComponent:[@"Contents/MacOS" stringByAppendingPathComponent:name]])],@"The guest's native GPU plugin is missing");
                 copyDirectory(source(native),relative);
                 NSString *binary=[relative stringByAppendingPathComponent:[@"Contents/MacOS" stringByAppendingPathComponent:name]];
@@ -159,11 +175,6 @@ int main(int argc,const char **argv) {@autoreleasepool {
         for(NSString *relative in @[core,compiler,serviceBinary])Check([fm fileExistsAtPath:source(relative)],[@"Missing native guest file: " stringByAppendingString:relative]);
         patchFile(mojave?@"mojave-coredisplay":@"coredisplay",source(core),core);
         if(mojave) {
-            for(NSString *app in @[@"Aperture",@"iPhoto"]) {
-                NSString *policy=[NSString stringWithFormat:@"Library/Preferences/com.apple.%@.plist",app];
-                Directory(destination(policy).stringByDeletingLastPathComponent);
-                PrepareAperturePolicy(source(policy),destination(policy));
-            }
             NSString *vpa=@"System/Library/PrivateFrameworks/AppleVPA.framework/Versions/A/Resources/Info.plist";
             Directory(destination(vpa).stringByDeletingLastPathComponent);
             PrepareVPA(source(vpa),destination(vpa));
@@ -199,12 +210,49 @@ int main(int argc,const char **argv) {@autoreleasepool {
             for(NSString *path in [lines componentsSeparatedByString:@"\n"])if(path.length) {
                 Check([path.stringByResolvingSymlinksInPath hasPrefix:[destination(gl) stringByAppendingString:@"/"]],@"Invalid GL signing target");sign(path,NO);
             }
+            if(passthroughOpenGL) {
+                // Overlay after stage-opengl preserves the genuine native
+                // frontend and freshly assembled Apple renderer. Keep both
+                // engines as private libraries in one bundle, not additional
+                // auto-enumerated plugins. The existing framework transaction
+                // owns backup/rollback and update-time re-preparation.
+                NSString *engine=destination([gl stringByAppendingPathComponent:VIMGLEngineRelativePath]);
+                NSString *saved=destination([gl stringByAppendingPathComponent:VIMOriginalGLEngineRelativePath]);
+                Directory(saved.stringByDeletingLastPathComponent);
+                NSData *original=[NSData dataWithContentsOfFile:engine];
+                Check(original&&!VIMIsPassthroughOpenGLEngine(original),@"Cannot retain the ordinary Mojave GL engine");
+                Check([original writeToFile:saved options:NSDataWritingAtomic error:NULL],@"Cannot retain the original GL engine");
+                Check([fm setAttributes:@{NSFilePosixPermissions:@0644} ofItemAtPath:saved error:NULL],@"Cannot set original GL engine permissions");
+                NSString *apple=[engine.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"GLEngineApple"];
+                Check([original writeToFile:apple options:NSDataWritingAtomic error:NULL],@"Cannot stage the Apple GL engine");
+                Check([fm setAttributes:@{NSFilePosixPermissions:@0755} ofItemAtPath:apple error:NULL],@"Cannot set Apple GL engine permissions");
+                NSString *helpers=destination(@"GuestHelpers/PassthroughOpenGL");
+                for(NSString *name in @[@"GLEngine",@"GLEngineSelector",@"libVIMPassthroughOpenGL.dylib"]) {
+                    NSString *input=[helpers stringByAppendingPathComponent:name];
+                    Check([fm fileExistsAtPath:input],[@"Missing optional Mojave GL component: " stringByAppendingString:name]);
+                    NSString *filename=[name isEqual:@"GLEngine"]?@"GLEnginePassthrough":
+                        [name isEqual:@"GLEngineSelector"]?@"GLEngine":name;
+                    NSString *target=[engine.stringByDeletingLastPathComponent stringByAppendingPathComponent:filename];
+                    [signingPolicies removeObjectForKey:target];
+                    RememberEntitlements(input,target,signingPolicies,work);
+                    NSData *bytes=[NSData dataWithContentsOfFile:input];
+                    Check(bytes&&[bytes writeToFile:target options:NSDataWritingAtomic error:NULL],@"Cannot stage optional GL engine");
+                    Check([fm setAttributes:@{NSFilePosixPermissions:@0755} ofItemAtPath:target error:NULL],@"Cannot set GL component permissions");
+                    sign(target,NO);
+                }
+                NSString *driver=[helpers stringByAppendingPathComponent:@"PassthroughOpenGLTransport.kext"];
+                Check([fm fileExistsAtPath:[driver stringByAppendingPathComponent:@"Contents/MacOS/PassthroughOpenGLTransport"]],@"Missing optional Mojave GL transport driver");
+                copyDirectory(driver,VIMPassthroughOpenGLTransportTarget);
+                sign(destination(VIMPassthroughOpenGLTransportTarget),YES);
+            }
             sign(destination(gl),NO);
         }
         }
         NSDictionary *currentVersion=[NSDictionary dictionaryWithContentsOfFile:source(@"System/Library/CoreServices/SystemVersion.plist")];
         Check([currentVersion isEqual:version],@"Guest version changed during preparation; retry after the update completes");
-        NSDictionary *receipt=@{@"FormatVersion":@1,@"Guest":bigsur?@"bigsur":(mojave?@"mojave":@"catalina"),@"ProductVersion":release,@"ProductBuildVersion":build,@"Prepared":@YES,@"Installed":@NO,@"WorkDirectory":work,@"PayloadDirectory":payload,@"PreparedAt":NSDate.date};
+        NSMutableDictionary *receipt=[@{@"FormatVersion":@1,@"Guest":family,@"ProductVersion":release,@"ProductBuildVersion":build,@"Prepared":@YES,@"Installed":@NO,@"WorkDirectory":work,@"PayloadDirectory":payload,@"PreparedAt":NSDate.date} mutableCopy];
+        if(passthroughOpenGL)receipt[@"PassthroughOpenGL"]=@YES;
+        if(mojave)receipt[@"OpenGLBootSelection"]=@YES;
         NSError *receiptError=nil;
         NSData *plist=[NSPropertyListSerialization dataWithPropertyList:receipt format:NSPropertyListBinaryFormat_v1_0 options:0 error:&receiptError];
         Check(plist&&[plist writeToFile:receiptPath options:NSDataWritingAtomic error:&receiptError],receiptError.localizedDescription?:@"Cannot record completed preparation");

@@ -16,8 +16,10 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('output', type=pathlib.Path)
 p.add_argument('names', nargs='+')
 p.add_argument('--port', type=int, default=61382)
+p.add_argument('--max-bytes', type=int, default=16*1024*1024,
+               help='Explicit per-file diagnostic limit, at most 1 GiB; default: 16 MiB')
 args = p.parse_args()
-if args.output.exists() or any(not n.isascii() or not n.replace('-', '').replace('.', '').isalnum() for n in args.names):
+if args.output.exists() or not 1 <= args.max_bytes <= 1024*1024*1024 or any(not n.isascii() or not n.replace('-', '').replace('.', '').isalnum() for n in args.names):
     p.error('use a new output directory and simple filenames')
 args.output.mkdir(parents=True)
 token = secrets.token_hex(12)
@@ -33,17 +35,20 @@ class Receiver(http.server.BaseHTTPRequestHandler):
             length = int(self.headers.get('Content-Length', '-1'))
         except ValueError:
             length = -1
-        if self.headers.get('Transfer-Encoding') or not 0 < length <= 16*1024*1024:
+        if self.headers.get('Transfer-Encoding') or not 0 < length <= args.max_bytes:
             self.send_error(413)
             return
         self.connection.settimeout(20)
         try:
-            data = self.rfile.read(length)
-            if len(data) != length:
-                self.send_error(400)
-                return
             with (args.output/name).open('xb') as stream:
-                stream.write(data)
+                remaining=length
+                while remaining:
+                    data=self.rfile.read(min(remaining,1024*1024))
+                    if not data:
+                        self.send_error(400)
+                        return
+                    stream.write(data)
+                    remaining-=len(data)
         except (OSError, socket.timeout):
             self.send_error(500)
             return

@@ -18,14 +18,14 @@ def image(names):
     # Opaque native data must remain untouched by dependency preparation.
     return struct.pack('<8I', 0xfeedfacf, 0x1000007, 3, 8, len(names), len(commands), 0, 0) + commands + b'untouched native data'
 
-def check(command, helper):
+def check(command, helper, redirected):
   with tempfile.TemporaryDirectory(prefix='vim-bigsur-gpu-') as directory:
     root = Path(directory)
     original = root/'original'; original.write_bytes(image([metal, surface]))
     prepared = root/'prepared'
     subprocess.run([tool, command, original, prepared], check=True)
     expected = bytearray(original.read_bytes())
-    for name in (metal, surface):
+    for name in redirected:
         begin = expected.index(name)
         expected[begin:begin+len(name)] = helper + bytes(len(name)-len(helper))
     assert prepared.read_bytes() == expected
@@ -40,6 +40,21 @@ def check(command, helper):
         assert result.returncode and not output.exists(), result
     exists = subprocess.run([tool, command, original, prepared], capture_output=True)
     assert exists.returncode and prepared.read_bytes() == expected
-check('prepare-bigsur-gl', b'@loader_path/PVGOpenGLMetal.dylib')
-check('prepare-bigsur-metal', b'@loader_path/PVGBigSurMetalCompat.dylib')
+# Without chained fixups the GL adapter stands in for both dependencies; the
+# Metal adapter takes only Metal (macOS 15 and later refuse a duplicate).
+check('prepare-bigsur-gl', b'@loader_path/PVGOpenGLMetal.dylib', (metal, surface))
+check('prepare-bigsur-metal', b'@loader_path/PVGBigSurMetalCompat.dylib', (metal,))
+
+# A chained-fixup renderer (this host's own, when present) keeps its IOSurface
+# command; its IOSurface imports bind to the adapter, one command per dylib.
+renderer = Path('/System/Library/Extensions/AppleMetalOpenGLRenderer.bundle/Contents/MacOS/AppleMetalOpenGLRenderer')
+if renderer.is_file():
+    with tempfile.TemporaryDirectory(prefix='vim-bigsur-gpu-') as directory:
+        prepared = Path(directory)/'prepared'
+        subprocess.run([tool, 'prepare-bigsur-gl', renderer, prepared], check=True)
+        commands = subprocess.run(['/usr/bin/otool', '-l', prepared], capture_output=True, text=True, check=True).stdout
+        assert commands.count('@loader_path/PVGOpenGLMetal.dylib') == 1 and surface.decode() in commands
+        imports = subprocess.run(['/usr/bin/dyld_info', '-imports', prepared], capture_output=True, text=True, check=True).stdout
+        assert '(from IOSurface)' not in imports and '_IOSurfaceGetID  (from PVGOpenGLMetal)' in imports
+        print('PASS chained-fixup renderer:', renderer)
 print('PASS GL + Metal: exact dependency edits, idempotence, partial/truncated/duplicate refusal, no overwrite')

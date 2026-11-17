@@ -44,6 +44,7 @@ struct USBHIDState {
     char *display;
     uint32_t head;
     bool apple_ansi;
+    char *apple_layout;
     USBDesc keyboard_desc[2];
 };
 
@@ -748,14 +749,27 @@ static void usb_mouse_realize(USBDevice *dev, Error **errp)
 static void usb_keyboard_realize(USBDevice *dev, Error **errp)
 {
     USBHIDState *s = USB_HID(dev);
-    if (s->apple_ansi) {
-        /* Apple aluminium ANSI USB keyboard identity (05ac:0220). Keep
-         * normal boot-keyboard reports; do not alter generic usb-kbd users. */
+    if (s->apple_ansi || s->apple_layout) {
+        uint16_t product = 0x0220;
+
+        if (s->apple_layout) {
+            if (!strcmp(s->apple_layout, "iso")) {
+                product = 0x0221;
+            } else if (!strcmp(s->apple_layout, "jis")) {
+                product = 0x0222;
+            } else if (strcmp(s->apple_layout, "ansi")) {
+                error_setg(errp, "apple-layout must be ansi, iso or jis");
+                return;
+            }
+        }
+        /* Apple aluminium ANSI/ISO/JIS USB identities. Keep standard HID
+         * reports; the input frontend supplies the corresponding positions.
+         * apple-ansi remains compatible with previously generated commands. */
         s->keyboard_desc[0] = desc_keyboard;
         s->keyboard_desc[1] = desc_keyboard2;
         for (unsigned i = 0; i < 2; i++) {
             s->keyboard_desc[i].id.idVendor = 0x05ac;
-            s->keyboard_desc[i].id.idProduct = 0x0220;
+            s->keyboard_desc[i].id.idProduct = product;
         }
         usb_hid_initfn(dev, HID_KEYBOARD, &s->keyboard_desc[0],
                        &s->keyboard_desc[1], errp);
@@ -864,6 +878,7 @@ static const TypeInfo usb_mouse_info = {
 
 static const Property usb_keyboard_properties[] = {
         DEFINE_PROP_BOOL("apple-ansi", USBHIDState, apple_ansi, false),
+        DEFINE_PROP_STRING("apple-layout", USBHIDState, apple_layout),
         DEFINE_PROP_UINT32("usb_version", USBHIDState, usb_version, 2),
         DEFINE_PROP_STRING("display", USBHIDState, display),
 };

@@ -47,6 +47,8 @@
 #define VIM_PANEL_LARGE_SCANOUT_REGISTER 0x1017
 #define VIM_PANEL_LARGE_SCANOUT_MAGIC 0x56494c31u
 #define VIM_PANEL_REQUEST_SCALE_REGISTER 0x1018u
+#define VIM_GL_BOOT_FRAMEBUFFER_REGISTER 0x1019u
+#define VIM_GL_BOOT_FRAMEBUFFER_MAGIC 0x56424631u
 #define VIM_GL_SCATTER_MAX_RANGES 2048u
 #define VIM_GL_RAM_SCATTER_MAX_RANGES 16384u
 #define VIM_GL_SCATTER_MAX_BYTES (64u * 1024u * 1024u)
@@ -512,6 +514,64 @@ out:
     g_free(segments);
     return result;
 }
+static DisplaySurface *vmsvga_boot_framebuffer(struct vmsvga_state_s *s)
+{
+    DisplaySurface *surface = qemu_console_surface(s->vga.con);
+    return s->enable && s->config && s->legacy_event_scanout && s->mode_switch_pending && s->mode_switch_image &&
+           surface && surface_is_allocated(surface) && surface_bits_per_pixel(surface) == 32 &&
+           surface_width(surface) == s->new_width && surface_height(surface) == s->new_height ? surface : NULL;
+}
+
+/* The first accelerated primary reads the completed display, not raw boot
+ * VRAM reinterpreted with a newly selected pitch. No GL stream is involved.
+ * Destinations are prepared by the existing surface write transaction. */
+static int32_t vmsvga_read_boot_framebuffer(struct vmsvga_state_s *s,
+                                          uint32_t command, uint32_t bytes, uint32_t count)
+{
+    DisplaySurface *surface = vmsvga_boot_framebuffer(s);
+    uint32_t pitch = vmsvga_framebuffer_pitch(s);
+    if (!surface || !pitch || !count || count > VIM_GL_CHUNK / 24 || !bytes ||
+        bytes > 256 * MiB || command > s->vga.vram_size ||
+        24u + VIM_GL_CHUNK > s->vga.vram_size - command) return -1;
+    struct vmsvga_gl_segment *segments = g_new0(struct vmsvga_gl_segment, count);
+    uint64_t total = 0;
+    int32_t result = -1;
+    for (unsigned i = 0; i < count; i++) {
+        const uint8_t *entry = s->vga.vram_ptr + command + 24 + i * 24;
+        uint64_t destination = ldq_le_p(entry);
+        uint32_t source = ldl_le_p(entry + 8), length = ldl_le_p(entry + 12);
+        uint32_t kind = ldl_le_p(entry + 16), x = source % pitch, y = source / pitch;
+        if (!length || kind > 1 || ldl_le_p(entry + 20) || total + length > bytes ||
+            y >= surface_height(surface) || x >= surface_width(surface) * 4u ||
+            length > surface_width(surface) * 4u - x) goto out;
+        segments[i].offset = y * surface_stride(surface) + x;
+        segments[i].bytes = length;
+        if (kind) {
+            segments[i].pointer = vmsvga_passthrough_opengl_map_ram(s, destination, length, true);
+            if (!segments[i].pointer) goto out;
+            segments[i].mapped = true;
+        } else {
+            if (destination > s->vga.vram_size || length > s->vga.vram_size - destination ||
+                (destination < (uint64_t)command + 24 + VIM_GL_CHUNK && destination + length > command)) goto out;
+            segments[i].pointer = s->vga.vram_ptr + destination;
+        }
+        total += length;
+    }
+    if (total != bytes) goto out;
+    for (unsigned i = 0; i < count; i++) {
+        memcpy(segments[i].pointer, surface_data(surface) + segments[i].offset, segments[i].bytes);
+        if (!segments[i].mapped)
+            memory_region_set_dirty(&s->vga.vram, segments[i].pointer - s->vga.vram_ptr, segments[i].bytes);
+    }
+    result = bytes;
+out:
+    for (unsigned i = 0; i < count; i++) if (segments[i].mapped)
+        address_space_unmap(&address_space_memory, segments[i].pointer, segments[i].bytes,
+                            result >= 0, result >= 0 ? segments[i].bytes : 0);
+    g_free(segments);
+    return result;
+}
+
 static void vmsvga_passthrough_opengl_reset(struct vmsvga_state_s *s)
 {
     s->passthrough_opengl_epoch++;
@@ -602,7 +662,7 @@ static void vmsvga_passthrough_opengl(struct vmsvga_state_s *s, uint32_t offset)
     uint32_t bytes = ldl_le_p(p + 12);
     stl_le_p(p + 16, (uint32_t)-1);
     if (ldl_le_p(p) != VIM_GL_MAGIC ||
-        (op != 7 && op != 8 && op != 9 && op != 10 && op != 11 && op != 12 &&
+        (op != 7 && op != 8 && op != 9 && op != 10 && op != 11 && op != 12 && op != 16 &&
          (bytes > VIM_GL_CHUNK || bytes > s->vga.vram_size - offset - 24))) {
         return;
     }
@@ -635,6 +695,10 @@ static void vmsvga_passthrough_opengl(struct vmsvga_state_s *s, uint32_t offset)
         if (!token) {
             stl_le_p(p + 16, vmsvga_legacy_framebuffer_blit(s, offset, bytes, ldl_le_p(p + 20)));
         }
+        return;
+    }
+    if (op == 16 && !token) {
+        stl_le_p(p + 16, vmsvga_read_boot_framebuffer(s, offset, bytes, ldl_le_p(p + 20)));
         return;
     }
     unsigned slot;

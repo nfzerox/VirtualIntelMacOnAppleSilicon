@@ -6,12 +6,13 @@
 #include <math.h>
 #include <libproc.h>
 #include "guest-progress-state.h"
+#include "guest-progress-labels.h"
 
 static void PrintJSON(NSDictionary *value) {
     NSData *data=[NSJSONSerialization dataWithJSONObject:value options:0 error:NULL];
     VIMProgressCheck(data!=nil,@"Could not encode progress receipt.");fwrite(data.bytes,1,data.length,stdout);puts("");
 }
-static NSDictionary *StartUI(NSString *icon) {
+static NSDictionary *StartUI(NSString *icon,NSDictionary *labels) {
     VIMProgressCheck(geteuid()==0,@"Guest progress setup requires the privileged guest agent.");
     struct stat console;VIMProgressCheck(!stat("/dev/console",&console)&&console.st_uid>=501,@"Sign in to the desktop before finishing setup.");
     struct passwd *user=getpwuid(console.st_uid);VIMProgressCheck(user!=NULL,@"The desktop account is unavailable.");
@@ -30,8 +31,12 @@ static NSDictionary *StartUI(NSString *icon) {
     VIMProgressCheck(!mkdir(control.fileSystemRepresentation,0700)&&!chown(control.fileSystemRepresentation,console.st_uid,console.st_gid),@"Could not prepare guest progress controls.");
     VIMProgressCheck(!chmod(path.fileSystemRepresentation,0755),@"Could not expose read-only progress state.");
     int directory=VIMProgressDirectory(path);VIMProgressCheck(directory>=0,@"Could not validate guest progress state.");
-    @try {VIMProgressWrite(directory,@"State.plist",@{@"FormatVersion":@1,@"Mode":@"working",@"Fraction":@0,
-        @"Message":@"Preparing your virtual Mac…",@"Revision":NSUUID.UUID.UUIDString,@"ConsoleUID":@(console.st_uid)},0644);}
+    @try {
+        NSMutableDictionary *state=[@{@"FormatVersion":@1,@"Mode":@"working",@"Fraction":@0,
+            @"Message":@"Preparing your virtual Mac…",@"Revision":NSUUID.UUID.UUIDString,@"ConsoleUID":@(console.st_uid)} mutableCopy];
+        if(labels)state[@"DisplayLabels"]=labels;
+        VIMProgressWrite(directory,@"State.plist",state,0644);
+    }
     @finally {close(directory);}
     // Never run AppKit as root. Detach all inherited QGA output pipes so the
     // short bootstrap command can finish while the accessory window stays up.
@@ -89,31 +94,38 @@ static NSDictionary *WaitAction(NSString *path) {
 @property NSButton *restart,*postpone;
 @property NSImage *icon;
 @property NSDictionary *state;
+@property NSDictionary *labels;
 @property BOOL permittedToClose;
 @property id activity;
 @property dispatch_source_t stateWatcher;
 @property NSTimer *countdownTimer;
 @end
 @implementation GuestProgress
+- (NSString *)text:(NSString *)english {return VIMProgressDisplayLabel(self.labels,english);}
 - (NSTextField *)label:(NSString *)text font:(NSFont *)font frame:(NSRect)frame {
     NSTextField *label=[NSTextField labelWithString:text];label.font=font;label.frame=frame;label.selectable=NO;
     label.lineBreakMode=NSLineBreakByWordWrapping;label.maximumNumberOfLines=3;[self.window.contentView addSubview:label];return label;
 }
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    int initial=VIMProgressDirectory(self.directory);
+    if(initial>=0) {
+        NSDictionary *state=VIMProgressRead(initial,@"State.plist",0);close(initial);
+        if([state[@"DisplayLabels"] isKindOfClass:NSDictionary.class])self.labels=state[@"DisplayLabels"];
+    }
     self.icon=[[NSImage alloc] initWithContentsOfFile:[self.directory stringByAppendingPathComponent:@"Icon.png"]];
     self.window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,500,198) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
-    self.window.title=@"Virtual Intel Mac Setup";self.window.delegate=self;self.window.releasedWhenClosed=NO;
+    self.window.title=[self text:@"Virtual Intel Mac Setup"];self.window.delegate=self;self.window.releasedWhenClosed=NO;
     NSImageView *image=[[NSImageView alloc] initWithFrame:NSMakeRect(25,96,64,64)];image.image=self.icon;[self.window.contentView addSubview:image];
-    self.titleLabel=[self label:@"Finishing Setup" font:[NSFont boldSystemFontOfSize:20] frame:NSMakeRect(100,133,376,28)];
-    self.message=[self label:@"Preparing your virtual Mac…" font:[NSFont systemFontOfSize:13] frame:NSMakeRect(100,83,371,44)];
+    self.titleLabel=[self label:[self text:@"Finishing Setup"] font:[NSFont boldSystemFontOfSize:20] frame:NSMakeRect(100,133,376,28)];
+    self.message=[self label:[self text:@"Preparing your virtual Mac…"] font:[NSFont systemFontOfSize:13] frame:NSMakeRect(100,83,371,44)];
     self.progress=[[NSProgressIndicator alloc] initWithFrame:NSMakeRect(26,54,448,16)];self.progress.minValue=0;self.progress.maxValue=1;self.progress.indeterminate=YES;[self.progress startAnimation:nil];[self.window.contentView addSubview:self.progress];
-    self.detail=[self label:@"Setup may take up to 30 minutes. Keep this Mac running." font:[NSFont systemFontOfSize:12] frame:NSMakeRect(26,14,448,32)];self.detail.textColor=NSColor.secondaryLabelColor;
+    self.detail=[self label:[self text:@"Setup may take up to 30 minutes. Keep this Mac running."] font:[NSFont systemFontOfSize:12] frame:NSMakeRect(26,14,448,32)];self.detail.textColor=NSColor.secondaryLabelColor;
     // Keep the header/progress group anchored to the top. Only the countdown
     // and completion states need an extra row for their bottom buttons.
     for(NSView *view in @[image,self.titleLabel,self.message,self.progress,self.detail])view.autoresizingMask=NSViewMinYMargin;
-    self.restart=[NSButton buttonWithTitle:@"Restart Now" target:self action:@selector(restartNow:)];self.restart.frame=NSMakeRect(248,15,112,32);self.restart.keyEquivalent=@"\r";[self.window.contentView addSubview:self.restart];
-    self.postpone=[NSButton buttonWithTitle:@"Postpone" target:self action:@selector(postpone:)];self.postpone.frame=NSMakeRect(368,15,112,32);[self.window.contentView addSubview:self.postpone];
+    self.restart=[NSButton buttonWithTitle:[self text:@"Restart Now"] target:self action:@selector(restartNow:)];self.restart.frame=NSMakeRect(248,15,112,32);self.restart.keyEquivalent=@"\r";[self.window.contentView addSubview:self.restart];
+    self.postpone=[NSButton buttonWithTitle:[self text:@"Postpone"] target:self action:@selector(postpone:)];self.postpone.frame=NSMakeRect(368,15,112,32);[self.window.contentView addSubview:self.postpone];
     [self.window center];[self.window makeKeyAndOrderFront:nil];[NSApp activateIgnoringOtherApps:YES];
     // Atomic status publication replaces State.plist. Watch its containing
     // directory, not the old file inode, so setup has no recurring idle poll.
@@ -150,22 +162,22 @@ static NSDictionary *WaitAction(NSString *path) {
         } else if(!countdown) {[self.countdownTimer invalidate];self.countdownTimer=nil;}
         if(!finished&&!self.activity)self.activity=[NSProcessInfo.processInfo beginActivityWithOptions:NSActivityUserInitiated|NSActivityIdleDisplaySleepDisabled reason:@"Finishing virtual Mac setup"];
         if(finished&&self.activity){[NSProcessInfo.processInfo endActivity:self.activity];self.activity=nil;}
-        self.titleLabel.stringValue=countdown?@"Restart to Finish Setup":([mode isEqual:@"failed"]?@"Setup Needs Attention":finished?@"Setup Is Ready":@"Finishing Setup");
-        self.message.stringValue=state[@"Message"]?:@"Preparing your virtual Mac…";
+        self.titleLabel.stringValue=countdown?[self text:@"Restart to Finish Setup"]:([mode isEqual:@"failed"]?[self text:@"Setup Needs Attention"]:finished?[self text:@"Setup Is Ready"]:[self text:@"Finishing Setup"]);
+        self.message.stringValue=[self text:state[@"Message"]?:@"Preparing your virtual Mac…"];
         // Fractions currently describe phase boundaries, not measured work.
         // Native preparation/cache building can take many minutes on TCG;
         // never show a motionless 70% bar as if it were an elapsed-time estimate.
         BOOL working=!countdown&&!finished;self.progress.indeterminate=working;
         if(working)[self.progress startAnimation:nil];else {[self.progress stopAnimation:nil];self.progress.doubleValue=countdown||[mode isEqual:@"complete"]?1:0;}
         self.restart.hidden=!countdown;self.postpone.hidden=!countdown&&!finished;
-        self.postpone.title=countdown?@"Postpone":@"Close";
+        self.postpone.title=countdown?[self text:@"Postpone"]:[self text:@"Close"];
         if(countdown&&[state[@"Deadline"] isKindOfClass:NSDate.class]) {
             NSInteger seconds=MAX(0,(NSInteger)ceil([state[@"Deadline"] timeIntervalSinceNow]));
             self.detail.font=[NSFont monospacedDigitSystemFontOfSize:12 weight:NSFontWeightRegular];
-            self.detail.stringValue=[NSString stringWithFormat:@"Your virtual Mac will restart in %ld:%02ld. Save any open work.",(long)seconds/60,(long)seconds%60];
+            self.detail.stringValue=[NSString stringWithFormat:[self text:@"Your virtual Mac will restart in %ld:%02ld. Save any open work."],(long)seconds/60,(long)seconds%60];
             self.detail.textColor=NSColor.labelColor;
-        } else {self.detail.font=[NSFont systemFontOfSize:12];self.detail.stringValue=finished?@"You can close this window.":@"Setup may take up to 30 minutes. Keep this Mac running.";self.detail.textColor=NSColor.secondaryLabelColor;}
-    } @catch(NSException *exception) {self.message.stringValue=@"Waiting for setup status…";}
+        } else {self.detail.font=[NSFont systemFontOfSize:12];self.detail.stringValue=finished?[self text:@"You can close this window."]:[self text:@"Setup may take up to 30 minutes. Keep this Mac running."];self.detail.textColor=NSColor.secondaryLabelColor;}
+    } @catch(NSException *exception) {self.message.stringValue=[self text:@"Waiting for setup status…"];}
 }
 - (void)request:(NSString *)action {
     @try {
@@ -176,7 +188,7 @@ static NSDictionary *WaitAction(NSString *path) {
         @finally {close(control);}
         self.permittedToClose=YES;[NSApp terminate:nil];
     } @catch(NSException *exception) {
-        NSAlert *alert=[NSAlert new];alert.icon=self.icon;alert.messageText=@"Couldn’t Send Your Choice";alert.informativeText=@"Try again, or use Restart in the Virtual Intel Mac app.";[alert beginSheetModalForWindow:self.window completionHandler:nil];
+        NSAlert *alert=[NSAlert new];alert.icon=self.icon;alert.messageText=[self text:@"Couldn’t Send Your Choice"];alert.informativeText=[self text:@"Try again, or use Restart in the Virtual Intel Mac app."];[alert beginSheetModalForWindow:self.window completionHandler:nil];
     }
 }
 - (void)restartNow:(id)sender {[self request:@"restart"];}
@@ -185,9 +197,9 @@ static NSDictionary *WaitAction(NSString *path) {
     if(self.permittedToClose)return YES;
     if([self.state[@"Mode"] isEqual:@"restart"]){[self request:@"postpone"];return NO;}
     if([@[@"complete",@"failed"] containsObject:self.state[@"Mode"]]){self.permittedToClose=YES;[NSApp terminate:nil];return YES;}
-    if(!self.window.attachedSheet){NSAlert *alert=[NSAlert new];alert.icon=self.icon;alert.messageText=@"Setup Is Still in Progress";
-        alert.informativeText=@"Keep this window and your virtual Mac open until setup finishes. Interrupting installation could leave macOS unable to start.";
-        [alert addButtonWithTitle:@"Continue Setup"];[alert beginSheetModalForWindow:self.window completionHandler:nil];}return NO;
+    if(!self.window.attachedSheet){NSAlert *alert=[NSAlert new];alert.icon=self.icon;alert.messageText=[self text:@"Setup Is Still in Progress"];
+        alert.informativeText=[self text:@"Keep this window and your virtual Mac open until setup finishes. Interrupting installation could leave macOS unable to start."];
+        [alert addButtonWithTitle:[self text:@"Continue Setup"]];[alert beginSheetModalForWindow:self.window completionHandler:nil];}return NO;
 }
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {return [self windowShouldClose:self.window]?NSTerminateNow:NSTerminateCancel;}
 - (void)applicationWillTerminate:(NSNotification *)note {
@@ -204,9 +216,21 @@ int main(int argc,const char **argv) {@autoreleasepool {
             __attribute__((objc_precise_lifetime)) GuestProgress *controller=[GuestProgress new];controller.directory=@(argv[2]);
             NSApp.delegate=controller;[NSApp run];return 0;
         }
-        if(argc==3&&!strcmp(argv[1],"--start")){PrintJSON(StartUI(@(argv[2])));return 0;}
+        if((argc==3||(argc==4&&!strcmp(argv[3],"--labels")))&&!strcmp(argv[1],"--start")) {
+            NSDictionary *labels=nil;
+            if(argc==4) {
+                // Small optional UI data only. Malformed/oversized input falls
+                // back to English instead of blocking graphics installation.
+                unsigned char bytes[16385];size_t length=fread(bytes,1,sizeof(bytes),stdin);
+                if(length&&length<sizeof(bytes)) {
+                    id value=[NSJSONSerialization JSONObjectWithData:[NSData dataWithBytes:bytes length:length] options:0 error:nil];
+                    if([value isKindOfClass:NSDictionary.class])labels=value;
+                }
+            }
+            PrintJSON(StartUI(@(argv[2]),labels));return 0;
+        }
         if(argc==6&&!strcmp(argv[1],"--update")){VIMProgressUpdate(@(argv[2]),@(argv[3]),atof(argv[4]),@(argv[5]));PrintJSON(@{@"Updated":@YES});return 0;}
         if(argc==3&&!strcmp(argv[1],"--wait")){PrintJSON(WaitAction(@(argv[2])));return 0;}
-        fprintf(stderr,"usage: guest-progress --start ICON | --update DIRECTORY MODE FRACTION MESSAGE | --wait DIRECTORY\n");return 64;
+        fprintf(stderr,"usage: guest-progress --start ICON [--labels] | --update DIRECTORY MODE FRACTION MESSAGE | --wait DIRECTORY\n");return 64;
     } @catch(NSException *exception){fprintf(stderr,"%s\n",exception.reason.UTF8String);return 65;}
 }}

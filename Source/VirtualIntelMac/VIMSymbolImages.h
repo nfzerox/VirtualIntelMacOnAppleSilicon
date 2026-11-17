@@ -7,6 +7,13 @@
     accessibilityDescription:(NSString *)description allowPrivateLookup:(BOOL)allowPrivate;
 @end
 
+static inline NSImage *VIMSystemSymbolImage(NSString *name,NSString *description) {
+    NSImage *image=[NSImage imageWithSystemSymbolName:name accessibilityDescription:description];
+    if(image)return image;
+    NSString *fallback=@{@"cable.connector":@"externaldrive",@"power.circle":@"power"}[name];
+    return fallback?[NSImage imageWithSystemSymbolName:fallback accessibilityDescription:description]:nil;
+}
+
 static inline NSImage *VIMAppsSymbolImage(void) {
     NSImage *image=nil;
     if([NSImage respondsToSelector:@selector(_imageWithSystemSymbolName:variableValue:accessibilityDescription:allowPrivateLookup:)])

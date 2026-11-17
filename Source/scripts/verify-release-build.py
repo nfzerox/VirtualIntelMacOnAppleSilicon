@@ -6,6 +6,7 @@ from pathlib import Path
 import plistlib
 import runpy
 import subprocess
+from build_launch_policy import LAUNCH_MINIMUM, BINARY_MINIMUM
 
 
 def run(*command):
@@ -37,7 +38,7 @@ def verify_unified_firmware(runtime, source, receipt):
     image = runtime/'Firmware/Common/EFI.img'
     if (record.get('RuntimeProfileSelection') is not True or record.get('Profiles') != list(profiles)
             or not image.is_file() or record.get('ImageBytes') != image.stat().st_size):
-        raise RuntimeError('Release requires one runtime-selected EFI image with all thirteen OS profiles')
+        raise RuntimeError('Release requires one runtime-selected EFI image with all supported OS profiles')
     fat = recipe['FAT32'](recipe['volume'](image))
     selector = fat.read('EFI/BOOT/BOOTx64.efi')
     if not selector.startswith(b'MZ') or selector != fat.read('EFI/OC/OpenCore.efi'):
@@ -147,6 +148,14 @@ def main():
     if (runtime/'ResearchRuntime.plist').exists():
         raise RuntimeError('A research-only app cannot be packaged as a release')
     receipt = plistlib.loads((runtime/'Packaging.plist').read_bytes())
+    info = plistlib.loads((app/'Contents/Info.plist').read_bytes())
+    if (info.get('LSMinimumSystemVersion') != LAUNCH_MINIMUM or
+            receipt.get('MinimumAppVersion') != LAUNCH_MINIMUM or
+            receipt.get('MinimumAppBinaryVersion') != BINARY_MINIMUM or
+            receipt.get('MinimumRuntimeVersion') != BINARY_MINIMUM):
+        raise RuntimeError('App bundle must launch on 15+ while native app/runtime binaries retain 11.0 compatibility')
+    runpy.run_path(str(args.source/'scripts/package-app-runtime.py'))['require_universal'](
+        app/'Contents/MacOS/Virtual Intel Mac', exact=True)
     if receipt.get('AppConfiguration') != args.configuration:
         raise RuntimeError('Packaged app configuration does not match the requested build')
     identity = receipt['HostSigningIdentity'].upper()
@@ -156,14 +165,28 @@ def main():
     if shared.exists() and plistlib.loads(shared.read_bytes())['Identity'].upper() != identity:
         raise RuntimeError('Release does not use the shared private-repository identity')
     run('codesign', '--verify', '--deep', '--strict', app)
+    allocator = runtime/'HostInstall/GraphicsTools/codesign_allocate'
+    if set(run('lipo', '-archs', allocator).split()) != {'arm64', 'x86_64'}:
+        raise RuntimeError('Host preparation requires a universal signing allocator')
+    # This executable is called by system codesign, which requires Apple's
+    # signature. It intentionally does not carry our shared signing identity.
+    run('codesign', '--verify', '--strict', '-R', '=anchor apple', allocator)
+    verify_linkage(allocator)
     hosts = [app/'Contents/MacOS/Virtual Intel Mac', runtime/'bin/qemu-system-x86_64',
+             app/'Contents/Helpers/Rosetta Installer.app/Contents/MacOS/VIMRosettaInstaller',
              runtime/'bin/qemu-img', runtime/'bin/apple-gfx-helper',
              runtime/'bin/libVIMPassthroughOpenGLHost.dylib',
+             runtime/'HostInstall/install-worker', runtime/'HostInstall/cryptex-decoder',
+             runtime/'HostInstall/offline-kext-notifications.dylib', runtime/'HostInstall/leopard-cache',
+             runtime/'HostInstall/snow-leopard-cache', runtime/'HostInstall/lion-cache',
+             runtime/'HostInstall/mountainlion-cache', runtime/'HostInstall/mavericks-cache',
+             runtime/'HostInstall/yosemite-cache', runtime/'HostInstall/elcapitan-cache', runtime/'HostInstall/sierra-cache',
+             runtime/'HostInstall/highsierra-cache', runtime/'HostInstall/mojave-cache', runtime/'HostInstall/catalina-cache',
              app/'Contents/Library/LaunchServices/com.mac.virtualintelmac.usb-helper',
              app/'Contents/Library/LaunchServices/com.mac.virtualintelmac.network-helper']
     for path in hosts:
         architectures = set(run('lipo', '-archs', path).split())
-        expected = {'x86_64'} if path.name == 'apple-gfx-helper' else {'arm64', 'x86_64'}
+        expected = {'x86_64'} if path.name in ('apple-gfx-helper','VIMRosettaInstaller') else {'arm64', 'x86_64'}
         if architectures != expected:
             raise RuntimeError(f'Wrong architectures: {path.name}: {architectures}')
         run('codesign', '--verify', '--strict', '-R', '=certificate leaf = H"'+identity+'"', path)
@@ -204,7 +227,7 @@ def main():
     for path in app.rglob('*'):
         if path.is_file() and path.suffix.lower() in ('.p12', '.pfx', '.keychain', '.keychain-db'):
             raise RuntimeError('Private credential file in app: '+path.name)
-    print('Verified: universal app/QEMU/helpers/OpenGL executor, shared signing, portable linkage, one EFI with thirteen OS profiles, native Tiger support and period guest architectures/deployment targets.')
+    print(f"Verified: universal app/QEMU/helpers/OpenGL executor, shared signing, portable linkage, one EFI with {len(receipt['UnifiedEFI']['Profiles'])} OS profiles, native Tiger support and period guest architectures/deployment targets.")
 
 
 if __name__ == '__main__':

@@ -14,6 +14,6 @@ work=$(mktemp -d "$root/Build/Probes/guest-install-build.XXXXXX")
 # Generate immutable native allowlists from the existing release target lists.
 python3 "$root/scripts/generate-guest-install-targets.py" "$work/guest-install-targets.h"
 xcrun clang -arch x86_64 -mmacosx-version-min=10.14 -fobjc-arc -O2 -Wall -Wextra \
-    -Wno-deprecated-declarations "${extra[@]}" -I "$work" -framework Foundation -framework IOKit \
+    -Wno-deprecated-declarations "${extra[@]}" -I "$work" -framework Foundation -framework IOKit -framework SystemConfiguration \
     "$root/tools/guest-install.m" "$root/tools/VIMFileTransaction.m" -o "$out"
 codesign --force --sign - "$out"

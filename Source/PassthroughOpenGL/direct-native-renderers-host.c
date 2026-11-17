@@ -2,6 +2,7 @@
  * objects/state; never translate private guest/host attribute blobs. Normal
  * drawing adds no native query, wait, thread or polling operation here. */
 #include "direct-opcodes.h"
+#include "native-arb-revalidation-host.h"
 static void DGNativeRendererRestoreDrawable(struct DGHostContext *c)
 {
     if(!c->native_drawable_deferred)return;
@@ -99,6 +100,14 @@ static int DGNativeRendererCommand(struct DGHostContext *c,const struct DGMessag
             if(CGLSetVirtualScreen(c->cgl,wanted)){
                 if(deferred)DGNativeRendererRestoreDrawable(c);
                 return 0;
+            }
+            if(!m->args[0]&&c->profile==kCGLOGLPVersion_Legacy){
+                GLenum prior=glGetError();if(prior&&!c->error)c->error=prior;
+                GLenum error=DGRevalidateNativeARBPrograms();
+                if(error){
+                    CGLSetVirtualScreen(c->cgl,current);
+                    reply->error=error;return 0;
+                }
             }
             if(!m->args[0])DGNativeRendererRestoreDrawable(c);
             DGSubmitIOSurfaceWrites(c);

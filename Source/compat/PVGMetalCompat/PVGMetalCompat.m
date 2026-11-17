@@ -30,6 +30,7 @@
 #include <unistd.h>
 #include "PVGCompletionSite.h"
 #include "PVGShaderCache.h"
+#include "../PVGTextureViewSwizzle.h"
 
 #ifndef PVG_FORCE_DISPLAY_SURFACE_SYNC
 #define PVG_FORCE_DISPLAY_SURFACE_SYNC 0
@@ -1552,6 +1553,10 @@ PVG_MOJAVE_VARIANT(fragment, Fragment)
 + (void)load {
     pvgCompilerTrace("AppleParavirtDevice category +load");
     pvgInstallTextureUsageHooks();
+    // Catalina Metal clients (including WindowServer) need the same view
+    // channel transport as GL. Mojave gains the absent swizzled initializer
+    // later when its GL adapter loads; that adapter completes installation.
+    (void)pvgInstallTextureSwizzleTransport(objc_getClass("MTLSerializer"));
     PVGInstallMetalCompatPipelineHooks();
 #if PVG_TRACE_COMMANDS
     PVGInstallCommandTrace();

@@ -18,8 +18,7 @@ int main(void) {
         if(actual!=expected)return 1;
     }
     for(unsigned major=8;major<=26;major++) {
-        if(VimDisableInstallerDrizzle(0,major))return 4;
-        if(VimDisableInstallerDrizzle(1,major)!=(major==16))return 5;
+        if(VimDisableSierraDrizzle(major)!=(major==16))return 4;
     }
     const char *bundles[]={"VMsvga2.kext","VMsvga2Accel.kext","VoodooHDA.kext",
         "Lilu.kext","VirtualSMC.kext","System/Library/Extensions/IOGraphicsFamily.kext"};
@@ -28,6 +27,6 @@ int main(void) {
         int smc=!strcmp(bundles[i],"Lilu.kext")||!strcmp(bundles[i],"VirtualSMC.kext");
         if(VimSkipInstallerKext(1,bundles[i])==smc)return 3;
     }
-    puts("Installer filtering: native graphics retained, configured SMC/decryption preserved, installed boot unchanged");
+    puts("Installer filtering preserves native graphics and SMC; Sierra-only Drizzle disable covers both roots");
     return 0;
 }

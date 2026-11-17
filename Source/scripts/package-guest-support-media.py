@@ -11,7 +11,7 @@ def build(payloads, tools):
     payloads, tools = Path(payloads), Path(tools)
     manifest = plistlib.loads((payloads/'Payloads.plist').read_bytes())
     receipts = {}
-    for guest in ('mojave', 'catalina', 'bigsur'):
+    for guest in manifest['Guests']:
         record = manifest['Guests'][guest]
         archive = payloads/record['Archive']
         if record['Archive'] not in (guest+'.tar.xz', guest+'.tar.gz'):

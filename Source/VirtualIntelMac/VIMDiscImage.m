@@ -49,6 +49,9 @@ NSError *VIMFriendlyDiscImageError(NSString *path,NSError *underlying) {
         advice=VIMLocalized(@"discimage.the-image-may-have-been-moved-or-deleted-or-its", @"The image may have been moved or deleted, or its drive may be disconnected. Reconnect its drive or choose the image at its current location.");
     else if([underlying.domain isEqual:NSPOSIXErrorDomain]&&(underlying.code==EACCES||underlying.code==EPERM))
         advice=VIMLocalized(@"discimage.virtual-intel-mac-can-t-read-this-image-choose-it", @"Virtual Intel Mac can’t read this image. Choose it again using Connect Image, and allow access if macOS asks.");
+    else if(([underlying.domain isEqual:NSPOSIXErrorDomain]&&underlying.code==EBUSY)||
+            [detail containsString:@" lock"]||[detail containsString:@"locked"])
+        advice=VIMLocalized(@"discimage.close-other-apps-using-this-image", @"Close other apps using this image. If the image is mounted on this Mac, eject it, then try again.");
     else if([detail containsString:@"encrypt"]||[detail containsString:@"password"])
         advice=VIMLocalized(@"discimage.password-protected-disk-images-can-t-be-connected-to-a", @"Password-protected disk images can’t be connected to a virtual Mac. Choose an unencrypted image instead.");
     else if([detail containsString:@"no free ports"]||[detail containsString:@"not found (in use?)"])

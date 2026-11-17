@@ -60,6 +60,67 @@ static void builder(void)
     }
     dg_compact_scalar_override=1;pthread_mutex_destroy(&c->lock);free(c);
 }
+static void immediate_builder(void)
+{
+#ifdef VIM_PASSTHROUGH_OPENGL_CLIENT_PROFILE
+    memset(&dg_client_profile_report,0,sizeof(dg_client_profile_report));dg_client_profile_ms=10000;
+    __atomic_store_n(&dg_client_profile_active,++dg_client_profile_serial,__ATOMIC_RELEASE);
+#endif
+    struct DGConnection *c=calloc(1,sizeof(*c));assert(c);c->fd=-1;
+    pthread_mutex_init(&c->lock,NULL);struct DGContext context={.connection=c,.id=7};
+    struct DGConnection *reference=calloc(1,sizeof(*reference));assert(reference);reference->fd=-1;
+    pthread_mutex_init(&reference->lock,NULL);struct DGContext reference_context={.connection=reference,.id=7};
+    struct DGContext *previous=dg_current;dg_current=&context;
+    unsigned char expected[32000],decoded[32000];
+    for(unsigned phase=0;phase<3;++phase){
+        c->capabilities=phase==1?0:DG_CAP_COMPACT_SCALARS;
+        c->used=c->scalar_start=c->scalar_compact=0;size_t size=0;
+        reference->capabilities=c->capabilities;
+        reference->used=reference->scalar_start=reference->scalar_compact=0;
+        for(unsigned i=0;i<96;++i){
+            context.id=reference_context.id=7+(i&1);
+            uint32_t bits[]={i%7?0x3f800000u+i:0x80000000u,i%5?0x7fc01234u:0};
+            GLfloat x,y;memcpy(&x,bits,4);memcpy(&y,bits+1,4);
+            unsigned op=i%3==0?DG_OP_tex_coord2f:i%3==1?DG_OP_vertex2f:DG_OP_multi_tex_coord2f;
+            struct DGMessage plain={.op=op,.context=context.id};
+            if(i%3==2){plain.args[0]=GL_TEXTURE0;plain.args[1]=bits[0];plain.args[2]=bits[1];}
+            else{plain.args[0]=bits[0];plain.args[1]=bits[1];}
+            memcpy(expected+size,&plain,sizeof(plain));size+=sizeof(plain);
+            context.common_state_valid=DG_COMMON_ALL;context.error_observed_empty=1;
+            dg_common_neutral_reuse=phase!=2;
+            struct DGPacket original=DGPacketNew(&reference_context,op);original.message=plain;
+            DGSubmit(&reference_context,&original,0);DGPacketFree(&original);assert(!reference->dead);
+            if(i%3==0)glTexCoord2f(x,y);else if(i%3==1)glVertex2f(x,y);else glMultiTexCoord2f(GL_TEXTURE0,x,y);
+            assert(!c->dead && !context.error_observed_empty);
+            assert(context.common_state_valid==(phase==2?0:DG_COMMON_ALL));
+        }
+        size_t bytes=expand(c->batch,c->used,decoded,sizeof(decoded));
+        assert(bytes==size && !memcmp(decoded,expected,size));
+        assert(c->used==reference->used && !memcmp(c->batch,reference->batch,c->used));
+        if(c->scalar_compact){
+            size_t used=c->used;c->used=sizeof(c->batch)-1;
+            const uint64_t args[]={1,2};assert(!DGTrySubmitImmediateScalars(&context,DG_OP_vertex2f,args,2));
+            assert(c->used==sizeof(c->batch)-1);c->used=used;
+            c->dead=1;assert(!DGTrySubmitImmediateScalars(&context,DG_OP_vertex2f,args,2));
+            assert(c->used==used);c->dead=0;
+            assert(!DGTrySubmitImmediateScalars(&context,DG_OP_vertex2f,args,3));
+            assert(!DGTrySubmitImmediateScalars(&context,DG_OP_enable,args,2));
+        }
+        printf("PASS generated scalar fast path exact bits/order/cache invalidation and fallback phase=%u\n",phase);
+    }
+    dg_common_neutral_reuse=1;dg_current=previous;pthread_mutex_destroy(&c->lock);free(c);
+    pthread_mutex_destroy(&reference->lock);free(reference);
+#ifdef VIM_PASSTHROUGH_OPENGL_CLIENT_PROFILE
+    __atomic_store_n(&dg_client_profile_active,0,__ATOMIC_RELEASE);assert(!dg_client_profile_inflight);
+    const unsigned ops[]={DG_OP_tex_coord2f,DG_OP_vertex2f,DG_OP_multi_tex_coord2f};
+    for(unsigned i=0;i<3;++i){
+        const struct DGClientProfileRow *r=&dg_client_profile_report.submissions[0][ops[i]];
+        assert(r->entered==192 && r->completed==192);
+    }
+    assert(dg_client_profile_report.locks.entered==dg_client_profile_report.locks.completed);
+    puts("PASS explicit client profiling counts each accepted fast/generic command once; no inflight metadata remains");
+#endif
+}
 static void gpu(void)
 {
     unsigned char pixels[64*64*4]={0};struct DGContext *c=DGCreateContext(NULL,NULL);assert(c);
@@ -126,6 +187,6 @@ static void core(void)
 }
 int main(int argc,char **argv)
 {
-    builder();if(argc==2 && !strcmp(argv[1],"--builder-only"))return 0;
+    builder();immediate_builder();if(argc==2 && !strcmp(argv[1],"--builder-only"))return 0;
     assert(argc==1);gpu();core();return 0;
 }

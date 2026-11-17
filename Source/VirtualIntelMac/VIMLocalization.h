@@ -32,6 +32,7 @@ static inline NSString *VIMLocalizedLabel(NSString *identifier) {
         @"Clipboard": VIMLocalized(@"category.clipboard", @"Clipboard"),
         @"Name": VIMLocalized(@"sort.name", @"Name"),
         @"Type": VIMLocalized(@"sort.type", @"Type"),
+        @"macOS Release": VIMLocalized(@"sort.release", @"macOS Release"),
         @"Date Last Opened": VIMLocalized(@"sort.last-opened", @"Date Last Opened"),
         @"Date Created": VIMLocalized(@"sort.created", @"Date Created"),
         @"Size": VIMLocalized(@"sort.size", @"Size"),

@@ -56,6 +56,14 @@ def frame_metadata(payload, direction, tamper, negotiate_unicode=False):
     if len(payload) >= 64 and payload[:4] == b"\xfeSMB":
         status, command = struct.unpack_from("<IH", payload, 8)
         info.update(protocol="SMB2/3", command=hex(command), status=hex(status))
+        if command == 0 and direction == "server" and status == 0 and len(payload) >= 70:
+            info["dialect"] = hex(struct.unpack_from("<H", payload, 68)[0])
+        if command == 11 and len(payload) >= 104:
+            info["ioctl"] = hex(struct.unpack_from("<I", payload, 68)[0])
+            if direction == "server" and status == 0:
+                info["output_bytes"] = struct.unpack_from("<I", payload, 100)[0]
+                info["ioctl_structure"] = struct.unpack_from("<H", payload, 64)[0]
+                info["input_offset"], info["input_bytes"], info["output_offset"] = struct.unpack_from("<III", payload, 88)
         if direction == "server" and command == 1 and status == 0 and len(payload) >= 72:
             structure, flags = struct.unpack_from("<HH", payload, 64)
             if structure == 9:

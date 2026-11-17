@@ -13,7 +13,8 @@ static int DGVRAMCopyDrawable(struct DGHostContext *c,const struct DGMessage *m,
 {
     if(completed)*completed=0;
     struct DGVRAMDrawableBacking *b=c->vram;
-    int publish=m->op==DG_VRAM_PUBLISH_DRAWABLE,flip=(int)m->args[9];
+    int publish=m->op==DG_VRAM_PUBLISH_DRAWABLE,patch=m->op==DG_VRAM_PATCH_DRAWABLE;
+    int flip=(int)m->args[9];
     int x=(int)m->args[5],y=(int)m->args[6],w=(int)m->args[7],h=(int)m->args[8];
     int dw=publish?(int)(b->pitch/4):w,dh=publish?(int)b->height:h;
     GLuint texture=publish?c->color:b->texture,destination=publish?b->texture:c->color;
@@ -50,12 +51,17 @@ static int DGVRAMCopyDrawable(struct DGHostContext *c,const struct DGMessage *m,
         }
         const struct DGVRAMRect *rects=(const void *)(m+1);
         glBegin(GL_QUADS);
-        for(unsigned i=0;i<(publish?count:1);++i){
+        for(unsigned i=0;i<((publish || patch)?count:1);++i){
             int sx0=x,sx1=x+w,sy0=y,sy1=y+h,dx0=0,dx1=w,dy0=flip?h:0,dy1=flip?0:h;
             if(publish){
                 const struct DGVRAMRect *r=rects+i;sx0=r->x;sx1=r->x+r->width;
                 sy0=flip?h-r->y:r->y;sy1=flip?h-r->y-r->height:r->y+r->height;
                 dx0=x+r->x;dx1=dx0+r->width;dy0=y+r->y;dy1=dy0+r->height;
+            }else if(patch){
+                const struct DGVRAMRect *r=rects+i;
+                sx0=x+r->x;sx1=sx0+r->width;sy0=y+r->y;sy1=sy0+r->height;
+                dx0=r->x;dx1=dx0+r->width;
+                dy0=flip?h-r->y:r->y;dy1=flip?h-r->y-r->height:r->y+r->height;
             }
             glTexCoord2i(sx0,sy0);glVertex2i(dx0,dy0);glTexCoord2i(sx1,sy0);glVertex2i(dx1,dy0);
             glTexCoord2i(sx1,sy1);glVertex2i(dx1,dy1);glTexCoord2i(sx0,sy1);glVertex2i(dx0,dy1);

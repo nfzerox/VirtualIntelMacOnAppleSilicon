@@ -77,7 +77,10 @@ static BOOL Run(VIMDownload *download,BOOL wantSuccess,BOOL wantPause) {
     return correct&&completions==1;
 }
 static VIMDownload *Download(NSString *test,BOOL fast) {
-    NSURL *source=[NSURL URLWithString:[NSString stringWithFormat:@"https://swcdn.apple.com/content/downloads/vim-test/%@/Payload.pkg",test]];
+    BOOL pinned=[@[@"disconnect",@"bad-hash",@"pause-bad-hash"] containsObject:test];
+    NSString *format=pinned?@"http://oscdn.apple.com/content/downloads/vim-test/%@/InstallESD.dmg":
+        @"https://swcdn.apple.com/content/downloads/vim-test/%@/Payload.pkg";
+    NSURL *source=[NSURL URLWithString:[NSString stringWithFormat:format,test]];
     NSURL *directory=[NSURL fileURLWithPath:[root stringByAppendingPathComponent:test]];
     return [[(fast?FastDownload.class:VIMDownload.class) alloc] initWithSourceURL:source directory:directory error:NULL];
 }

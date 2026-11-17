@@ -54,6 +54,11 @@ if dirty:
     p.error('Commit QEMU source changes before a reproducible runtime build')
 a.output.mkdir(parents=True, exist_ok=a.resume)
 build_root = (a.build_directory or a.output/'Build').resolve()
+# The dependency is source-vendored. Build the ARM library even on an Intel
+# builder; only the ARM QEMU slice links it. Intel keeps ordinary native HVF.
+engine_output = build_root/'HybridEngine'
+subprocess.run(['zsh',str(source/'scripts/build-hybrid-engine'),str(engine_output)],check=True)
+engine_package = engine_output/'Package'
 configurations = {}
 for arch in ('x86_64', 'arm64'):
     build = build_root/arch
@@ -77,6 +82,8 @@ for arch in ('x86_64', 'arm64'):
         '--python='+sys.executable, '--cc=clang '+flags, '--cxx=clang++ '+flags,
         '--objcc=clang '+flags, '--extra-cflags='+flags,
         '--extra-objcflags='+flags, '--extra-ldflags='+flags]
+    if arch == 'arm64':
+        command += ['-Dhvdbt_engine='+str(engine_package)]
     if arch != platform.machine():
         # QEMU requires an explicit cross-build even with clang -arch; otherwise
         # Meson attempts to execute ARM configure probes on an Intel builder.
@@ -85,11 +92,12 @@ for arch in ('x86_64', 'arm64'):
     log_path = a.output/(arch+'.log')
     print(f'Building {arch}: {log_path}', flush=True)
     with log_path.open('w') as log:
-        subprocess.run(command, cwd=build, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
-        # Regenerate now if needed, so a later regeneration cannot rewrite config-host.h.
-        subprocess.run(['ninja', 'build.ninja'], cwd=build, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
-        for name in deployment_target.undefine_unavailable(build/'config-host.h', 'CONFIG_', arch):
-            print(f'{arch}: {name} is newer than macOS 11.0; using the fallback', file=log, flush=True)
+        with deployment_target.preserve_unchanged_config_timestamp(build/'config-host.h'):
+            subprocess.run(command, cwd=build, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
+            # Regenerate before filtering; a later regeneration would undo it.
+            subprocess.run(['ninja', 'build.ninja'], cwd=build, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
+            for name in deployment_target.undefine_unavailable(build/'config-host.h', 'CONFIG_', arch):
+                print(f'{arch}: {name} is newer than macOS 11.0; using the fallback', file=log, flush=True)
         subprocess.run(['ninja', '-j', str(a.jobs), 'qemu-system-x86_64', 'qemu-img'],
                        cwd=build, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
 if qemu_state() != (revision, b''):
@@ -116,7 +124,7 @@ deployment_target.check_weak_libsystem_imports(a.output/'apple-gfx-helper')
     'QEMURevision':revision, 'HostArchitectures':['x86_64','arm64'],
     'MinimumHostVersion':'11.0', 'ConfigureArguments':configurations,
     'BuildDirectory':str(build_root), 'DependencyPrefixes':str(deps),
-    'RuntimeValidated':False, 'HardwareTSO':False, 'AppDisplayMaxDimension':8192,
+    'RuntimeValidated':False, 'HardwareTSO':False, 'HybridCPU':True, 'AppDisplayMaxDimension':8192,
     'AppleANSIKeyboard':True, 'AudioDeviceSelection':True, 'DisplayScalePolicy':True, 'DisplayPowerEvents':True, 'GuestDisplayPowerEvents':True,
     'DirectDMG':True, 'DeploymentTargetChecked':True, 'USBPassthrough':True,
     'DiagnosticRegisters':True, 'USBRedirection':True}))

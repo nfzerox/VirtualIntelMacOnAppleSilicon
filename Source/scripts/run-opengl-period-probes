@@ -42,7 +42,7 @@ mkdir -p "$results" || exit 1
 names=(period-conformance array-element mixed-index-arrays compiled-index-families interleaved-arrays apple-element-array
     apple-evaluator selection-feedback pixel-maps compatibility-raster
     imaging-parameters imaging texture-readback texture-environment-queries
-    arb-vertex-program arb-fragment-program texture-list-errors raster-list-errors depth-texture)
+    arb-vertex-program arb-fragment-program texture-list-errors raster-list-errors depth-texture leopard-texture-combine)
 failed=0
 for arch in "${architectures[@]}"; do
     for name in "${names[@]}"; do
@@ -51,6 +51,8 @@ for arch in "${architectures[@]}"; do
         # retain the other oracle. Never accept either value interchangeably.
         if [[ $leopard == 1 && $name == array-element ]]; then
             run_probe "$arch" "$probes/$name" --signed-byte-biased >"$results/$arch-$name.stdout" 2>"$results/$arch-$name.stderr"
+        elif [[ $name == leopard-texture-combine ]]; then
+            run_probe "$arch" "$probes/$name" --require-discovery >"$results/$arch-$name.stdout" 2>"$results/$arch-$name.stderr"
         else
             run_probe "$arch" "$probes/$name" >"$results/$arch-$name.stdout" 2>"$results/$arch-$name.stderr"
         fi

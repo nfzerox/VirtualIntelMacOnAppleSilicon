@@ -12,7 +12,9 @@ int main(int argc, char **argv) {
         id<MTLComputePipelineState> pipeline = [d newComputePipelineStateWithFunction:[l newFunctionWithName:@"test"] error:&error];
         if (!pipeline) {fprintf(stderr,"pipeline: %s\n",error.description.UTF8String); return 1;}
         NSUInteger side = argc > 2 ? strtoul(argv[2],NULL,10) : 64;
-        MTLTextureDescriptor *desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:side height:side mipmapped:NO];
+        BOOL redMask=argc>1&&!strcmp(argv[1],"r8"),alphaMask=argc>1&&!strcmp(argv[1],"a8");
+        MTLPixelFormat format=alphaMask?MTLPixelFormatA8Unorm:redMask?MTLPixelFormatR8Unorm:MTLPixelFormatRGBA8Unorm;
+        MTLTextureDescriptor *desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:format width:side height:side mipmapped:NO];
         desc.storageMode = argc > 1 && !strcmp(argv[1],"managed") ? MTLStorageModeManaged : MTLStorageModeShared;
         desc.usage = MTLTextureUsageShaderRead;
         IOSurfaceRef surface = NULL;
@@ -29,9 +31,11 @@ int main(int argc, char **argv) {
             desc.usage |= MTLTextureUsageRenderTarget;
         }
         id<MTLTexture> t = useSurface ? [d newTextureWithDescriptor:desc iosurface:surface plane:0] : [d newTextureWithDescriptor:desc];
+        if(!t){fprintf(stderr,"texture unavailable: pixel format=%lu\n",(unsigned long)format);return 2;}
         fprintf(stderr,"descriptor usage=%lu options=%lu texture usage=%lu storage=%lu type=%lu\n",desc.usage,desc.resourceOptions,t.usage,t.storageMode,t.textureType);
         unsigned char data[64*64*4]; memset(data,255,sizeof(data));
-        if (!useSurface || upload) [t replaceRegion:MTLRegionMake2D(0,0,64,64) mipmapLevel:0 withBytes:data bytesPerRow:256];
+        if(redMask||alphaMask)for(unsigned y=0;y<64;y++)for(unsigned x=0;x<64;x++)data[y*64+x]=(x%4)*85;
+        if (!useSurface || upload) [t replaceRegion:MTLRegionMake2D(0,0,64,64) mipmapLevel:0 withBytes:data bytesPerRow:(redMask||alphaMask)?64:256];
         id<MTLBuffer> out = [d newBufferWithLength:64*64*16 options:MTLResourceStorageModeShared];
         memset(out.contents,0,out.length);
         id<MTLCommandQueue> q = [d newCommandQueue];
@@ -58,7 +62,12 @@ int main(int argc, char **argv) {
         [e dispatchThreadgroups:MTLSizeMake(8,8,1) threadsPerThreadgroup:MTLSizeMake(8,8,1)]; [e endEncoding];
         [b commit]; [b waitUntilCompleted];
         float *f = out.contents; unsigned errors = 0;
-        for (unsigned i=0;i<64*64*4;i++) if (fabsf(f[i]-1)>0.001f) errors++;
+        for (unsigned i=0;i<64*64*4;i++) {
+            unsigned channel=i%4,x=(i/4)%64;
+            float mask=(x%4)/3.f;
+            float expected=redMask?(channel==0?mask:channel==3?1:0):alphaMask?(channel==3?mask:0):1;
+            if(fabsf(f[i]-expected)>0.001f)errors++;
+        }
         fprintf(stderr,"status=%lu first=%g errors=%u error=%s\n",(unsigned long)b.status,f[0],errors,b.error.description.UTF8String ?: "none");
         return errors || b.status != MTLCommandBufferStatusCompleted;
     }

@@ -9,7 +9,7 @@ objects=( ${objects:#*/main.o} )
 (( ${#objects} )) || { print -u2 'Build the app first with Source/Build.command.'; exit 1; }
 mkdir -p "$root/Build/Probes"
 output="$root/Build/Probes/library-unavailable-tests-$architecture"
-xcrun clang -arch "$architecture" -mmacosx-version-min=15.0 -fobjc-arc -fmodules \
+xcrun clang -arch "$architecture" -mmacosx-version-min=11.0 -fobjc-arc -fmodules \
     -I "$root/VirtualIntelMac" -framework Cocoa "$root/probes/library-unavailable-tests.m" \
     "${objects[@]}" -o "$output"
 exec "$output" "$root/VirtualIntelMac/Assets.xcassets/tigerWallpaper.imageset/art.jpg"

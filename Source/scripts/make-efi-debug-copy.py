@@ -9,13 +9,14 @@ The output is a new diagnostic artifact; restore ordinary firmware afterward.
 import argparse
 from pathlib import Path
 import plistlib
+import re
 import runpy
 import struct
 import uuid
 import zlib
 
 
-def create(source, destination, debug_efi, keep_release=False, guest_boot_args=()):
+def create(source, destination, debug_efi, keep_release=False, guest_boot_args=(), profile=None):
     data = bytearray(source.read_bytes())
     if data[512:520] != b'EFI PART':
         raise ValueError('expected generated GPT EFI disk, not NVRAM or a FAT volume')
@@ -44,36 +45,44 @@ def create(source, destination, debug_efi, keep_release=False, guest_boot_args=(
     original = data[first*512:(last+1)*512]
     fat_type = runpy.run_path(str(Path(__file__).with_name('efi-fat32.py')))['FAT32']
     fat = fat_type(bytearray(original))
-    release = fat.read('EFI/OC/OpenCore.efi')
-    debug = (debug_efi/'OC/OpenCore.efi').read_bytes()
-    # Do not silently mix a newer DEBUG binary with another config/driver ABI.
-    counterpart = debug_efi.parent.parent/'EFI_RELEASE/EFI/OC/OpenCore.efi'
-    if release != counterpart.read_bytes() or b'DBG-XXX-YYYY-MM-DD' not in debug:
-        raise ValueError('expected the matching vendored RELEASE/DEBUG pair')
-    config = plistlib.loads(fat.read('EFI/OC/config.plist'))
+    keep_release = keep_release or bool(guest_boot_args)
+    if profile and not re.fullmatch(r'[a-z]+', profile):
+        raise ValueError('choose a valid unified EFI profile')
+    config_path = f'EFI/VIM/{profile}/config.plist' if profile else 'EFI/OC/config.plist'
+    loader_path = f'EFI/VIM/{profile}/OpenCore.efi' if profile else 'EFI/OC/OpenCore.efi'
+    if not keep_release:
+        release = fat.read(loader_path)
+        debug = (debug_efi/'OC/OpenCore.efi').read_bytes()
+        # Do not silently mix a newer DEBUG binary with another config/driver ABI.
+        counterpart = debug_efi.parent.parent/'EFI_RELEASE/EFI/OC/OpenCore.efi'
+        if release != counterpart.read_bytes() or b'DBG-XXX-YYYY-MM-DD' not in debug:
+            raise ValueError('expected the matching vendored RELEASE/DEBUG pair')
+    config = plistlib.loads(fat.read(config_path))
     if guest_boot_args:
         # Isolated guest-driver logging, keeping the production RELEASE loader,
         # quiet firmware and privacy policy. Never edits the VM's NVRAM/source.
         guid = '7C436110-AB2A-4BBB-A880-FE41995C9F82'
         flags = config['NVRAM']['Add'][guid].get('boot-args', '').split()
         for flag in guest_boot_args:
-            if not flag or any(c.isspace() for c in flag) or '=' not in flag:
-                raise ValueError('each guest boot argument must be one key=value token')
+            if not flag or any(c.isspace() for c in flag) or ('=' not in flag and flag != '-v'):
+                raise ValueError('each guest boot argument must be one key=value token or -v')
             key = flag.split('=', 1)[0]
             flags = [f for f in flags if f.split('=', 1)[0] != key]
             flags.append(flag)
         config['NVRAM']['Add'][guid]['boot-args'] = ' '.join(flags)
-        keep_release = True
     else:
-        config['Misc']['Debug'].update(Target=0x09,
+        config['Misc']['Debug'].update(Target=0x09, AppleDebug=True,
                                       DisplayLevel=0x80000002 if keep_release else 0x80000042,
                                       LogModules='*')
         config['Misc']['Serial']['Init'] = True
     # Preserve picker/default-boot settings: changing them would hide the race.
-    fat.write('EFI/OC/config.plist', plistlib.dumps(config, sort_keys=False), replace=True)
+    fat.write(config_path, plistlib.dumps(config, sort_keys=False), replace=True)
     if not keep_release:
-        fat.write('EFI/OC/OpenCore.efi', debug, replace=True)
-        fat.write('EFI/BOOT/BOOTx64.efi', (debug_efi/'BOOT/BOOTx64.efi').read_bytes(), replace=True)
+        fat.write(loader_path, debug, replace=True)
+        # Unified firmware's common boot paths contain the profile selector,
+        # not OpenCore. Retain it and change only the requested profile.
+        if not profile:
+            fat.write('EFI/BOOT/BOOTx64.efi', (debug_efi/'BOOT/BOOTx64.efi').read_bytes(), replace=True)
     data[first*512:(last+1)*512] = fat.data
     with destination.open('xb') as output:
         output.write(data)
@@ -89,6 +98,7 @@ if __name__ == '__main__':
     parser.add_argument('--keep-release-loader', action='store_true',
                         help='retain RELEASE binaries; log warnings/errors only to reduce timing changes')
     parser.add_argument('--guest-boot-arg', action='append', default=[],
-                        help='isolated guest key=value argument; retain all quiet production EFI binaries/settings')
+                        help='isolated guest key=value argument or -v; retain production EFI binaries/settings')
+    parser.add_argument('--profile', help='guest profile in the unified EFI image')
     args = parser.parse_args()
-    create(args.source, args.destination, args.debug_efi, args.keep_release_loader, args.guest_boot_arg)
+    create(args.source, args.destination, args.debug_efi, args.keep_release_loader, args.guest_boot_arg, args.profile)

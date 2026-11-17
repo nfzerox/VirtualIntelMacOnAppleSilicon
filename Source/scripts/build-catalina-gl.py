@@ -12,6 +12,65 @@ import tarfile
 import tempfile
 
 
+def rebuild_adapters(output):
+    """Refresh project code without re-extracting or changing Apple donors."""
+    source = Path(__file__).resolve().parents[1]
+    output.mkdir(parents=True, exist_ok=False)
+    with tarfile.open(source/'prebuilt/catalina-gl/catalina-gl.tar.gz', 'r:gz') as archive:
+        archive.extractall(output, filter='data')
+    payload = output/'payload'
+    serializer = payload/'System/Library/PrivateFrameworks/MetalSerializer.framework'
+    sdk = source/'resources/xcode/XcodeCatalina.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk'
+    subprocess.run(['xcrun', 'clang', '-O2', '-arch', 'x86_64', '-mmacosx-version-min=10.15',
+                    '-fblocks', '-isysroot', str(sdk), '-dynamiclib',
+                    str(source/'compat/PVGMetalCompat/PVGMetalCompat.m'),
+                    str(source/'compat/PVGMetalCompat/PVGWritability.m'),
+                    '-undefined', 'dynamic_lookup', '-install_name',
+                    '/System/Library/PrivateFrameworks/MetalSerializer.framework/Versions/A/MetalSerializer',
+                    '-Wl,-not_for_dyld_shared_cache',
+                    '-Wl,-reexport_library,'+str(serializer/'Versions/A/MetalSerializerOriginal'),
+                    '-framework', 'Foundation', '-framework', 'Metal', '-lobjc',
+                    '-o', str(serializer/'Versions/A/MetalSerializer')], check=True)
+    renderer = payload/'System/Library/Extensions/AppleMetalOpenGLRenderer.bundle'
+    helper = renderer/'Contents/MacOS/PVGOpenGLMetal.dylib'
+    helper.unlink()
+    subprocess.run(['/bin/zsh', str(source/'scripts/build-opengl-metal-probe'), str(helper)], check=True)
+    for path in (serializer/'Versions/A/MetalSerializer', serializer, renderer):
+        subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', '--preserve-metadata=entitlements', str(path)], check=True)
+    for path in (serializer, renderer):
+        subprocess.run(['/usr/bin/codesign', '--verify', '--deep', '--strict', str(path)], check=True)
+    return pack(output, payload)
+
+
+def pack(output, payload):
+    archive = output/'catalina-gl.tar.gz'
+    with archive.open('xb') as file, gzip.GzipFile(fileobj=file, mode='wb', filename='', mtime=0) as compressed:
+        with tarfile.open(fileobj=compressed, mode='w|', format=tarfile.USTAR_FORMAT) as stream:
+            for path in [payload, *sorted(payload.rglob('*'))]:
+                member = stream.gettarinfo(str(path), path.relative_to(output).as_posix())
+                member.uid = member.gid = member.mtime = 0
+                member.uname = member.gname = ''
+                member.pax_headers = {}
+                # exFAT's synthetic owner-only modes are not guest modes.
+                # Code must also load in WindowServer's unprivileged account.
+                if member.isfile():
+                    with path.open('rb') as data:
+                        magic = data.read(4)
+                    member.mode = 0o755 if magic in (
+                        b'\xfe\xed\xfa\xce', b'\xce\xfa\xed\xfe',
+                        b'\xfe\xed\xfa\xcf', b'\xcf\xfa\xed\xfe',
+                        b'\xca\xfe\xba\xbe', b'\xbe\xba\xfe\xca',
+                    ) else 0o644
+                else:
+                    member.mode = 0o755
+                if member.isfile():
+                    with path.open('rb') as data:
+                        stream.addfile(member, data)
+                else:
+                    stream.addfile(member)
+    return archive
+
+
 def build(output):
     source = Path(__file__).resolve().parents[1]
     if output.exists():
@@ -86,23 +145,13 @@ def build(output):
         shutil.copytree(work/'registration/PVGOpenGLProbe.kext', registration)
         for path in (bundle, registration, metal, serializer):
             subprocess.run(['/usr/bin/codesign', '--verify', '--deep', '--strict', str(path)], check=True)
-    archive = output/'catalina-gl.tar.gz'
-    with archive.open('xb') as file, gzip.GzipFile(fileobj=file, mode='wb', filename='', mtime=0) as compressed:
-        with tarfile.open(fileobj=compressed, mode='w|', format=tarfile.USTAR_FORMAT) as stream:
-            for path in [payload, *sorted(payload.rglob('*'))]:
-                member = stream.gettarinfo(str(path), path.relative_to(output).as_posix())
-                member.uid = member.gid = member.mtime = 0
-                member.uname = member.gname = ''
-                member.pax_headers = {}
-                if member.isfile():
-                    with path.open('rb') as data:
-                        stream.addfile(member, data)
-                else:
-                    stream.addfile(member)
-    return archive
+    return pack(output, payload)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path)
-    print(build(parser.parse_args().output))
+    parser.add_argument('--adapters-only', action='store_true',
+                        help='Rebuild project adapters from the vendored donor archive; no dsce/extraction required')
+    args = parser.parse_args()
+    print((rebuild_adapters if args.adapters_only else build)(args.output))

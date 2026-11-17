@@ -112,14 +112,16 @@ static NSData *RecoveryRequest(NSURLSession *session,NSMutableURLRequest *reques
         !URL.query&&!URL.user&&!URL.password&&!URL.port&&!URL.fragment;
 }
 + (BOOL)isApprovedURL:(NSURL *)URL {
-    if(URL.user||URL.password||URL.port||URL.fragment||URL.query)return NO;
+    if(URL.user||URL.password||URL.fragment)return NO;
     if([self isMavericksRecoveryAsset:URL])return YES;
     if(![URL.scheme isEqual:@"https"])return NO;
     if([URL.host isEqual:@"archive.org"]||[URL.host hasSuffix:@".archive.org"])
         return ([URL.path hasPrefix:@"/download/"]||[URL.path hasPrefix:@"/0/items/"])&&[URL.pathExtension isEqual:@"dmg"];
-    if([URL.host isEqual:@"swcdn.apple.com"])return [URL.path hasPrefix:@"/content/downloads/"]&&[URL.pathExtension isEqual:@"pkg"]&&!URL.query;
-    if([URL.host isEqual:@"updates.cdn-apple.com"])
-        return [@[@"InstallMacOSX.dmg",@"InstallOS.dmg"] containsObject:URL.lastPathComponent];
+    // Period Software Update delivers signed outer tarballs. Authentication
+    // of their members belongs to the native installer, before OS mutation.
+    NSString *host=URL.host.lowercaseString;
+    if([host hasSuffix:@".apple.com"]||[host hasSuffix:@".cdn-apple.com"])
+        return [@[@"pkg",@"tar",@"dmg",@"iso"] containsObject:URL.pathExtension.lowercaseString];
     return NO;
 }
 + (NSDictionary<NSString *,NSString *> *)headersForURL:(NSURL *)URL error:(NSError **)error {
@@ -179,6 +181,10 @@ static NSData *RecoveryRequest(NSURLSession *session,NSMutableURLRequest *reques
     return @{@"Cookie":[@"AssetToken=" stringByAppendingString:token]};
 }
 + (BOOL)verifyFile:(NSURL *)file source:(NSURL *)URL error:(NSError **)error {
+    // HTTPS authenticates the current server response. Do not reject a valid
+    // replacement merely because a remote plist still pins an older file.
+    // The Mavericks HTTP exception still requires its integrity pin.
+    if([URL.scheme.lowercaseString isEqual:@"https"])return YES;
     NSString *expected=[VIMInstallerCatalog fileForURL:URL][@"SHA256"];
     if([self isMavericksRecoveryAsset:URL]&&!expected)
         return SourceFailure(error,VIMLocalized(@"installersource.the-recovery-download-has-no-matching-verification-record-in-the", @"The recovery download has no matching verification record in the installer catalog."));

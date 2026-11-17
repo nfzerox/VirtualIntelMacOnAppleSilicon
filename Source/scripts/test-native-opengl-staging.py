@@ -73,3 +73,28 @@ with tempfile.TemporaryDirectory(prefix='vim-native-gl-') as temporary:
         assert result.returncode != 0
         assert all(p.read_bytes() == data for p, data in snapshot.items())
 print('PASS: compiled framework matches reference; native-only libraries, backup recovery, symlinks, input preservation and refusal')
+
+with tempfile.TemporaryDirectory(prefix='vim-mojave-gl-selection-') as temporary:
+    base=Path(temporary);guest=base/'guest';staged=base/'staged'
+    native32=image(7,stock);native64=image(0x1000007)
+    native=reference['combine']([(7,3,12,native32),(0x1000007,3,12,native64)])
+    engine='Versions/A/Resources/GLEngine.bundle/GLEngine'
+    saved='Versions/A/Resources/PassthroughOpenGL/OriginalGLEngine'
+    write(guest,'Versions/A/OpenGL',native)
+    write(guest,engine,native+b'_VIMGLINotifyCPUSurfaceCopy\0')
+    write(guest,saved,native)
+    write(staged,'Versions/A/OpenGL',native64)
+    write(staged,engine,native64)
+    write(staged,'Versions/A/Resources/PVGDonorFiles.txt',
+          b'Versions/A/OpenGL\nVersions/A/Resources/GLEngine.bundle/GLEngine\n')
+    subprocess.run([str(tool),'stage-opengl',str(guest),str(staged)],check=True,capture_output=True)
+    restored=(staged/engine).read_bytes()
+    assert b'_VIMGLINotifyCPUSurfaceCopy\0' not in restored
+    assert native32 in restored and native64 in restored
+    # An OS update replacing our engine uses its new native image, not the old
+    # retained data. No exact-build or hash matching is needed for selection.
+    updated32=native32+b'updated native i386'
+    write(guest,engine,reference['combine']([(7,3,12,updated32),(0x1000007,3,12,native64)]))
+    subprocess.run([str(tool),'stage-opengl',str(guest),str(staged)],check=True,capture_output=True)
+    assert updated32 in (staged/engine).read_bytes()
+print('PASS: Mojave optional renderer can return to ordinary GL; updated native engine wins over retained data')

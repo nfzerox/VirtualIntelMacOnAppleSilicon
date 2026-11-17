@@ -1,4 +1,5 @@
 #import "VIMLocalization.h"
+#import "VIMGuestFamilies.h"
 #import "VIMGuestPreparation.h"
 #import "VIMGuestAgent.h"
 #import "VIMQMPConnection.h"
@@ -97,11 +98,11 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
 - (void)start {
     NSAssert(NSThread.isMainThread,@"Guest preparation is main-thread owned");
     NSDictionary *report=self.initialReport;NSString *guest=report[@"Guest"];
-    if(![@[@"mojave",@"catalina",@"bigsur"] containsObject:guest]||![report[@"LiveRoot"] isEqual:@YES]||
+    if(!VIMIsModernGuest(guest)||![report[@"LiveRoot"] isEqual:@YES]||
        ![report[@"KernelMatchesSystem"] isEqual:@YES]||![report[@"InstalledSystemCandidate"] isEqual:@YES]||
        (!self.headlessRepair&&![report[@"DesktopRunning"] isEqual:@YES])||
        ![report[@"VolumeUUID"] isKindOfClass:NSString.class]||![report[@"VolumeUUID"] length]) {
-        self.completion(nil,PreparationError(VIMLocalized(@"guestpreparation.preparation-requires-a-matching-installed-mojave-catalina-or-big-sur", @"Preparation requires a matching installed Mojave, Catalina or Big Sur system with verified volume identity. Initial setup also requires a usable desktop.")));return;
+        self.completion(nil,PreparationError(VIMLocalized(@"vimguestpreparation.preparation-requires-a-matching-installed-mojave-or-later-system", @"Preparation requires a matching installed Mojave or later system with verified volume identity. Initial setup also requires a usable desktop.")));return;
     }
     NSURL *payloads=[self.runtime URLByAppendingPathComponent:@"GuestPayloads"];
     NSFileManager *fm=NSFileManager.defaultManager;NSError *error=nil;
@@ -222,10 +223,12 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
                 [self finish:nil error:extractError?:PreparationError(VIMLocalized(@"guestpreparation.guest-payload-extraction-failed-diagnostic-staging-was-retained", @"Guest payload extraction failed. Diagnostic staging was retained."))];return;
             }
             if(![self phase:@"preparing" message:VIMLocalized(@"guestpreparation.preparing-this-macos-build-s-graphics-files", @"Preparing this macOS build’s graphics files…")])return;
-            [self.agent runExecutable:prepare arguments:@[@"/",payload,directory] timeout:0 completion:^(NSDictionary *prepared,NSError *prepareError) {
+            NSArray *arguments=@[@"/",payload,directory];
+            [self.agent runExecutable:prepare arguments:arguments timeout:0 completion:^(NSDictionary *prepared,NSError *prepareError) {
                 if([prepared[@"stderr"] length])self.state[@"PreparationLog"]=[[NSString alloc] initWithData:prepared[@"stderr"] encoding:NSUTF8StringEncoding]?:@"Non-text preparation output";
                 NSDictionary *result=CommandJSON(prepared);
                 if(prepareError||![result[@"Prepared"] isEqual:@YES]||![result[@"Installed"] isEqual:@NO]||
+                   [result[@"OpenGLBootSelection"] isEqual:@YES]!=[self.initialReport[@"Guest"] isEqual:@"mojave"]||
                    ![result[@"Guest"] isEqual:self.initialReport[@"Guest"]]||![result[@"ProductBuildVersion"] isEqual:self.initialReport[@"ProductBuildVersion"]]) {
                     [self finish:nil error:prepareError?:PreparationError(VIMLocalized(@"guestpreparation.guest-file-preparation-failed-nothing-was-installed-diagnostic-staging-was", @"Guest file preparation failed. Nothing was installed; diagnostic staging was retained."))];return;
                 }
@@ -249,7 +252,7 @@ static NSDictionary *CommandJSON(NSDictionary *r) {
                         if(![plan[@"TransactionID"] isKindOfClass:NSString.class]||![[NSUUID alloc] initWithUUIDString:plan[@"TransactionID"]]) {
                             [self finish:nil error:PreparationError(VIMLocalized(@"guestpreparation.installation-plan-has-no-valid-transaction-identity", @"Installation plan has no valid transaction identity."))];return;
                         }
-                        [self finish:@{@"Prepared":@YES,@"Planned":@YES,@"Installed":@NO,@"GuestReport":report,@"PayloadDirectory":payload,@"TransactionJournal":journal,@"TransactionID":plan[@"TransactionID"],@"GuestProgress":self.progressUI.receipt?:@{}} error:nil];
+                        [self finish:@{@"Prepared":@YES,@"Planned":@YES,@"Installed":@NO,@"OpenGLBootSelection":@([self.initialReport[@"Guest"] isEqual:@"mojave"]),@"GuestReport":report,@"PayloadDirectory":payload,@"TransactionJournal":journal,@"TransactionID":plan[@"TransactionID"],@"GuestProgress":self.progressUI.receipt?:@{}} error:nil];
                     }];
                 }];
             }];

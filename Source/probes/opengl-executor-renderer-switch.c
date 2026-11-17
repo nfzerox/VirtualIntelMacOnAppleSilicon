@@ -39,9 +39,11 @@ int main(int argc,char **argv)
     glTexImage2D(GL_TEXTURE_RECTANGLE_ARB,0,GL_RGBA,640,359,0,GL_RGBA,GL_UNSIGNED_INT_8_8_8_8_REV,NULL);
     assert(!CGLCreateContext(pf,share,&c.cgl));c.native_screen_count=count;
     CGLDestroyPixelFormat(pf);assert(!CGLSetCurrentContext(c.cgl)&&DGCreateAliases(&c,&shared));
-    assert(strstr((const char *)glGetString(GL_RENDERER),"Intel"));
+    struct DGNativeRendererInfo initial={0};GLint hardware=-1,software=-1;
+    assert(DGNativeRendererState(&c,&initial,&hardware,&software)&&hardware>=0&&software>=0&&
+        !(initial.flags&DG_NATIVE_CURRENT_SOFTWARE));
     assert(DGSelectDrawable(&c,1,64,64));
-    GLuint program=0;
+    GLuint program=0,vertex_program=0;
     for(unsigned i=0;i<(retire_software?2:3);++i){
         struct DGMessage select={.op=DG_SELECT_NATIVE_RENDERER,.flags=DG_REPLY,.args={i&1}};
         struct DGReply reply={0};assert(!DGNativeRendererCommand(&c,&select,&reply)&&!reply.error);
@@ -58,6 +60,9 @@ int main(int argc,char **argv)
                 assert(!CGLSetCurrentContext(NULL));pthread_t thread;assert(!pthread_create(&thread,NULL,compile_on_thread,&work));
                 assert(!pthread_join(thread,NULL)&&!CGLSetCurrentContext(c.cgl));
             }else DGHostARBProgramString(&c,GL_FRAGMENT_PROGRAM_ARB,GL_PROGRAM_FORMAT_ASCII_ARB,(GLsizei)work.length,work.source);
+            static const char vertex[]="!!ARBvp1.0\nMOV result.position, vertex.position;\nMOV result.color, vertex.color;\nEND\n";
+            glGenProgramsARB(1,&vertex_program);glBindProgramARB(GL_VERTEX_PROGRAM_ARB,vertex_program);
+            DGHostARBProgramString(&c,GL_VERTEX_PROGRAM_ARB,GL_PROGRAM_FORMAT_ASCII_ARB,sizeof(vertex)-1,vertex);
             GLint position=-2;glGetIntegerv(GL_PROGRAM_ERROR_POSITION_ARB,&position);printf("program error position=%d\n",position);
             GLint draw=0,read=0,after=0,native=-1;
             glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING_EXT,&draw);glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING_EXT,&read);
@@ -87,8 +92,25 @@ int main(int argc,char **argv)
             assert(!glGetError()&&pixel[0]==(i==0?255:0)&&pixel[1]==(i==1?255:0)&&pixel[2]==(i==2?255:0)&&pixel[3]==255);
         }
         CGLSetCurrentContext(NULL);assert(!CGLSetCurrentContext(c.cgl));
+        if(i==2&&!getenv("VIM_PROBE_ARB_SOURCE")){
+            glViewport(0,0,64,64);glMatrixMode(GL_PROJECTION);glLoadIdentity();glMatrixMode(GL_MODELVIEW);glLoadIdentity();
+            glEnable(GL_VERTEX_PROGRAM_ARB);glEnable(GL_FRAGMENT_PROGRAM_ARB);glColor4f(.25f,.5f,.75f,1.f);
+            glBegin(GL_QUADS);glVertex2f(-1,-1);glVertex2f(1,-1);glVertex2f(1,1);glVertex2f(-1,1);glEnd();glFinish();
+            GLint gpu=-1;assert(!CGLGetParameter(c.cgl,kCGLCPGPUFragmentProcessing,&gpu)&&gpu);
+            assert(!CGLGetParameter(c.cgl,kCGLCPGPUVertexProcessing,&gpu)&&gpu);
+            unsigned char p[4]={0};glReadPixels(3,4,1,1,GL_RGBA,GL_UNSIGNED_BYTE,p);
+            printf("recovered ARB pixel=%u,%u,%u,%u\n",p[0],p[1],p[2],p[3]);
+            assert(!glGetError()&&p[0]>=63&&p[0]<=65&&p[1]>=127&&p[1]<=129&&p[2]>=190&&p[2]<=192&&p[3]==255);
+            glDisable(GL_FRAGMENT_PROGRAM_ARB);glDisable(GL_VERTEX_PROGRAM_ARB);puts("PASS recovered ARB vertex and fragment programs actually execute on hardware");
+            static const char invalid[]="!!ARBfp1.0\nBOGUS result.color;\nEND\n";
+            glProgramStringARB(GL_FRAGMENT_PROGRAM_ARB,GL_PROGRAM_FORMAT_ASCII_ARB,sizeof(invalid)-1,invalid);
+            assert(glGetError()==GL_INVALID_OPERATION);
+            GLint before=-1,after=-1;glGetIntegerv(GL_PROGRAM_ERROR_POSITION_ARB,&before);assert(before>=0);
+            assert(!DGRevalidateNativeARBPrograms());glGetIntegerv(GL_PROGRAM_ERROR_POSITION_ARB,&after);
+            assert(before==after&&!glGetError());puts("PASS failed-compile diagnostics remain observable");
+        }
     }
-    glDeleteProgramsARB(1,&program);glFinish();DGDestroyDrawables(&c);DGDestroyAliases(&c);
+    glDeleteProgramsARB(1,&program);glDeleteProgramsARB(1,&vertex_program);glFinish();DGDestroyDrawables(&c);DGDestroyAliases(&c);
     glDeleteTextures(1,&input);CGLSetCurrentContext(NULL);CGLDestroyContext(c.cgl);
     CGLSetCurrentContext(share);DGDestroyDrawables(&shared);DGDestroyAliases(&shared);
     CGLSetCurrentContext(NULL);CGLDestroyContext(share);

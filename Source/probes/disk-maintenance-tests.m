@@ -82,7 +82,8 @@ int main(int argc,const char *argv[]) {@autoreleasepool {
             completion:^(NSDictionary *value,NSError *error){_exit(78);} error:nil],@"Start interruption fixture");
         [NSRunLoop.currentRunLoop run];return 79;
     }
-    NSCAssert(argc==2,@"Pass qemu-img");tool=[NSURL fileURLWithPath:@(argv[1])];fm=NSFileManager.defaultManager;
+    BOOL basic=argc==3&&!strcmp(argv[2],"--basic");
+    NSCAssert(argc==2||basic,@"Pass qemu-img [--basic]");tool=[NSURL fileURLWithPath:@(argv[1])];fm=NSFileManager.defaultManager;
     NSURL *root=[fm.temporaryDirectory URLByAppendingPathComponent:[@"vim-disk-tests-" stringByAppendingString:NSUUID.UUID.UUIDString]];
     [fm createDirectoryAtURL:root withIntermediateDirectories:YES attributes:nil error:nil];
     @try {
@@ -95,6 +96,7 @@ int main(int argc,const char *argv[]) {@autoreleasepool {
         NSData *compressed=[NSData dataWithContentsOfURL:disk];
         result=Maintain(package,NO,YES);
         NSCAssert(![result[@"Changed"] boolValue]&&[[NSData dataWithContentsOfURL:disk] isEqual:compressed],@"Retain compressed source when sparse conversion grows");
+        if(basic){puts("PASS: sparse/compressed content equivalence and no-growth retention on selected temporary volume");return 0;}
         Run(@[@"snapshot",@"-c",@"preserve",disk.path]);NSData *snapshot=[NSData dataWithContentsOfURL:disk];
         Maintain(package,YES,NO);NSCAssert([[NSData dataWithContentsOfURL:disk] isEqual:snapshot],@"Do not discard snapshots");
         NSURL *locked=Fixture(root,@"Locked"),*lock=[locked URLByAppendingPathComponent:@"State/Session.lock"];

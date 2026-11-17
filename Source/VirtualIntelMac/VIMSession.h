@@ -7,8 +7,11 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) BOOL supportsRetinaDisplay;
 @property(nonatomic, readonly) NSString *displayScalingFilter;
 + (void)displayScalingPreferencesChangedForMachine:(VIMMachine *)machine;
++ (void)inputPreferencesChangedForMachine:(VIMMachine *)machine;
 /// Opens/focuses the window without starting an emulator or acquiring the disk.
 + (void)showMachineWindow:(VIMMachine *)machine;
+/// Read-only toolbar layout inspection, without booting or opening menus.
++ (NSDictionary *)inspectToolbarForMachine:(VIMMachine *)machine;
 /// YES accepts the request; Apple silicon first verifies Rosetta asynchronously.
 /// Missing Rosetta cancels that start and presents Apple's installation option.
 + (BOOL)openMachine:(VIMMachine *)machine error:(NSError **)error;

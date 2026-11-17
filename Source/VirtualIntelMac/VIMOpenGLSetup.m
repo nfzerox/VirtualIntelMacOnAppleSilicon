@@ -9,6 +9,7 @@
 #import <CommonCrypto/CommonDigest.h>
 #include "../tools/opengl-installer-paths.h"
 #include "../tools/opengl-system-version.h"
+#include "../tools/opengl-support-revision.h"
 static NSString *const GuestTools=@"/Library/Application Support/Virtual Intel Mac/GuestTools";
 static NSError *SetupError(NSString *message){return [NSError errorWithDomain:@"VirtualIntelMac.OpenGLSetup" code:1 userInfo:@{NSLocalizedDescriptionKey:message}];}
 static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
@@ -20,7 +21,9 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
         unsigned char digest[CC_SHA256_DIGEST_LENGTH];CC_SHA256(data.bytes,(CC_LONG)data.length,digest);
         NSMutableString *text=[NSMutableString new];for(NSUInteger i=0;i<sizeof(digest);i++)[text appendFormat:@"%02x",digest[i]];
         digests[key]=text;
-    }return digests;
+    }
+    digests[@"GraphicsSupportRevision"]=@(VIM_OPENGL_SUPPORT_REVISION);
+    return digests;
 }
 @interface VIMOpenGLSetup ()
 @property VIMMachine *machine;
@@ -33,6 +36,7 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
 @property NSUInteger audioDeviceWaits;
 @property BOOL audioDefaultsSkipped;
 @property BOOL fileSharingChecked;
+@property BOOL fileSharingRestaged;
 @property BOOL tigerGraphicsPrepared;
 @property BOOL tigerAudioPrepared;
 @property BOOL installerResumeRequested;
@@ -42,6 +46,8 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
 @property BOOL payloadRestartRequired;
 @property BOOL refreshingFirstLoginSupport;
 @property BOOL updatingCompletedGuest;
+@property BOOL statusRepairAttempted;
+@property NSString *statusRepairProgram;
 @property NSURL *payloadMediaDirectory;
 @property NSURL *payloadMedia;
 @property NSString *payloadVolumeName;
@@ -126,23 +132,14 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
         self.payloadMediaDirectory=directory;
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
             NSError *error=nil;NSFileManager *fm=NSFileManager.defaultManager;
-            NSURL *media=[directory URLByAppendingPathComponent:@"Support.iso"],*log=[directory URLByAppendingPathComponent:@"Preparation.log"];
+            NSURL *media=[directory URLByAppendingPathComponent:@"Support.dmg"],*log=[directory URLByAppendingPathComponent:@"Preparation.log"];
             BOOL ok=[fm createDirectoryAtURL:directory withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:&error];
             NSFileHandle *handle=nil;
             if(ok)ok=[fm createFileAtPath:log.path contents:nil attributes:@{NSFilePosixPermissions:@0600}];
             if(ok)handle=[NSFileHandle fileHandleForWritingToURL:log error:&error];
             if(ok&&handle) {
-                // Attached to the guest as an ATAPI CD-ROM (ide-cd), which
-                // expects ISO9660 structure to consider the medium readable
-                // at all; an HFS-only image (no -iso) mounts fine on the
-                // host directly but is reported as unreadable by the guest.
-                // With -iso, makehybrid always appends .iso to the given
-                // base name itself, rather than reusing that exact -o path
-                // as HFS-only mode does; pass an extensionless base here and
-                // reference the actual <base>.iso result as payloadMedia.
-                NSURL *base=[directory URLByAppendingPathComponent:@"Support"];
                 NSTask *task=[NSTask new];task.executableURL=[NSURL fileURLWithPath:@"/usr/bin/hdiutil"];
-                task.arguments=@[@"makehybrid",@"-hfs",@"-iso",@"-hfs-volume-name",self.payloadVolumeName,@"-o",base.path,self.bundledSupport.path];
+                task.arguments=@[@"makehybrid",@"-hfs",@"-hfs-volume-name",self.payloadVolumeName,@"-o",media.path,self.bundledSupport.path];
                 task.standardInput=NSFileHandle.fileHandleWithNullDevice;task.standardOutput=handle;task.standardError=handle;
                 ok=[task launchAndReturnError:&error];if(ok){[task waitUntilExit];ok=task.terminationStatus==0;}[handle closeFile];
             }else ok=NO;
@@ -341,6 +338,23 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
     }
     self.logVerificationFailure(message);
 }
+// Read-only snapshot for a failed desktop check: WindowServer's mode/depth,
+// whether the accelerator and its GA plugin loaded, and WindowServer's own
+// reason. The exit code alone cannot tell these host-specific cases apart.
+- (void)logGraphicsState:(void (^)(void))done {
+    if(!self.logVerificationFailure){done();return;}
+    NSString *script=@"system_profiler SPDisplaysDataType 2>&1 | head -40; echo '-- kexts'; kextstat 2>/dev/null | grep -i -E 'VMsvga|IOGraphics|IOSurface';"
+        " echo '-- accelerator'; ioreg -l -w0 -r -c VMsvga2Accel 2>/dev/null | grep -E 'AccelCaps|VMwareSVGAAccelOptions|IOCFPlugInTypes|IOAccelRevision';"
+        " ioreg -l -w0 -r -c VMsvga2 2>/dev/null | grep -E 'IOAccelTypes|VIMNativePanel|IOFBCurrentPixelCount|IOFBMemorySize';"
+        " echo '-- WindowServer'; tail -40 /private/var/log/windowserver.log 2>/dev/null; grep -i -E 'WindowServer|GLEngine|VMsvga' /private/var/log/system.log 2>/dev/null | tail -30";
+    [self.agent runExecutable:@"/bin/sh" arguments:@[@"-c",script] timeout:60 completion:^(NSDictionary *reply,NSError *error){
+        NSData *data=reply[@"stdout"];
+        if(data.length>16384)data=[data subdataWithRange:NSMakeRange(data.length-16384,16384)];
+        NSString *text=data.length?[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]:nil;
+        self.logVerificationFailure([NSString stringWithFormat:@"Graphics state%@\n%@",error?[NSString stringWithFormat:@" unavailable (%ld)",(long)error.code]:@"",text?:@""]);
+        done();
+    }];
+}
 - (void)runAccountToolForSharingRepair:(BOOL)repair input:(NSData *)input completion:(void (^)(NSDictionary *,NSError *))completion {
     if(!repair){[self tool:@"opengl-create-account" arguments:@[@"--create"] input:input completion:completion];return;}
     // An older installed helper predates this repair even when its graphics
@@ -460,17 +474,67 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
     }];
 }
 - (void)readStatus:(void (^)(NSDictionary *,NSError *))completion {
+    if(self.statusRepairProgram){[self finishStatusRepair:completion];return;}
     [self tool:@"opengl-setup-status" arguments:@[] input:nil completion:^(NSDictionary *reply,NSError *error){
-        id report=reply[@"stdout"]?[NSJSONSerialization JSONObjectWithData:reply[@"stdout"] options:0 error:NULL]:nil;
+        NSError *parseError=nil;
+        id report=reply[@"stdout"]?[NSJSONSerialization JSONObjectWithData:reply[@"stdout"] options:0 error:&parseError]:nil;
         if(error||![reply[@"exitcode"] isEqual:@0]||![report isKindOfClass:NSDictionary.class]){
-            completion(nil,error?:SetupError(VIMLocalized(@"openglsetup.the-virtual-mac-s-setup-status-is-unavailable-the-guest", @"The virtual Mac’s setup status is unavailable. The guest support log was retained for diagnosis.")));return;
+            [self logFailedVerification:@"Setup status" reply:reply error:error?:parseError];
+            // Older controls serialized the entire private account plist;
+            // host-staged timezone NSData makes that JSON writer abort. A
+            // transport error is not evidence that a utility needs replacing.
+            if(error||self.statusRepairAttempted){
+                completion(nil,error?:SetupError(VIMLocalized(@"openglsetup.the-virtual-mac-s-setup-status-is-unavailable-the-guest", @"The virtual Mac’s setup status is unavailable. The guest support log was retained for diagnosis.")));return;
+            }
+            self.statusRepairAttempted=YES;
+            [self repairStatus:completion];return;
         }completion(report,nil);
+    }];
+}
+- (void)repairStatus:(void (^)(NSDictionary *,NSError *))completion {
+    // One cold compatibility repair, not periodic payload transfer. Execute
+    // the bundled read-only reporter before installing it; preserve account,
+    // locale, graphics and boot-cache state, and never copy private journals.
+    NSURL *source=[self.bundledSupport URLByAppendingPathComponent:@"opengl-setup-status"];
+    [self.agent stageFiles:@{@"opengl-setup-status":source} progress:nil completion:^(NSDictionary *receipt,NSError *failure){
+        if(failure){completion(nil,failure);return;}
+        NSString *program=[receipt[@"Directory"] stringByAppendingPathComponent:@"opengl-setup-status"];
+        [self.agent runExecutable:@"/bin/chmod" arguments:@[@"0700",program] timeout:0 completion:^(NSDictionary *mode,NSError *error){
+            if(error||![mode[@"exitcode"] isEqual:@0]){completion(nil,error?:SetupError(@"The setup status update couldn’t be prepared."));return;}
+            self.statusRepairProgram=program;[self finishStatusRepair:completion];
+        }];
+    }];
+}
+- (void)finishStatusRepair:(void (^)(NSDictionary *,NSError *))completion {
+    NSString *program=self.statusRepairProgram;
+    [self.agent runExecutable:program arguments:@[] timeout:0 completion:^(NSDictionary *reply,NSError *issue){
+        id report=reply[@"stdout"]?[NSJSONSerialization JSONObjectWithData:reply[@"stdout"] options:0 error:NULL]:nil;
+        NSDictionary *target=[NSDictionary dictionaryWithContentsOfURL:[self.machine.URL URLByAppendingPathComponent:@"State/InstallationTarget.plist"]];
+        BOOL matching=[report isKindOfClass:NSDictionary.class]&&
+            [report[@"InstallationOwnershipVerified"] isEqual:@YES]&&
+            [report[@"MachineIdentifier"] isEqual:self.machine.configuration[@"Identifier"]]&&
+            [report[@"VolumeUUID"] isEqual:target[@"VolumeUUID"]]&&
+            [VIMOpenGLGuestForSystemVersion(report[@"ProductVersion"]) isEqual:self.machine.guest];
+        if(issue||![reply[@"exitcode"] isEqual:@0]||![report isKindOfClass:NSDictionary.class]){
+            [self logFailedVerification:@"Bundled setup status" reply:reply error:issue];
+            completion(nil,issue?:SetupError(VIMLocalized(@"vimopenglsetup.the-virtual-mac-s-setup-status-couldn-t-be", @"The virtual Mac’s setup status couldn’t be read. Restart it, then try again.")));return;
+        }
+        // Keep the staged reporter across an early Disk Arbitration wait.
+        // Never fall back to the known-broken old tool or transfer it again.
+        // Valid unmanaged reports retain the existing soft no-write behavior.
+        if(!matching){completion(report,nil);return;}
+        [self.agent runExecutable:@"/usr/bin/install" arguments:@[@"-m",@"0755",@"-o",@"root",@"-g",@"wheel",program,
+            [GuestTools stringByAppendingPathComponent:@"opengl-setup-status"]] timeout:0 completion:^(NSDictionary *installed,NSError *installError){
+            if(installError||![installed[@"exitcode"] isEqual:@0]){completion(nil,installError?:SetupError(@"The setup status update couldn’t finish."));return;}
+            self.statusRepairProgram=nil;[self readStatus:completion];
+        }];
     }];
 }
 - (NSNumber *)fileSharingPolicy {
     NSString *guest=self.machine.guest;
     NSString *metadata=@{@"tiger":@"TigerSMB.plist",@"leopard":@"LeopardSMB.plist",
-                         @"snowleopard":@"SnowLeopardSMB.plist"}[guest];
+                         @"snowleopard":@"SnowLeopardSMB.plist",@"lion":@"LionSMB.plist",@"yosemite":@"YosemiteSMB.plist",
+                         @"elcapitan":@"ElCapitanSMB.plist",@"sierra":@"SierraSMB.plist"}[guest];
     if(!metadata)return nil;
     NSString *path=[NSString stringWithFormat:@"Runtime/OpenGLGuests/%@/%@",guest,metadata];
     id value=[NSDictionary dictionaryWithContentsOfURL:[NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:path]][@"PolicyVersion"];
@@ -483,12 +547,16 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
         if(error||![reply[@"exitcode"] isEqual:@0]||![proof isKindOfClass:NSDictionary.class]||
            ![proof[@"Phase"] isEqual:@"installed"]||![proof[@"MachineIdentifier"] isEqual:self.machine.configuration[@"Identifier"]]||
            ![proof[@"VolumeUUID"] isEqual:target[@"VolumeUUID"]]){
+            // Keep the guest tool's own reason (for example an unsupported
+            // native smbd after a system update) in the session log, so a
+            // Diagnostics export shows it rather than only this dialog.
+            [self logFailedVerification:@"File Sharing update" reply:reply error:error];
             completion(nil,error?:SetupError(VIMLocalized(@"openglsetup.file-sharing-s-compatibility-update-couldn-t-finish-your-original", @"File Sharing’s compatibility update couldn’t finish. Your original system files and recovery records were retained.")));return;
         }
         if(![proof[@"PolicyVersion"] isEqual:[self fileSharingPolicy]]){
             completion(nil,SetupError(VIMLocalized(@"openglsetup.file-sharing-s-update-has-an-unsupported-version", @"File Sharing’s update has an unsupported version.")));return;
         }
-        if(![self.machine.guest isEqual:@"snowleopard"]&&![proof[@"ClientPolicyVersion"] isEqual:@2]){
+        if([@[@"tiger",@"leopard"] containsObject:self.machine.guest]&&![proof[@"ClientPolicyVersion"] isEqual:@2]){
             completion(nil,SetupError(VIMLocalized(@"openglsetup.the-native-file-sharing-client-update-is-missing", @"The native File Sharing client update is missing.")));return;
         }
         if([proof[@"RestartRequired"] boolValue]){completion(@{@"Phase":@"needs-restart"},nil);return;}
@@ -511,6 +579,10 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
         if(reuseServer)names=tiger?@[@"opengl-file-sharing",@"tiger-smbfs",@"TigerSMBClient-Info.plist",@"TigerSMBClient.plist",@"SMB-COPYRIGHT.txt",@"SMB-VIM-LICENSE.txt"]:
                                    @[@"opengl-file-sharing",@"leopard-smbfs",@"LeopardSMBClient-Info.plist",@"LeopardSMBClient.plist",@"SMB-COPYRIGHT.txt",@"SMB-VIM-LICENSE.txt"];
         if(snow)names=@[@"opengl-file-sharing",@"snowleopard-smbd",@"snowleopard-odsam.dylib",@"SnowLeopardSMB.plist",@"Samba-COPYING.txt"];
+        if([self.machine.guest isEqual:@"lion"])names=@[@"opengl-file-sharing",@"opengl-lion-smb-spnego.dylib",@"LionSMB.plist"];
+        if([self.machine.guest isEqual:@"yosemite"])names=@[@"opengl-file-sharing",@"YosemiteSMB.plist"];
+        if([self.machine.guest isEqual:@"elcapitan"])names=@[@"opengl-file-sharing",@"ElCapitanSMB.plist"];
+        if([self.machine.guest isEqual:@"sierra"])names=@[@"opengl-file-sharing",@"SierraSMB.plist"];
         for(NSString *name in names)
             files[name]=[tools URLByAppendingPathComponent:name];
         [self.agent stageFiles:files progress:nil completion:^(NSDictionary *receipt,NSError *failure){
@@ -542,6 +614,19 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
                 BOOL reuse=client&&oldClient&&[record[@"PolicyVersion"] isEqual:[self fileSharingPolicy]];
                 [self stageFileSharingReusingServer:reuse completion:completion];return;
             }
+            // An installed helper from an earlier app can refuse a system that
+            // the bundled one now handles (for example Tiger's newer smbfs
+            // after Security Update 2009-005). Log its reason, then install
+            // the bundled helper once per session and let it decide. Older
+            // Snow Leopard helpers return78 for security-updated Samba; the
+            // bundled replacement now supports it. Do not let that old
+            // helper prevent its own update.
+            if(!failure&&!self.fileSharingRestaged&&![proof[@"exitcode"] isEqual:@0]&&
+               ![proof[@"exitcode"] isEqual:@75]){
+                self.fileSharingRestaged=YES;
+                [self logFailedVerification:@"Installed File Sharing helper" reply:proof error:nil];
+                [self stageFileSharing:completion];return;
+            }
             [self finishFileSharing:proof error:failure completion:completion];
         }];
     }];
@@ -550,6 +635,11 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
     NSMutableDictionary *identified=[report mutableCopy];identified[@"BootSessionUUID"]=self.bootUUID;report=identified;
     NSDictionary *account=report[@"Account"];
     BOOL automatic=[self.profile[@"Enabled"] boolValue];NSString *phase=account[@"Phase"];
+    // All host-assembled OpenGL guests use the same one-time handoff.
+    // A per-release list skipped High Sierra even with a prepared account.
+    BOOL hostSharing=self.machine.preMetalGuest&&[account[@"HostStagedFileSharing"] isEqual:@YES]&&
+        [account[@"MachineIdentifier"] isEqual:self.machine.configuration[@"Identifier"]]&&
+        [account[@"VolumeUUID"] isEqual:report[@"VolumeUUID"]];
     BOOL needsFirstLoginPolicy=[phase isEqual:@"autologin-armed"]&&![account[@"FirstLoginPolicyPrepared"] boolValue];
     BOOL recoverLogin=[@[@"elcapitan",@"sierra"] containsObject:self.machine.guest]&&[report[@"AutoLoginHandoffMissing"] isEqual:@YES];
     BOOL needsSharingCredential=[self.machine.guest isEqual:@"leopard"]&&[self.profile[@"FileSharing"] boolValue]&&
@@ -615,27 +705,30 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
     if(!self.testedGraphics) {
         [self tool:@"opengl-graphics-check" arguments:@[@"--desktop"] input:nil completion:^(NSDictionary *reply,NSError *failure){
             if(failure||![reply[@"exitcode"] isEqual:@0]){
-                [self logFailedVerification:VIMLocalized(@"openglsetup.graphics-verification", @"Graphics verification") reply:reply error:failure];
-                completion(nil,failure?:SetupError(VIMLocalized(@"openglsetup.the-real-accelerated-graphics-check-did-not-pass-the-installer", @"The real accelerated graphics check did not pass. The installer and original graphics backup were retained.")));return;
+                [self logFailedVerification:@"Graphics verification" reply:reply error:failure];
+                NSError *result=failure?:SetupError(VIMLocalized(@"openglsetup.the-real-accelerated-graphics-check-did-not-pass-the-installer", @"The real accelerated graphics check did not pass. The installer and original graphics backup were retained."));
+                if(failure){completion(nil,result);return;}
+                [self logGraphicsState:^{completion(nil,result);}];return;
             }
             self.testedGraphics=YES;[self advanceReport:report completion:completion];
         }];return;
     }
-    if(automatic&&(![phase isEqual:@"complete"]||[account[@"DesktopServicesVersion"] integerValue]<2)) {
+    BOOL initialPreferences=[account[@"InitialUserPreferencesPrepared"] isEqual:@NO];
+    if(initialPreferences||((automatic||hostSharing)&&(![phase isEqual:@"complete"]||[account[@"DesktopServicesVersion"] integerValue]<2))) {
         [self tool:@"opengl-setup-status" arguments:@[@"--finish-first-login"] input:nil completion:^(NSDictionary *reply,NSError *failure){
             if(!failure&&[reply[@"exitcode"] isEqual:@75]){completion(@{@"Phase":@"desktop-services-wait"},nil);return;}
             if(failure||![reply[@"exitcode"] isEqual:@0]){completion(nil,failure?:SetupError(VIMLocalized(@"openglsetup.the-one-time-login-handoff-could-not-be-retired-safely", @"The one-time login handoff could not be retired safely. Its state was retained.")));return;}
             [self readStatus:^(NSDictionary *next,NSError *issue){if(issue)completion(nil,issue);else [self advanceReport:next completion:completion];}];
         }];return;
     }
-    BOOL snowSharing=[self.machine.guest isEqual:@"snowleopard"]&&[account[@"FileSharingConfigured"] boolValue];
-    if((snowSharing||[@[@"leopard",@"tiger"] containsObject:self.machine.guest])&&!self.fileSharingChecked){
+    BOOL nativeSharingRepair=[@[@"snowleopard",@"lion",@"yosemite",@"elcapitan",@"sierra"] containsObject:self.machine.guest]&&[account[@"FileSharingConfigured"] boolValue];
+    if((nativeSharingRepair||[@[@"leopard",@"tiger",@"lion",@"yosemite",@"elcapitan",@"sierra"] containsObject:self.machine.guest])&&!self.fileSharingChecked){
         [self prepareFileSharing:^(NSDictionary *proof,NSError *failure){
             if(failure){
-                if(!snowSharing){completion(nil,failure);return;}
+                if(!nativeSharingRepair){completion(nil,failure);return;}
                 // Optional file sharing must not strand an accelerated Mac
                 // in Setup Assistant or hold on to its installer.
-                NSLog(@"Snow Leopard File Sharing update: %@",failure.localizedDescription);
+                NSLog(@"File Sharing update: %@",failure.localizedDescription);
                 self.fileSharingChecked=YES;
                 [self advanceReport:report completion:completion];return;
             }

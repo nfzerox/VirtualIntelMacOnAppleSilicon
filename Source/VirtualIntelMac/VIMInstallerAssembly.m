@@ -1,5 +1,7 @@
 #import "VIMLocalization.h"
+#import "VIMInstallerProgressLocalization.h"
 #import "VIMInstallerAssembly.h"
+#import "VIMGuestFamilies.h"
 #include "../tools/opengl-installer-paths.h"
 #import <signal.h>
 #import <fcntl.h>
@@ -15,8 +17,17 @@
 #import "VIMTigerInstallerSupport.h"
 #include "VIMHFSInstallerDisk.h"
 #include <sys/file.h>
+#include <sys/mount.h>
 #import <CommonCrypto/CommonDigest.h>
 #import <Security/Security.h>
+#import "../compat/VIMEmptySourceRecoveryPatch.h"
+#import "../compat/VIMHostInstallAccountPolicy.h"
+#import "../compat/VIMHostInstallSourcePolicy.h"
+#import "VIMPackagePublication.h"
+#import "../compat/VIMHostInstallRecovery.h"
+#import "../compat/VIMHostInstallProgress.h"
+#import "../compat/VIMHostInstallTiming.h"
+#import "../compat/VIMDiskImagesPolicy.h"
 
 static BOOL AssemblyError(NSError **error, NSString *message) {
     if (error) *error=[NSError errorWithDomain:@"VirtualIntelMac.InstallerAssembly" code:1
@@ -131,11 +142,13 @@ static NSDictionary<NSString *,NSString *> *InstallerIdentifiers(void) {
              @"yosemite":@"com.apple.InstallAssistant.Yosemite",@"elcapitan":@"com.apple.InstallAssistant.ElCapitan",
              @"sierra":@"com.apple.InstallAssistant.Sierra",@"highsierra":@"com.apple.InstallAssistant.HighSierra",@"mojave":@"com.apple.InstallAssistant.Mojave",
              @"catalina":@"com.apple.InstallAssistant.Catalina",
-             @"bigsur":@"com.apple.InstallAssistant.macOSBigSur"};
+             @"bigsur":VIMInstallAssistantBundleIdentifier(@"bigsur"),@"monterey":VIMInstallAssistantBundleIdentifier(@"monterey"),
+             @"ventura":VIMInstallAssistantBundleIdentifier(@"ventura"),@"sonoma":VIMInstallAssistantBundleIdentifier(@"sonoma"),
+             @"sequoia":VIMInstallAssistantBundleIdentifier(@"sequoia"),@"tahoe":VIMInstallAssistantBundleIdentifier(@"tahoe")};
 }
 static BOOL InstallerVersionMatches(id version,NSString *guest) {
     if(![version isKindOfClass:NSString.class])return NO;
-    NSString *family=@{@"tiger":@"10.4",@"leopard":@"10.5",@"snowleopard":@"10.6",@"lion":@"10.7",@"mountainlion":@"10.8",@"mavericks":@"10.9",@"yosemite":@"10.10",@"elcapitan":@"10.11",@"sierra":@"10.12",@"highsierra":@"10.13",@"mojave":@"10.14",@"catalina":@"10.15",@"bigsur":@"11"}[guest];
+    NSString *family=@{@"tiger":@"10.4",@"leopard":@"10.5",@"snowleopard":@"10.6",@"lion":@"10.7",@"mountainlion":@"10.8",@"mavericks":@"10.9",@"yosemite":@"10.10",@"elcapitan":@"10.11",@"sierra":@"10.12",@"highsierra":@"10.13",@"mojave":@"10.14",@"catalina":@"10.15"}[guest]?:VIMMajorVersionForGuest(guest);
     if(!family)return NO;
     NSArray *components=[version componentsSeparatedByString:@"."];
     for(NSString *component in components)
@@ -144,14 +157,15 @@ static BOOL InstallerVersionMatches(id version,NSString *guest) {
     return [version isEqual:family]||[version hasPrefix:[family stringByAppendingString:@"."]];
 }
 NSString *const VIMInstallerReleaseErrorDomain=@"VirtualIntelMac.InstallerRelease";
+NSString *const VIMInstallerMediaKernelFlags=@"root-dmg=file:///BaseSystem/BaseSystem.dmg";
 NSString *const VIMSupportedReleaseURLKey=@"VIMSupportedReleaseURL";
-// Restore DVDs for Tiger through Snow Leopard are qualified per dot release.
-// This checks the install image only: an installed guest may still apply
-// Apple's later updates. Tiger's install-time automation (setup policy and
+// Tiger's install-time automation (setup policy and
 // preboot graphics staging) recognizes only the 8R4088 disc; any other disc
-// would silently skip it. The catalog keeps Leopard/Snow in step with the
-// image this app downloads.
+// would silently skip it. Leopard/Snow Leopard selected DVDs instead use
+// their actual release family and package layout, including retail discs.
 static BOOL ClassicReleaseSupported(NSString *guest,NSDictionary *version,NSError **error) {
+    if([@[@"leopard",@"snowleopard"] containsObject:guest]&&
+       VIMHostInstallDVDVersionMatches(guest,version))return YES;
     NSDictionary *entry=nil;
     for(NSDictionary *candidate in [VIMInstallerCatalog currentCatalogWithError:NULL].supportedInstallers)
         if([candidate[@"Guest"] isEqual:guest]){entry=candidate;break;}
@@ -405,7 +419,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
         if(!found[@"Media"]&&[media[@"FormatVersion"] isEqual:@1]&&[media[@"Guest"] isEqual:guest]&&[media[@"Stage"] isEqual:@"media-created"]&&
            (![@[@"leopard",@"snowleopard",@"lion",@"mountainlion",@"mavericks",@"yosemite",@"elcapitan",@"sierra",@"highsierra"] containsObject:guest]||([media[@"LegacyBootstrapVersion"] isEqual:@(OpenGLBootstrapMediaVersion(guest))]&&[media[@"ReadbackVerified"] isEqual:@YES]&&
              [media[@"OpenGLSupportVersion"] isEqual:@1]))&&
-           (![guest isEqual:@"bigsur"]||[media[@"SignedSharedSupportPackage"] isEqual:@YES])&&
+           (!VIMIsAssistantGuest(guest)||[media[@"SignedSharedSupportPackage"] isEqual:@YES])&&
            (!SerialRecovery(guest)||[media[@"SerialRecoveryVersion"] isEqual:@2])&&
            (![guest isEqual:@"leopard"]||[media[@"LeopardRecoveryMemoryVersion"] isEqual:@1])&&
            (!NativeAutomatedRecovery(guest)||[media[@"NativeRecoverySystemVersion"] isEqual:([guest isEqual:@"highsierra"]?@6:@1)])&&
@@ -484,7 +498,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     NSDictionary *install=[NSDictionary dictionaryWithContentsOfURL:installURL];
     NSDictionary *system=[install[@"System Image Info"] isKindOfClass:NSDictionary.class]?install[@"System Image Info"]:nil;
     id version=system[@"version"];
-    BOOL splitInstaller=![guest isEqual:@"bigsur"];
+    BOOL splitInstaller=!VIMIsAssistantGuest(guest);
     BOOL classic=[@[@"lion",@"mountainlion",@"mavericks",@"yosemite",@"elcapitan",@"sierra"] containsObject:guest];
     BOOL complete=(classic||NonemptyFile([URL URLByAppendingPathComponent:@"Contents/Resources/createinstallmedia"]))&&
         NonemptyFile([support URLByAppendingPathComponent:splitInstaller?@"InstallESD.dmg":@"SharedSupport.dmg"])&&
@@ -496,7 +510,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     BOOL matches=identifier&&URL.isFileURL&&[URL.pathExtension.lowercaseString isEqual:@"app"]&&[info[@"CFBundleIdentifier"] isEqual:identifier]&&versionMatches;
     if(!matches||!complete)return AssemblyError(error,VIMLocalized(@"installerassembly.choose-the-complete-installer-app-for-the-selected-mac-os", @"Choose the complete installer app for the selected Mac OS version. This file is a different version or is missing installation files."));
     if(!splitInstaller&&!InstallerPackageImage([support URLByAppendingPathComponent:@"SharedSupport.dmg"]))
-        return AssemblyError(error,VIMLocalized(@"installerassembly.this-big-sur-installer-is-missing-apple-s-signed-installation", @"This Big Sur installer is missing Apple’s signed installation package. Choose a complete installer app, or download a new copy using Virtual Intel Mac."));
+        return AssemblyError(error,[NSString stringWithFormat:VIMLocalized(@"viminstallerassembly.this-installer-is-missing-apple-s-signed-installation-package", @"This %@ installer is missing Apple’s signed installation package. Choose a complete installer app, or download a new copy using Virtual Intel Mac."),VIMSystemTitleForGuest(guest)]);
     return YES;
 }
 - (void)report:(NSString *)stage {
@@ -602,6 +616,310 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
 }
 // No shell, package scripts, privileged installer invocation, or output pipes.
 // Logs stay in the job; a child producing much output cannot deadlock its parent.
++ (BOOL)recoverHostInstallInDirectory:(NSURL *)directory error:(NSError **)error {
+    NSFileManager *fm=NSFileManager.defaultManager;
+    NSArray<NSURL *> *children=[fm contentsOfDirectoryAtURL:directory includingPropertiesForKeys:nil options:0 error:error];
+    if(!children)return NO;
+    NSURL *completed=nil;
+    for(NSURL *attempt in children) {
+        if(![[NSUUID alloc] initWithUUIDString:attempt.lastPathComponent])continue;
+        struct stat info;
+        if(lstat(attempt.fileSystemRepresentation,&info)||!S_ISDIR(info.st_mode))continue;
+        int lease=open([attempt URLByAppendingPathComponent:@"Worker.log"].fileSystemRepresentation,
+                       O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
+        if(lease<0) {
+            if(errno==ENOENT)continue;
+            return AssemblyError(error,VIMLocalized(@"viminstallerassembly.the-previous-installation-attempt-could-not-be-checked", @"The previous installation attempt could not be checked."));
+        }
+        // The worker inherits the locked log as stdout/stderr. Its lease
+        // therefore survives an app crash, including while child tools exit.
+        BOOL idle=!fstat(lease,&info)&&S_ISREG(info.st_mode)&&info.st_nlink==1&&!flock(lease,LOCK_EX|LOCK_NB);
+        close(lease);
+        if(!idle)return AssemblyError(error,VIMLocalized(@"viminstallerassembly.installation-is-still-finishing-in-the-background-try-again", @"Installation is still finishing in the background. Try again when it has finished."));
+        NSURL *prepared=[attempt URLByAppendingPathComponent:@"Prepared.vintelmac" isDirectory:YES];
+        if(!completed&&!lstat(prepared.fileSystemRepresentation,&info)&&S_ISDIR(info.st_mode))completed=prepared;
+    }
+    NSURL *stage=[directory URLByAppendingPathComponent:@"Prepared.vintelmac" isDirectory:YES];
+    struct stat info;
+    if(completed&&lstat(stage.fileSystemRepresentation,&info)&&errno==ENOENT&&
+       VIMPublishPreparedPackage(completed.fileSystemRepresentation,stage.fileSystemRepresentation))
+        return AssemblyError(error,VIMLocalized(@"viminstallerassembly.the-completed-installation-could-not-be-recovered-its-files", @"The completed installation could not be recovered. Its files were kept."));
+    // The normal publication path still verifies the disk and receipt. Do
+    // not delete other attempts, source media, or an existing prepared Mac.
+    return YES;
+}
++ (BOOL)cleanHostInstallAttemptsInDirectory:(NSURL *)directory error:(NSError **)error {
+    // Recheck every inherited worker/child lease before touching any attempt.
+    if(![self recoverHostInstallInDirectory:directory error:error])return NO;
+    NSFileManager *fm=NSFileManager.defaultManager;
+    NSArray *attempts=[fm contentsOfDirectoryAtURL:directory includingPropertiesForKeys:nil options:0 error:error];
+    if(!attempts)return NO;
+    for(NSURL *attempt in attempts) {
+        struct stat st;
+        if(![[NSUUID alloc] initWithUUIDString:attempt.lastPathComponent]||
+           lstat(attempt.fileSystemRepresentation,&st)||!S_ISDIR(st.st_mode)||
+           [fm fileExistsAtPath:[attempt URLByAppendingPathComponent:@"Prepared.vintelmac"].path])continue;
+        NSDictionary *request=[NSDictionary dictionaryWithContentsOfURL:[attempt URLByAppendingPathComponent:@"Request.plist"]];
+        if(![request[@"FormatVersion"] isEqual:@1]||![request[@"Media"] isKindOfClass:NSDictionary.class])continue;
+        NSString *prefix=VIMHostInstallRecoveryPath(attempt.path);
+        BOOL originalInside=NO;
+        for(id path in [request[@"Media"] allValues])
+            if([path isKindOfClass:NSString.class]&&VIMHostInstallRecoveryContains(prefix,VIMHostInstallRecoveryPath(path)))originalInside=YES;
+        if(originalInside)continue; // Never retire a user-selected original.
+        VIMInstallerAssembly *cleanup=[VIMInstallerAssembly new];
+        cleanup.job=[attempt URLByAppendingPathComponent:[@".Cleanup-" stringByAppendingString:NSUUID.UUID.UUIDString]];
+        if(![fm createDirectoryAtURL:cleanup.job withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:error])return NO;
+        if(![cleanup run:@"/usr/bin/hdiutil" arguments:@[@"info",@"-plist"] timeout:HUGE_VAL cleanup:YES error:error])return NO;
+        NSArray *images=VIMToolDictionary(cleanup.lastLog)[@"images"];
+        if(![images isKindOfClass:NSArray.class])return AssemblyError(error,VIMLocalized(@"viminstallerassembly.this-mac-couldn-t-check-the-previous-installation-s", @"This Mac couldn’t check the previous installation’s disks. Try again."));
+        NSMutableArray<NSString *> *mounts=[NSMutableArray array];
+        NSString *temporary=[VIMHostInstallRecoveryPath(NSTemporaryDirectory()) stringByAppendingString:@"/"];
+        void (^addMount)(NSString *)=^(NSString *path){
+            struct stat rootInfo;
+            NSString *root=VIMHostInstallRecoveryPath(path);
+            if([root hasPrefix:temporary]&&[root.lastPathComponent hasPrefix:@"VIM-HostInstall."]&&
+               !lstat(root.fileSystemRepresentation,&rootInfo)&&S_ISDIR(rootInfo.st_mode)&&rootInfo.st_uid==getuid()&&![mounts containsObject:root])
+                [mounts addObject:root];
+        };
+        addMount([NSDictionary dictionaryWithContentsOfURL:[attempt URLByAppendingPathComponent:@"MountDirectory.plist"]][@"Path"]);
+        // Older attempts predate the mount-directory record. Recover their
+        // private root from an image whose actual backing belongs to them.
+        for(NSDictionary *image in images)if(VIMHostInstallRecoveryContains(prefix,VIMHostInstallRecoveryPath(image[@"image-path"])))
+            for(NSDictionary *entity in image[@"system-entities"])
+                addMount([entity[@"mount-point"] stringByDeletingLastPathComponent]);
+        NSMutableArray *pending=[NSMutableArray array];
+        for(NSDictionary *image in images)if(VIMHostInstallRecoveryOwnsImage(image,prefix,mounts))[pending addObject:image];
+        while(pending.count) {
+            NSDictionary *image=nil;
+            for(NSDictionary *candidate in pending) {
+                BOOL hasChild=NO;
+                for(NSDictionary *other in pending)if(other!=candidate)
+                    for(NSDictionary *entity in candidate[@"system-entities"])
+                        if(VIMHostInstallRecoveryContains(VIMHostInstallRecoveryPath(entity[@"mount-point"]),VIMHostInstallRecoveryPath(other[@"image-path"])))hasChild=YES;
+                if(!hasChild){image=candidate;break;}
+            }
+            if(!image)return AssemblyError(error,VIMLocalized(@"viminstallerassembly.the-previous-installation-s-disks-are-still-in-use", @"The previous installation’s disks are still in use. Its files were kept."));
+            if(image[@"owner-uid"]&&[image[@"owner-uid"] unsignedIntValue]!=getuid())
+                return AssemblyError(error,VIMLocalized(@"viminstallerassembly.the-previous-installation-s-disk-is-in-use-by", @"The previous installation’s disk is in use by another user. Close it and try again."));
+            NSString *device=nil;
+            for(NSDictionary *entity in image[@"system-entities"]) {
+                NSString *candidate=entity[@"dev-entry"];
+                if([candidate hasPrefix:@"/dev/disk"]&&candidate.length>9&&
+                   [[candidate substringFromIndex:9] rangeOfCharacterFromSet:NSCharacterSet.decimalDigitCharacterSet.invertedSet].location==NSNotFound){device=candidate;break;}
+            }
+            if(!device)return AssemblyError(error,VIMLocalized(@"viminstallerassembly.the-previous-installation-s-disk-couldn-t-be-identified", @"The previous installation’s disk couldn’t be identified. Its files were kept."));
+            // Normal detach only. A busy disk keeps its data and blocks retry;
+            // never force-unmount an image still used by a tool or another app.
+            if(![cleanup run:@"/usr/bin/hdiutil" arguments:@[@"detach",device] timeout:HUGE_VAL cleanup:YES error:error])return NO;
+            [pending removeObjectIdenticalTo:image];
+        }
+        if(VIMModernDiskImagesAvailable()) {
+            // hdiutil info does not enumerate diskimagesiod attachments.
+            // Ask the service for each exact, owned generated image instead.
+            // Reattaching with noMount returns its existing device, or creates
+            // a temporary unmounted one. Never trust a saved /dev/disk number.
+            for(NSString *leaf in @[@"Staging.sparsebundle",@"AppleFiles.sparsebundle",
+                @"Recovery.sparsebundle",@"Graphics.sparsebundle",@"RawScratch.sparsebundle",@"DiskSeed.sparsebundle"]) {
+                NSURL *image=[attempt URLByAppendingPathComponent:leaf];BOOL isDirectory=NO;
+                if(![fm fileExistsAtPath:image.path isDirectory:&isDirectory]||!isDirectory)continue;
+                if(![cleanup run:@"/usr/sbin/diskutil" arguments:@[@"image",@"attach",@"--noMount",@"--plist",image.path]
+                    timeout:HUGE_VAL cleanup:YES error:error])return NO;
+                NSArray *entities=VIMNormalizeDiskImageEntities(VIMToolDictionary(cleanup.lastLog)[@"system-entities"]);
+                NSString *device=nil;
+                for(NSDictionary *entity in entities)if([entity[@"content-hint"] isEqual:@"GUID_partition_scheme"])
+                    {device=entity[@"dev-entry"];break;}
+                if(!device)return AssemblyError(error,VIMLocalized(@"viminstallerassembly.the-previous-installation-s-disk-couldn-t-be-closed", @"The previous installation’s disk couldn’t be closed. Its files were kept."));
+                if(![cleanup run:@"/usr/sbin/diskutil" arguments:@[@"eject",device] timeout:HUGE_VAL cleanup:YES error:error])return NO;
+            }
+        }
+        struct statfs *filesystems=NULL;int count=getmntinfo(&filesystems,MNT_NOWAIT);
+        if(count<=0)return AssemblyError(error,VIMLocalized(@"viminstallerassembly.this-mac-couldn-t-check-the-previous-installation-s-2", @"This Mac couldn’t check the previous installation’s mounted disks. Its files were kept."));
+        for(int i=0;i<count;i++) {
+            NSString *point=VIMHostInstallRecoveryPath(@(filesystems[i].f_mntonname));
+            if(VIMHostInstallRecoveryContains(prefix,point)||[point isEqual:prefix])return AssemblyError(error,VIMLocalized(@"viminstallerassembly.the-previous-installation-s-disk-is-still-in-use", @"The previous installation’s disk is still in use. Close it and try again."));
+            for(NSString *root in mounts)if(VIMHostInstallRecoveryContains(root,point)||[point isEqual:root])
+                return AssemblyError(error,VIMLocalized(@"viminstallerassembly.the-previous-installation-s-disk-is-still-in-use", @"The previous installation’s disk is still in use. Close it and try again."));
+        }
+        for(NSString *name in @[@"Staging.vintelmac",@"Staging.sparsebundle",@"AppleFiles.sparsebundle",@"RawScratch.sparsebundle",@"DiskSeed.sparsebundle",
+            @"Recovery.sparsebundle",@"Graphics.sparsebundle",@"System.dmg",@"System.raw",@"System.tree",@"AppleInstaller",@"InstallESD.dmg",
+            @"RecoveryHDMeta.dmg",@"UpdatedRecoveryHDMeta.dmg",@"Preboot",@"PrelinkedKernel",@"SealInputs",@"FlatPackages"]) {
+            NSURL *file=[attempt URLByAppendingPathComponent:name];
+            if(lstat(file.fileSystemRepresentation,&st)==0&&![fm removeItemAtURL:file error:error])return NO;
+        }
+        for(NSString *root in mounts) {
+            for(NSString *name in [fm contentsOfDirectoryAtPath:root error:nil])rmdir([root stringByAppendingPathComponent:name].fileSystemRepresentation);
+            rmdir(root.fileSystemRepresentation);
+        }
+    }
+    return YES;
+}
+- (BOOL)runHostInstallWorker:(NSURL *)worker attempt:(NSURL *)attempt request:(NSDictionary *)request
+    password:(NSString *)password error:(NSError **)error {
+    if(self.cancelled)return AssemblyError(error,VIMLocalized(@"viminstallerassembly.installation-preparation-was-cancelled", @"Installation preparation was cancelled."));
+    NSData *secret=[(password?:@"") dataUsingEncoding:NSUTF8StringEncoding];
+    if((!secret.length&&VIMHostInstallCreatesAccount(request))||secret.length>511||!worker.isFileURL||!attempt.isFileURL)
+        return AssemblyError(error,VIMLocalized(@"viminstallerassembly.the-host-installer-or-its-setup-password-is-unavailable", @"The host installer or its setup password is unavailable."));
+    NSURL *description=[attempt URLByAppendingPathComponent:@"Request.plist"];
+    NSData *requestBytes=[NSPropertyListSerialization dataWithPropertyList:request format:NSPropertyListXMLFormat_v1_0
+        options:0 error:error];
+    if(!requestBytes||![requestBytes writeToURL:description options:NSDataWritingWithoutOverwriting error:error])return NO;
+    NSURL *logURL=[attempt URLByAppendingPathComponent:@"Worker.log"];
+    int logFD=open(logURL.fileSystemRepresentation,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
+    if(logFD<0)return AssemblyError(error,VIMLocalized(@"viminstallerassembly.could-not-create-the-host-installer-s-log", @"Could not create the host installer’s log."));
+    NSFileHandle *log=[[NSFileHandle alloc] initWithFileDescriptor:logFD closeOnDealloc:YES];
+    if(flock(logFD,LOCK_EX|LOCK_NB))return AssemblyError(error,VIMLocalized(@"viminstallerassembly.the-host-installer-s-log-is-already-in-use", @"The host installer’s log is already in use."));
+    NSPipe *input=[NSPipe pipe];
+    // A bounded password fits in the pipe before spawn. It is never in the
+    // request, environment, arguments, or diagnostic log.
+    if(![input.fileHandleForWriting writeData:secret error:error])return NO;
+    [input.fileHandleForWriting closeFile];
+    NSTask *task=[NSTask new];task.executableURL=worker;
+    task.arguments=@[@"--request",description.path];task.currentDirectoryURL=attempt;
+    task.standardInput=input.fileHandleForReading;task.standardOutput=log;task.standardError=log;
+    dispatch_semaphore_t exited=dispatch_semaphore_create(0);
+    task.terminationHandler=^(NSTask *finished){dispatch_semaphore_signal(exited);};
+    if(![task launchAndReturnError:error])return NO;
+    [input.fileHandleForReading closeFile];
+    BOOL requestedCancel=NO;
+    // Bundled cold-run measurements seed estimates. Persist local observations
+    // only during explicitly enabled measurement runs, never normal creation.
+    NSString *guest=request[@"Guest"],*timingProfile=VIMHostInstallTimingProfileAtURL(attempt);
+    BOOL hasUpdates=VIMHostInstallTimingHasUpdates(request);
+    NSString *timingKey=VIMHostInstallTimingKey(timingProfile,guest,hasUpdates);
+    BOOL splitCatalina=[guest isEqual:@"catalina"];
+    NSUserDefaults *defaults=NSUserDefaults.standardUserDefaults;
+    BOOL measureTimings=VIMHostInstallTimingMeasurementEnabled(defaults);
+    double learned=VIMHostInstallTimingLearnedDuration(defaults,timingKey);
+    NSDictionary *timingModel=VIMHostInstallTimingLoadModel(NSBundle.mainBundle);
+    double unknownStageSeconds=60*VIMHostInstallTimingScale(timingModel,timingProfile);
+    NSArray *previousStages=VIMHostInstallTimingHistory(timingModel,defaults,timingProfile,guest,hasUpdates);
+    double estimate=learned,verifyEstimate=0;
+    for(NSDictionary *stage in previousStages) {
+        if(learned<=0)estimate+=[stage[@"Seconds"] doubleValue];
+        if([stage[@"Stage"] isEqual:@"verify"])verifyEstimate=[stage[@"Seconds"] doubleValue];
+    }
+    double learnedVerify=VIMHostInstallTimingLearnedDuration(defaults,[timingKey stringByAppendingString:@"-verify"]);
+    if(learnedVerify>0)verifyEstimate=learnedVerify;
+    if(verifyEstimate<=0)verifyEstimate=1;
+    NSURL *progressURL=[attempt URLByAppendingPathComponent:@"Progress.plist"];
+    NSTimeInterval started=NSProcessInfo.processInfo.systemUptime,lastUpdate=started,stageStarted=started;
+    NSString *stageID=nil,*stageTimingKey=nil;
+    double stageEstimate=0;
+    NSMutableArray *observedStages=[NSMutableArray array];
+    double futureSeconds=-1,referenceCompletedSeconds=0,observedCompletedSeconds=0,referenceStageSeconds=0;
+    while(dispatch_semaphore_wait(exited,dispatch_time(DISPATCH_TIME_NOW,250*NSEC_PER_MSEC))) {
+        if(self.cancelled&&!requestedCancel) {
+            requestedCancel=YES;
+            int fd=open([attempt URLByAppendingPathComponent:@"Cancel"].fileSystemRepresentation,
+                        O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
+            if(fd>=0)close(fd);
+            // Do not terminate a worker with mounted scratch media or release
+            // the app's preparation lock before its cleanup has completed.
+        }
+        NSTimeInterval now=NSProcessInfo.processInfo.systemUptime;
+        if(self.cancelled||now-lastUpdate<.5)continue;
+        lastUpdate=now;
+        // The worker atomically replaces this optional snapshot. Start/End
+        // describe its current stage's range; Fraction, when present, is
+        // measured work inside that range rather than an elapsed estimate.
+        NSDictionary *state=[NSDictionary dictionaryWithContentsOfURL:progressURL];
+        NSString *identifier=state[@"Stage"];
+        NSNumber *begin=state[@"Start"],*end=state[@"End"],*actual=state[@"Fraction"];
+        double remaining=estimate>now-started?estimate-(now-started):-1;
+        if([identifier isKindOfClass:NSString.class]&&identifier.length&&
+           [begin isKindOfClass:NSNumber.class]&&[end isKindOfClass:NSNumber.class]&&
+           begin.doubleValue>=0&&end.doubleValue<=1&&end.doubleValue>begin.doubleValue) {
+            if(![stageID isEqual:identifier]) {
+                if(stageTimingKey) {
+                    double duration=now-stageStarted;
+                    [observedStages addObject:@{@"Stage":stageID,@"Seconds":@(duration)}];
+                }
+                stageID=identifier;stageStarted=now;
+                stageTimingKey=[NSString stringWithFormat:@"%@-%@",timingKey,stageID];
+                stageEstimate=VIMHostInstallTimingLearnedDuration(defaults,stageTimingKey);
+                NSDictionary *match=VIMHostInstallTimingBudget(previousStages,observedStages,identifier,unknownStageSeconds);
+                if(stageEstimate<=0&&![match[@"Unmeasured"] boolValue])stageEstimate=[match[@"StageSeconds"] doubleValue];
+                if(stageEstimate<=0&&[state[@"EstimatedSeconds"] isKindOfClass:NSNumber.class])
+                    stageEstimate=[state[@"EstimatedSeconds"] doubleValue];
+                if(stageEstimate<=0)stageEstimate=unknownStageSeconds;
+                futureSeconds=match?[match[@"FutureSeconds"] doubleValue]:-1;
+                referenceCompletedSeconds=[match[@"ReferenceCompletedSeconds"] doubleValue];
+                observedCompletedSeconds=[match[@"ObservedCompletedSeconds"] doubleValue];
+                referenceStageSeconds=[match[@"Unmeasured"] boolValue]?0:[match[@"StageSeconds"] doubleValue];
+                NSString *title=state[@"Title"];
+                if([title isKindOfClass:NSString.class]&&title.length)[self report:VIMLocalizedInstallerProgress(title,guest)];
+            }
+            double elapsed=now-stageStarted,fraction=0;
+            BOOL measured=[actual isKindOfClass:NSNumber.class]&&actual.doubleValue>=0&&actual.doubleValue<=1;
+            if(measured)
+                fraction=actual.doubleValue;
+            else if(stageEstimate>0)
+                fraction=1-exp(-2*elapsed/stageEstimate);
+            double start=VIMHostInstallProgressPosition(begin.doubleValue,splitCatalina);
+            double stop=VIMHostInstallProgressPosition(end.doubleValue,splitCatalina);
+            [self completedWork:MIN(.99,start+(stop-start)*MIN(.98,fraction))];
+            double pace=VIMHostInstallPaceScale(observedCompletedSeconds,referenceCompletedSeconds,
+                elapsed,measured?fraction:-1,referenceStageSeconds);
+            double phaseRemaining=VIMHostInstallRemainingSeconds(elapsed,measured?fraction:-1,
+                stageEstimate*pace,futureSeconds<0?-1:futureSeconds*pace);
+            // A new/unmeasured phase need not erase a still-useful whole-run
+            // budget. This is presentation only, never an installer deadline.
+            double wholeRemaining=estimate*pace-(now-started);
+            remaining=phaseRemaining>0?phaseRemaining:wholeRemaining>0?wholeRemaining:-1;
+            // The whole-install estimate can be many minutes off by the
+            // final export. Use qemu-img's observed rate for this last copy
+            // and reserve only the measured/estimated final disk check.
+            if([identifier isEqual:@"convert"]) {
+                remaining=measured&&elapsed>=2&&fraction>=.02?elapsed*(1-fraction)/fraction+verifyEstimate:
+                    stageEstimate>elapsed?stageEstimate-elapsed+verifyEstimate:-1;
+            } else if([identifier isEqual:@"verify"]) {
+                remaining=verifyEstimate-elapsed;
+            }
+        } else if(!stageID&&estimate>0) {
+            [self completedWork:MIN(.97,1-exp(-2*(now-started)/estimate))];
+        }
+        if(self.timeRemaining)
+            dispatch_async(dispatch_get_main_queue(),^{if(self.timeRemaining)self.timeRemaining(remaining>0?remaining:-1);});
+    }
+    [log closeFile];
+    if(self.cancelled)return AssemblyError(error,VIMLocalized(@"viminstallerassembly.installation-preparation-was-cancelled-the-original-installer-was-kept", @"Installation preparation was cancelled. The original installer was kept."));
+    NSTimeInterval finished=NSProcessInfo.processInfo.systemUptime;
+    if(stageID)[observedStages addObject:@{@"Stage":stageID,@"Seconds":@(finished-stageStarted)}];
+    // Measurement artifacts are opt-in; ordinary progress still uses the
+    // current run's in-memory observations without retaining a history.
+    if(measureTimings)[@{@"FormatVersion":@1,@"Guest":guest?:@"",@"TimingKey":timingKey,@"TimingProfile":timingProfile,@"ElapsedSeconds":@(finished-started),
+       @"Succeeded":@(task.terminationStatus==0),@"Stages":observedStages}
+        writeToURL:[attempt URLByAppendingPathComponent:@"Timing.plist"] atomically:YES];
+    if(task.terminationStatus==0) {
+        NSTimeInterval now=NSProcessInfo.processInfo.systemUptime;
+        double duration=now-started;
+        VIMHostInstallTimingRecordDuration(defaults,timingKey,duration);
+        // A failed/cancelled attempt is useful diagnostic evidence, not a
+        // timing lesson for the next successful installation.
+        for(NSDictionary *stage in observedStages) {
+            NSString *key=[NSString stringWithFormat:@"%@-%@",timingKey,stage[@"Stage"]];
+            VIMHostInstallTimingRecordDuration(defaults,key,[stage[@"Seconds"] doubleValue]);
+        }
+        if(measureTimings)[defaults setObject:observedStages forKey:[timingKey stringByAppendingString:@"-stages"]];
+        [self report:VIMLocalized(@"viminstallerassembly.finishing-your-virtual-mac", @"Finishing your virtual Mac…")];
+        [self completedWork:.99];
+        return YES;
+    }
+    // A failing stage can publish its first progress update and exit between
+    // UI ticks. Read that final snapshot before choosing the error message.
+    NSString *finalStage=[NSDictionary dictionaryWithContentsOfURL:progressURL][@"Stage"];
+    if([finalStage isKindOfClass:NSString.class]&&finalStage.length)stageID=finalStage;
+    BOOL noSpace=task.terminationReason==NSTaskTerminationReasonExit&&task.terminationStatus==ENOSPC;
+    NSString *detail=noSpace?VIMLocalized(@"viminstallerassembly.there-isn-t-enough-free-space-to-finish-preparing", @"There isn’t enough free space to finish preparing this virtual Mac. Check the free space on your library drive and the storage size you chose for this Mac, then try again. Your download was kept."):
+        [stageID isEqual:@"apfs"]?VIMLocalized(@"viminstallerassembly.this-mac-couldn-t-finish-preparing-the-apfs-volumes", @"This Mac couldn’t finish preparing the APFS volumes. Your download was kept. Choose Try Again to retry."):
+        [@[@"prelink",@"dyld"] containsObject:stageID?:@""]?VIMLocalized(@"viminstallerassembly.this-mac-couldn-t-finish-building-the-startup-files", @"This Mac couldn’t finish building the startup files. Your download was kept. Choose Try Again to retry."):
+        VIMLocalized(@"viminstallerassembly.this-mac-couldn-t-finish-preparing-the-installed-system", @"This Mac couldn’t finish preparing the installed system. Your download was kept. Choose Try Again to retry.");
+    if(error)*error=[NSError errorWithDomain:@"VirtualIntelMac.HostInstall" code:task.terminationStatus userInfo:@{
+        NSLocalizedDescriptionKey:detail,
+        NSLocalizedRecoverySuggestionErrorKey:VIMLocalized(@"viminstallerassembly.the-original-installer-was-kept-try-again-to-restart", @"The original installer was kept. Try again to restart preparation."),
+        @"PreparationLog":logURL.path}];
+    return NO;
+}
 - (BOOL)run:(NSString *)path arguments:(NSArray<NSString *> *)arguments timeout:(NSTimeInterval)timeout
     cleanup:(BOOL)cleanup error:(NSError **)error {
     return [self run:path arguments:arguments workingDirectory:nil timeout:timeout cleanup:cleanup error:error];
@@ -631,7 +949,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     NSTimeInterval start=NSProcessInfo.processInfo.systemUptime;
     double begin=self.workFraction,end=MAX(begin,self.workEnd);
     NSString *timingKey=[NSString stringWithFormat:@"VIMPreparationDuration-%@-%@-%@-%@",self.progressGuest?:@"",self.stage?:@"",path.lastPathComponent,arguments.firstObject];
-    double learned=[NSUserDefaults.standardUserDefaults doubleForKey:timingKey];
+    double learned=VIMHostInstallTimingLearnedDuration(NSUserDefaults.standardUserDefaults,timingKey);
     double estimate=learned>0?learned:MAX(1,self.workEstimate);
     NSFileHandle *reader=percentOutput?[NSFileHandle fileHandleForReadingFromURL:log error:nil]:nil;
     NSMutableData *pending=[NSMutableData data];double toolFraction=-1;NSTimeInterval lastUpdate=0;
@@ -675,7 +993,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     if(task.terminationStatus==0) {
         if(end>begin) {
             double duration=NSProcessInfo.processInfo.systemUptime-start;
-            [NSUserDefaults.standardUserDefaults setDouble:learned>0?.6*learned+.4*duration:duration forKey:timingKey];
+            VIMHostInstallTimingRecordDuration(NSUserDefaults.standardUserDefaults,timingKey,duration);
             [self completedWork:end];
         }
         return YES;
@@ -806,8 +1124,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     }
     if([guest isEqual:@"mavericks"])return [self assembleMavericks:files[@"esd"] jobDirectory:directory error:error];
     if([@[@"lion",@"mountainlion",@"yosemite",@"elcapitan",@"sierra"] containsObject:guest])return [self assembleClassicDiskImage:files[@"diskimage"] guest:guest jobDirectory:directory error:error];
-    NSDictionary *names=@{@"highsierra":@"Install macOS High Sierra.app",@"mojave":@"Install macOS Mojave.app",@"catalina":@"Install macOS Catalina.app",@"bigsur":@"Install macOS Big Sur.app"};
-    NSString *name=names[guest];BOOL splitInstaller=![guest isEqual:@"bigsur"];
+    NSString *name=VIMInstallAssistantAppName(guest);BOOL splitInstaller=!VIMIsAssistantGuest(guest);
     if(!name||!directory.isFileURL||!RegularFile(files[@"assistant"])||
        (splitInstaller&&(!RegularFile(files[@"recovery"])||!RegularFile(files[@"esd"])))) {
         AssemblyError(error,VIMLocalized(@"installerassembly.the-installer-inputs-are-missing-or-unsupported", @"The installer inputs are missing or unsupported."));return nil;
@@ -1272,12 +1589,17 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     [self completedWork:1];return image;
 }
 - (NSURL *)createBigSurMediaFromInstaller:(NSURL *)installer jobDirectory:(NSURL *)directory error:(NSError **)error {
+    return [self createAssistantMediaFromInstaller:installer guest:@"bigsur" jobDirectory:directory error:error];
+}
+- (NSURL *)createAssistantMediaFromInstaller:(NSURL *)installer guest:(NSString *)guest jobDirectory:(NSURL *)directory error:(NSError **)error {
+    if(!VIMIsAssistantGuest(guest)){AssemblyError(error,VIMLocalized(@"viminstallerassembly.this-macos-version-doesn-t-use-an-installassistant-package", @"This macOS version doesn’t use an InstallAssistant package."));return nil;}
+    NSString *release=VIMReleaseNameForGuest(guest);
     if(NSThread.isMainThread){AssemblyError(error,@"Media preparation must run on a background worker.");return nil;}
-    if(![self.class validateInstallerApplication:installer guest:@"bigsur" error:error])return nil;
+    if(![self.class validateInstallerApplication:installer guest:guest error:error])return nil;
     NSFileManager *fm=NSFileManager.defaultManager;
     NSURL *support=[installer URLByAppendingPathComponent:@"Contents/SharedSupport/SharedSupport.dmg"];
     if(!directory.isFileURL||![installer.pathExtension.lowercaseString isEqual:@"app"]||!RegularFile(support)) {
-        AssemblyError(error,VIMLocalized(@"installerassembly.choose-an-assembled-big-sur-installer-and-a-new-media", @"Choose an assembled Big Sur installer and a new media job directory."));return nil;
+        AssemblyError(error,[NSString stringWithFormat:VIMLocalized(@"viminstallerassembly.choose-an-assembled-installer-and-a-new-media-job", @"Choose an assembled %@ installer and a new media job directory."),release]);return nil;
     }
     NSDictionary *space=[fm attributesOfFileSystemForPath:directory.URLByDeletingLastPathComponent.path error:error];
     if(!space)return nil;
@@ -1286,21 +1608,21 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     }
     if([fm fileExistsAtPath:directory.path]){AssemblyError(error,VIMLocalized(@"installerassembly.media-preparation-requires-a-new-job-directory", @"Media preparation requires a new job directory."));return nil;}
     if(![fm createDirectoryAtURL:directory withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:error])return nil;
-    self.job=directory;self.step=0;self.progressGuest=@"bigsur";
+    self.job=directory;self.step=0;self.progressGuest=guest;
     [self report:VIMLocalized(@"installerassembly.checking-apple-s-signed-installation-package", @"Checking Apple’s signed installation package…")];
     if(![self run:@"/usr/sbin/pkgutil" arguments:@[@"--check-signature",support.path] timeout:300 cleanup:NO error:error])return nil;
     NSString *signature=[NSString stringWithContentsOfURL:self.lastLog encoding:NSUTF8StringEncoding error:error];
     BOOL apple=NO;
     for(NSString *line in [signature componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet])
         if([[line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet] isEqual:@"Status: signed Apple Software"])apple=YES;
-    if(!apple){AssemblyError(error,VIMLocalized(@"installerassembly.the-big-sur-installation-package-is-not-identified-as-signed", @"The Big Sur installation package is not identified as signed Apple Software. Choose a complete installer or download it again."));return nil;}
+    if(!apple){AssemblyError(error,[NSString stringWithFormat:VIMLocalized(@"viminstallerassembly.the-installation-package-is-not-identified-as-signed-apple", @"The %@ installation package is not identified as signed Apple Software. Choose a complete installer or download it again."),release]);return nil;}
     NSURL *mount=MountDirectory(error);
     if(!mount)return nil;
     NSURL *extracted=[directory URLByAppendingPathComponent:@"BootAssets"];
     NSURL *stage=[directory URLByAppendingPathComponent:@"MediaRoot"];
     for(NSURL *URL in @[extracted,stage])
         if(![fm createDirectoryAtURL:URL withIntermediateDirectories:NO attributes:nil error:error])return nil;
-    [self report:VIMLocalized(@"installerassembly.reading-big-sur-installer-boot-files", @"Reading Big Sur installer boot files…")];
+    [self report:[NSString stringWithFormat:VIMLocalized(@"viminstallerassembly.reading-installer-boot-files", @"Reading %@ installer boot files…"),release]];
     [self completedWork:.45];[self nextWorkTo:.48 seconds:12];
     BOOL attached=[self run:@"/usr/bin/hdiutil" arguments:@[@"attach",@"-readonly",@"-nobrowse",@"-noautoopen",@"-mountpoint",mount.path,support.path]
         timeout:180 cleanup:NO error:error];
@@ -1308,32 +1630,52 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     if(attached) {
         NSURL *assetDirectory=[mount URLByAppendingPathComponent:@"com_apple_MobileAsset_MacSoftwareUpdate"];
         NSDictionary *metadata=[NSDictionary dictionaryWithContentsOfURL:[assetDirectory URLByAppendingPathComponent:@"com_apple_MobileAsset_MacSoftwareUpdate.xml"]];
-        NSArray *assets=metadata[@"Assets"];
-        if([assets isKindOfClass:NSArray.class]&&assets.count==1&&[assets.firstObject isKindOfClass:NSDictionary.class])asset=assets.firstObject;
-        NSMutableArray *archives=[NSMutableArray array];
-        for(NSURL *URL in [fm contentsOfDirectoryAtURL:assetDirectory includingPropertiesForKeys:nil options:0 error:nil])
-            if([URL.pathExtension isEqual:@"zip"]&&RegularFile(URL))[archives addObject:URL];
-        if(archives.count==1&&InstallerVersionMatches(asset[@"OSVersion"],@"bigsur")&&
-           [asset[@"Build"] isKindOfClass:NSString.class]) {
-            // Exact entries used by Big Sur CIMUtilities, observed in its shipped
-            // createinstallmedia.dylib. No OS-wide restore or package scripts.
-            NSArray *members=@[@"AssetData/Restore/BaseSystem.dmg",@"AssetData/Restore/BaseSystem.chunklist",
-                @"AssetData/boot/Firmware/Manifests/InstallerBoot/*",
+        // Choose by content, not by count or release: Apple may add assets,
+        // archives or members in any minor update.
+        for(id candidate in [metadata[@"Assets"] isKindOfClass:NSArray.class]?metadata[@"Assets"]:@[])
+            if([candidate isKindOfClass:NSDictionary.class]&&InstallerVersionMatches(candidate[@"OSVersion"],guest)&&
+               [candidate[@"Build"] isKindOfClass:NSString.class]){asset=candidate;break;}
+        NSURL *archive=nil;NSSet *listing=nil;
+        for(NSURL *URL in asset?[fm contentsOfDirectoryAtURL:assetDirectory includingPropertiesForKeys:nil options:0 error:nil]:@[]) {
+            if(![URL.pathExtension isEqual:@"zip"]||!RegularFile(URL)||
+               ![self run:@"/usr/bin/unzip" arguments:@[@"-Z1",URL.path] timeout:120 cleanup:NO error:NULL])continue;
+            NSString *names=[NSString stringWithContentsOfURL:self.lastLog encoding:NSUTF8StringEncoding error:NULL];
+            NSSet *entries=[NSSet setWithArray:[names componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]?:@[]];
+            if([entries containsObject:@"AssetData/boot/Firmware/System/Library/CoreServices/bootbase.efi"]){archive=URL;listing=entries;break;}
+        }
+        if(archive) {
+            // Entries used by Big Sur CIMUtilities (its createinstallmedia.dylib).
+            // Monterey and later carry Intel's BaseSystem as a BXDIFF50 patch;
+            // use whichever form this installer has. Members beyond the boot
+            // loader, kernel collection, version and BaseSystem are optional.
+            NSString *baseSystem=[listing containsObject:@"AssetData/Restore/BaseSystem.dmg"]?@"AssetData/Restore/BaseSystem.dmg":
+                @"AssetData/payloadv2/basesystem_patches/x86_64BaseSystem.dmg";
+            NSMutableArray *members=[NSMutableArray array];
+            for(NSString *member in @[baseSystem,@"AssetData/Restore/BaseSystem.chunklist",
                 @"AssetData/boot/Firmware/System/Library/CoreServices/bootbase.efi",
                 @"AssetData/boot/System/Library/KernelCollections/BootKernelExtensions.kc",
                 @"AssetData/boot/BridgeVersion.plist",@"AssetData/boot/BridgeVersion.bin",
-                @"AssetData/boot/PlatformSupport.plist",@"AssetData/boot/SystemVersion.plist"];
-            NSMutableArray *arguments=[NSMutableArray arrayWithObjects:@"-q",[archives.firstObject path],nil];
+                @"AssetData/boot/PlatformSupport.plist",@"AssetData/boot/SystemVersion.plist"])
+                if([listing containsObject:member])[members addObject:member];
+            for(NSString *entry in listing)if([entry hasPrefix:@"AssetData/boot/Firmware/Manifests/InstallerBoot/"]){[members addObject:@"AssetData/boot/Firmware/Manifests/InstallerBoot/*"];break;}
+            NSMutableArray *arguments=[NSMutableArray arrayWithObjects:@"-q",archive.path,nil];
             [arguments addObjectsFromArray:members];[arguments addObjectsFromArray:@[@"-d",extracted.path]];
             [self nextWorkTo:.60 seconds:50];
             extractedOK=[self run:@"/usr/bin/unzip" arguments:arguments timeout:600 cleanup:NO error:error];
-        } else AssemblyError(error,VIMLocalized(@"installerassembly.the-big-sur-update-archive-or-version-metadata-is-ambiguous", @"The Big Sur update archive or version metadata is ambiguous or missing."));
+        } else AssemblyError(error,[NSString stringWithFormat:VIMLocalized(@"viminstallerassembly.the-installer-s-boot-files-or-version-information-are", @"The %@ installer’s boot files or version information are missing."),release]);
     }
     NSError *detachError=nil;
     BOOL detached=[self run:@"/usr/bin/hdiutil" arguments:@[@"detach",mount.path] timeout:60 cleanup:YES error:&detachError];
     if(detached)rmdir(mount.fileSystemRepresentation);
     if(!extractedOK)return nil;
     if(!detached){if(error)*error=detachError;return nil;}
+    NSURL *patch=[extracted URLByAppendingPathComponent:@"AssetData/payloadv2/basesystem_patches/x86_64BaseSystem.dmg"];
+    if(RegularFile(patch)) {
+        [self report:[NSString stringWithFormat:VIMLocalized(@"viminstallerassembly.reconstructing-the-recovery-system", @"Reconstructing the %@ recovery system…"),release]];
+        if(!VIMDecodeEmptySourceRecoveryPatch(patch,[extracted URLByAppendingPathComponent:@"AssetData/Restore/BaseSystem.dmg"],
+            ^BOOL{return self.cancelled;},error)||
+           ![fm removeItemAtURL:patch error:error])return nil;
+    }
     NSDictionary *mapping=@{
         @"AssetData/Restore/BaseSystem.dmg":@"BaseSystem/BaseSystem.dmg",
         @"AssetData/Restore/BaseSystem.chunklist":@"BaseSystem/BaseSystem.chunklist",
@@ -1347,15 +1689,18 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
         if(self.cancelled){AssemblyError(error,VIMLocalized(@"installerassembly.media-preparation-was-cancelled-downloads-were-retained", @"Media preparation was cancelled. Downloads were retained."));return nil;}
         NSURL *source=[extracted URLByAppendingPathComponent:sourcePath];
         NSURL *target=[stage URLByAppendingPathComponent:mapping[sourcePath]];
-        if(!RegularFile(source)){AssemblyError(error,VIMLocalized(@"installerassembly.a-required-big-sur-boot-file-is-missing", @"A required Big Sur boot file is missing."));return nil;}
+        BOOL optional=![@[@"AssetData/Restore/BaseSystem.dmg",@"AssetData/boot/Firmware/System/Library/CoreServices/bootbase.efi",
+            @"AssetData/boot/System/Library/KernelCollections/BootKernelExtensions.kc",@"AssetData/boot/SystemVersion.plist"] containsObject:sourcePath];
+        if(!RegularFile(source)){if(optional)continue;AssemblyError(error,[NSString stringWithFormat:VIMLocalized(@"viminstallerassembly.a-required-boot-file-is-missing", @"A required %@ boot file is missing."),release]);return nil;}
         if(![fm createDirectoryAtURL:target.URLByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:error]||
            ![fm moveItemAtURL:source toURL:target error:error])return nil;
     }
     NSURL *manifests=[extracted URLByAppendingPathComponent:@"AssetData/boot/Firmware/Manifests/InstallerBoot"];
-    if(![self run:@"/usr/bin/ditto" arguments:@[@"--norsrc",@"--noextattr",@"--noacl",manifests.path,stage.path] timeout:120 cleanup:NO error:error])return nil;
+    BOOL manifestsDirectory=NO;
+    if([fm fileExistsAtPath:manifests.path isDirectory:&manifestsDirectory]&&manifestsDirectory&&![self run:@"/usr/bin/ditto" arguments:@[@"--norsrc",@"--noextattr",@"--noacl",manifests.path,stage.path] timeout:120 cleanup:NO error:error])return nil;
     NSURL *preferences=[stage URLByAppendingPathComponent:@"Library/Preferences/SystemConfiguration"];
     if(![fm createDirectoryAtURL:preferences withIntermediateDirectories:YES attributes:nil error:error])return nil;
-    NSDictionary *boot=@{@"Kernel Flags":@"root-dmg=file:///BaseSystem/BaseSystem.dmg"};
+    NSDictionary *boot=@{@"Kernel Flags":VIMInstallerMediaKernelFlags};
     NSDictionary *cookie=@{@"AppName":installer.lastPathComponent,@"ProductVersion":asset[@"OSVersion"],@"ProductBuildVersion":asset[@"Build"]};
     for(NSArray *entry in @[@[boot,[preferences URLByAppendingPathComponent:@"com.apple.Boot.plist"]],@[cookie,[stage URLByAppendingPathComponent:@".IAPhysicalMedia"]]]) {
         NSData *plist=[NSPropertyListSerialization dataWithPropertyList:entry[0] format:NSPropertyListXMLFormat_v1_0 options:0 error:error];
@@ -1371,7 +1716,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     [self completedWork:.9];
     NSURL *image=[directory URLByAppendingPathComponent:@"Installer.iso"];
     [self nextWorkTo:.99 seconds:120];
-    if(![self run:@"/usr/bin/hdiutil" arguments:@[@"makehybrid",@"-hfs",@"-udf",@"-hfs-volume-name",@"Install macOS Big Sur",
+    if(![self run:@"/usr/bin/hdiutil" arguments:@[@"makehybrid",@"-hfs",@"-udf",@"-hfs-volume-name",[@"Install macOS " stringByAppendingString:release],
         @"-hfs-blessed-directory",[stage URLByAppendingPathComponent:@"System/Library/CoreServices"].path,@"-o",image.path,stage.path]
         timeout:1800 cleanup:NO error:error])return nil;
     NSNumber *imageSize=FlushGeneratedImage(image,error);if(!imageSize)return nil;
@@ -1380,7 +1725,7 @@ static bool HFSExtractionProgress(uint64_t completed,uint64_t total,void *contex
     }
     // Staged files are now inside the image and are never reused.
     if(![fm removeItemAtURL:stage error:error])return nil;
-    NSDictionary *receipt=@{@"FormatVersion":@1,@"Guest":@"bigsur",@"Stage":@"media-created",@"Media":@"Installer.iso",
+    NSDictionary *receipt=@{@"FormatVersion":@1,@"Guest":guest,@"Stage":@"media-created",@"Media":@"Installer.iso",
         @"Size":imageSize,@"ProductVersion":asset[@"OSVersion"],@"ProductBuildVersion":asset[@"Build"],@"BootValidated":@NO,@"SignedSharedSupportPackage":@YES};
     NSData *data=[NSPropertyListSerialization dataWithPropertyList:receipt format:NSPropertyListXMLFormat_v1_0 options:0 error:error];
     if(!data||![data writeToURL:[directory URLByAppendingPathComponent:@"Media.plist"] options:NSDataWritingAtomic error:error])return nil;

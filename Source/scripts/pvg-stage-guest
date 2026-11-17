@@ -38,12 +38,6 @@ done
 mkdir -p "$payload${core:h}" "$payload${output_compiler:h}" "$payload${service:h}"
 if [[ $pvg_target == 10.14 ]]; then
     native=$(mktemp -d /private/var/tmp/pvg-native-mojave.XXXXXX)
-    for app in Aperture iPhoto; do
-        policy=/Library/Preferences/com.apple.$app.plist
-        mkdir -p "$payload${policy:h}"
-        "$repo/prebuilt/tools/guest-prepare" --aperture-policy "$guest$policy" "$native/$app.plist"
-        cp "$native/$app.plist" "$payload$policy"
-    done
     vpa=/System/Library/PrivateFrameworks/AppleVPA.framework/Versions/A/Resources/Info.plist
     mkdir -p "$payload${vpa:h}"
     "$repo/prebuilt/tools/guest-prepare" --vpa "$guest$vpa" "$native/vpa.plist"

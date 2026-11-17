@@ -15,6 +15,7 @@
 #include "accel/tcg/cpu-mmu-index.h"
 #include "exec/target_page.h"
 #include "exec/translator.h"
+#include "exec/tcg-handoff-code.h"
 #ifdef CONFIG_USER_ONLY
 #include "gdbstub/user.h"
 #endif
@@ -23,6 +24,50 @@
 #include "internal-common.h"
 #include "disas/disas.h"
 #include "tb-internal.h"
+
+static void handoff_record_code(DisasContextBase *db, vaddr pc,
+                                const void *data, size_t length)
+{
+    if (unlikely(db->tb->cflags & CF_HANDOFF_GUARD)) {
+        TcgHandoffCode *code = tcg_handoff_code(db->tb);
+        const uint8_t *bytes = data;
+        uint64_t offset = pc - db->pc_first;
+
+        if (offset > TCG_HANDOFF_CODE_LIMIT ||
+            length > TCG_HANDOFF_CODE_LIMIT - offset) {
+            code->consistent = false;
+            return;
+        }
+        for (size_t i = 0; i < length; i++) {
+            size_t at = offset + i;
+            uint8_t mask = 1u << (at & 7);
+            if ((code->fetched[at / 8] & mask) &&
+                code->bytes[at] != bytes[i]) {
+                code->consistent = false;
+            }
+            code->bytes[at] = bytes[i];
+            code->fetched[at / 8] |= mask;
+        }
+    }
+}
+
+static void handoff_finish_code(TranslationBlock *tb)
+{
+    if (unlikely(tb->cflags & CF_HANDOFF_GUARD)) {
+        TcgHandoffCode *code = tcg_handoff_code(tb);
+        if (tb->size > TCG_HANDOFF_CODE_LIMIT) {
+            code->consistent = false;
+            return;
+        }
+        for (size_t i = 0; i < tb->size; i++) {
+            if (!(code->fetched[i / 8] & (1u << (i & 7)))) {
+                code->consistent = false;
+                break;
+            }
+        }
+        code->length = tb->size;
+    }
+}
 
 #ifndef CONFIG_USER_ONLY
 static void set_can_do_io(DisasContextBase *db, bool val)
@@ -269,6 +314,7 @@ void translator_loop(CPUState *cpu, TranslationBlock *tb, int *max_insns,
     /* May be used by disas_log or plugin callbacks. */
     tb->size = db->pc_next - db->pc_first;
     tb->icount = db->num_insns;
+    handoff_finish_code(tb);
 
     if (plugin_enabled) {
         plugin_gen_tb_end(cpu, db->num_insns);
@@ -526,6 +572,7 @@ uint8_t translator_ldub(CPUArchState *env, DisasContextBase *db, vaddr pc)
         val = cpu_ldb_code_mmu(env, pc, oi, 0);
         record_save(db, pc, &val, sizeof(val));
     }
+    handoff_record_code(db, pc, &val, sizeof(val));
     return val;
 }
 
@@ -539,6 +586,7 @@ uint16_t translator_lduw_end(CPUArchState *env, DisasContextBase *db,
         val = cpu_ldw_code_mmu(env, pc, oi, 0);
         record_save(db, pc, &val, sizeof(val));
     }
+    handoff_record_code(db, pc, &val, sizeof(val));
     if (endian & MO_BSWAP) {
         val = bswap16(val);
     }
@@ -555,6 +603,7 @@ uint32_t translator_ldl_end(CPUArchState *env, DisasContextBase *db,
         val = cpu_ldl_code_mmu(env, pc, oi, 0);
         record_save(db, pc, &val, sizeof(val));
     }
+    handoff_record_code(db, pc, &val, sizeof(val));
     if (endian & MO_BSWAP) {
         val = bswap32(val);
     }
@@ -571,6 +620,7 @@ uint64_t translator_ldq_end(CPUArchState *env, DisasContextBase *db,
         val = cpu_ldq_code_mmu(env, pc, oi, 0);
         record_save(db, pc, &val, sizeof(val));
     }
+    handoff_record_code(db, pc, &val, sizeof(val));
     if (endian & MO_BSWAP) {
         val = bswap64(val);
     }

@@ -148,11 +148,15 @@ static void ValidateRecord(NSDictionary *record) {
     VIMFileTransaction *transaction=[self new];transaction.journal=journal;transaction.record=record;return transaction;
 }
 - (BOOL)verifyPublished:(NSError **)error {
+    return [self verifyPublishedExcludingPaths:[NSSet set] error:error];
+}
+- (BOOL)verifyPublishedExcludingPaths:(NSSet<NSString *> *)paths error:(NSError **)error {
     int lock=-1;
     @try {
         lock=[self lockOperation];ValidateRecord(self.record);
         Require([self.record[@"Phase"] isEqual:@"files-published"],@"Transaction has not completed publication");
-        for(NSDictionary *entry in self.record[@"Entries"])Same(entry[@"Target"],entry[@"Replacement"]);
+        for(NSDictionary *entry in self.record[@"Entries"])
+            if(![paths containsObject:entry[@"RelativePath"]])Same(entry[@"Target"],entry[@"Replacement"]);
         return YES;
     } @catch(NSException *exception){Fail(exception,error);return NO;}
     @finally {if(lock>=0)close(lock);}

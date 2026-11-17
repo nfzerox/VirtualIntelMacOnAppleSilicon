@@ -9,7 +9,7 @@ int main(int argc,const char **argv) {
     @autoreleasepool {
         NSString *expected=[NSString stringWithUTF8String:argv[1]];
         __block BOOL finished=NO,passed=NO;
-        VIMCheckRosettaForBoot(^(BOOL missing,NSError *error){
+        VIMCheckRosettaForPVG(^(BOOL missing,NSError *error){
             NSCAssert(NSThread.isMainThread,@"Completion must return to the UI thread");
             NSString *actual=error?@"broken":(missing?@"missing":@"ready");
             passed=[actual isEqual:expected];finished=YES;

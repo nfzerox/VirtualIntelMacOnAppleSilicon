@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a scratch Common EFI with a Snow Leopard UART startup lock.
+"""Build a scratch Common EFI with a Snow Leopard or Lion UART startup lock.
 
 The extension subclasses Apple's original IOSerialBSDClient. It does not
 replace an installed driver or change any of the other guest profiles.
@@ -46,7 +46,9 @@ def build_extension(work, serial, sdk, xnu):
     return (work / 'VIMSerialStartup').read_bytes()
 
 
-def serial_profile_entries(config_bytes, executable):
+def serial_profile_entries(config_bytes, executable, guest='snowleopard'):
+    kernels = {'snowleopard': ('10.7.3', '10.8.0'), 'lion': ('11.0.0', '11.99.99')}
+    minimum, maximum = kernels[guest]
     config = plistlib.loads(config_bytes)
     info = dict(CFBundleIdentifier=IDENTIFIER, CFBundleName='VIMSerialStartup',
                 CFBundleExecutable='VIMSerialStartup', CFBundlePackageType='KEXT',
@@ -61,19 +63,19 @@ def serial_profile_entries(config_bytes, executable):
     config['Kernel']['Add'] = [entry for entry in config['Kernel']['Add']
                                if entry.get('BundlePath') != BUNDLE]
     config['Kernel']['Add'].append(dict(Arch='x86_64', BundlePath=BUNDLE, Enabled=True,
-        Comment='Serialize native Snow Leopard PC UART publication',
-        ExecutablePath=BINARY, PlistPath=PLIST, MinKernel='10.7.3', MaxKernel='10.8.0'))
+        Comment='Serialize native '+('Lion' if guest == 'lion' else 'Snow Leopard')+' PC UART publication',
+        ExecutablePath=BINARY, PlistPath=PLIST, MinKernel=minimum, MaxKernel=maximum))
     return {'config.plist': plistlib.dumps(config, sort_keys=False),
             'Kexts/' + BUNDLE + '/' + PLIST: plistlib.dumps(info),
             'Kexts/' + BUNDLE + '/' + BINARY: executable}
 
 
-def build_image(work, firmware, executable, output):
+def build_image(work, firmware, executable, output, guest='snowleopard'):
     unified = runpy.run_path(str(HERE / 'build-unified-efi.py'))
     volume = unified['volume'](firmware)
     fat = unified['FAT32'](volume)
-    root = 'EFI/VIM/snowleopard/'
-    entries = serial_profile_entries(fat.read(root + 'config.plist'), executable)
+    root = 'EFI/VIM/'+guest+'/'
+    entries = serial_profile_entries(fat.read(root + 'config.plist'), executable, guest)
     for path, data in entries.items():
         fat.write(root + path, data, replace=path == 'config.plist')
     raw = work / 'BOOT.img'
@@ -81,12 +83,13 @@ def build_image(work, firmware, executable, output):
     runpy.run_path(str(HERE / 'make-efi-disk.py'))['create'](raw, output)
     readback = unified['FAT32'](unified['volume'](output))
     if any(readback.read(root + path) != data for path, data in entries.items()):
-        raise ValueError('Snow Leopard EFI failed read-back')
+        raise ValueError(guest+' EFI failed read-back')
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', required=True, type=Path)
+    parser.add_argument('--guest', choices=('snowleopard', 'lion'), default='snowleopard')
     parser.add_argument('--firmware', type=Path,
                         help='embed in this Common EFI; omit to output only the compiled kext executable')
     for option in ('executable', 'serial', 'sdk', 'xnu'):
@@ -102,6 +105,6 @@ if __name__ == '__main__':
         binary = (args.executable.read_bytes() if args.executable else
                   build_extension(work, *(p.resolve() for p in sources)))
         if args.firmware:
-            build_image(work, args.firmware.resolve(), binary, args.output.resolve())
+            build_image(work, args.firmware.resolve(), binary, args.output.resolve(), args.guest)
         else:
             args.output.write_bytes(binary)

@@ -7,8 +7,13 @@
 	<key>Guest</key>
 	<string>snowleopard</string>
 	<key>PolicyVersion</key>
-	<integer>1</integer>
+	<integer>2</integer>
+	<key>SecurityFixes</key>
+	<array>
+		<string>CVE-2012-0870</string>
+		<string>CVE-2012-1182</string>
+	</array>
 	<key>UpstreamCommit</key>
-	<string>ab8a41880c162af3f96c52e7e6fd84844e1fa146</string>
+	<string>b291a85933eba214fcc2eae8fbc9412038891f1d</string>
 </dict>
 </plist>

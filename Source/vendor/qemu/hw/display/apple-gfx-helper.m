@@ -17,6 +17,7 @@
 #include "apple-gfx-oop-wire.h"
 #include "apple-gfx-app-wire.h"
 #include "apple-gfx-oop-timing.h"
+#include "apple-gfx-packed422.h"
 void apple_gfx_legacy_shadow_install(void);
 typedef struct {
     AppleGFXOOPRAMWire wire;
@@ -160,6 +161,7 @@ static int helper_main(int argc, char **argv)
         }
         void *image = dlopen(argv[2], RTLD_NOW | RTLD_LOCAL);
         if (!image) { fprintf(stderr, "PVG helper: %s\n", dlerror()); return 5; }
+        VIMInstallPacked422Backing();
         if (!getenv("PVG_LEGACY_SHADOW")) setenv("PVG_LEGACY_SHADOW", "1", 1);
         if (!getenv("PVG_SHADOW_PRIVATE_PAGING")) setenv("PVG_SHADOW_PRIVATE_PAGING", "1", 1);
         /* Install after donor classes exist and before any PVG resources. */

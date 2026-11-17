@@ -128,71 +128,6 @@ static BOOL JobLoaded(CFStringRef label){return VIMOpenGLSystemJobLoaded(label);
 static NSString *First(VIMAccountRecord *record,NSString *attribute) {
     NSArray *values=[record valuesForAttribute:attribute error:NULL];return [values count]?[values objectAtIndex:0]:nil;
 }
-#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1050
-static NSArray *HomeShares(VIMAccountNode *node,NSString *name){return VIMAccountHomeShares(node,name);}
-static BOOL ShareFailure(const char *stage,NSError *error){
-    // Cold failure metadata only. Never log directory object descriptions,
-    // account names, authentication values or the supplied request.
-    fprintf(stderr,"File share operation failed: %s (directory code %ld).\n",stage,(long)[error code]);return NO;
-}
-static BOOL ShareHome(VIMAccountNode *node,NSString *name,NSString *home){
-    NSError *issue=nil;
-    NSArray *shares=HomeShares(node,name);if(!shares||[shares count]>1)return ShareFailure("query",nil);
-    if(access("/usr/sbin/sharing",X_OK)){
-        // Lion has no sharing CLI. Use its native SharePoints record schema
-        // (confirmed on 11G63), limited to this transaction's exact home.
-        VIMAccountRecord *share=[shares count]?[shares objectAtIndex:0]:nil;
-        if(share){
-            NSArray *paths=[share valuesForAttribute:@"dsAttrTypeNative:directory_path" error:&issue];
-            NSString *path=[paths count]?[paths objectAtIndex:0]:nil;
-            if(![path isEqual:home]){
-                fprintf(stderr,"File share home metadata: count=%lu actual-length=%lu expected-length=%lu.\n",
-                    (unsigned long)[paths count],(unsigned long)[path length],(unsigned long)[home length]);
-                return ShareFailure("home identity",issue);
-            }
-        }
-        NSDictionary *attributes=[NSDictionary dictionaryWithObjectsAndKeys:
-            [NSArray arrayWithObject:home],@"dsAttrTypeNative:directory_path",
-            [NSArray arrayWithObject:name],@"dsAttrTypeNative:smb_name",
-            [NSArray arrayWithObject:@"1"],@"dsAttrTypeNative:smb_shared",
-            [NSArray arrayWithObject:@"0"],@"dsAttrTypeNative:smb_guestaccess",nil];
-        if(!share){
-            CFUUIDRef identifier=CFUUIDCreate(NULL);
-            NSString *guid=[(NSString *)CFUUIDCreateString(NULL,identifier) autorelease];CFRelease(identifier);
-            NSMutableDictionary *created=[[attributes mutableCopy] autorelease];
-            [created setObject:[NSArray arrayWithObject:guid] forKey:kODAttributeTypeGUID];
-            share=[node createRecordWithRecordType:kODRecordTypeSharePoints name:name attributes:created error:&issue];
-        }
-        else for(NSString *key in attributes)
-            if(![share setValue:[attributes objectForKey:key] forAttribute:key error:&issue])return ShareFailure("attribute write",issue);
-        if(!share||![share synchronizeAndReturnError:&issue])return ShareFailure("record publish",issue);
-        shares=HomeShares(node,name);if([shares count]!=1)return ShareFailure("read-back query",nil);
-        share=[shares objectAtIndex:0];
-        BOOL verified=[First(share,@"dsAttrTypeNative:directory_path") isEqual:home]&&
-            [First(share,@"dsAttrTypeNative:smb_name") isEqual:name]&&
-            [First(share,@"dsAttrTypeNative:smb_shared") isEqual:@"1"]&&
-            [First(share,@"dsAttrTypeNative:smb_guestaccess") isEqual:@"0"];
-        return verified?YES:ShareFailure("read-back attributes",nil);
-    }
-    if([shares count]){
-        VIMAccountRecord *share=[shares objectAtIndex:0];
-        // An interrupted native enable may already have published this share.
-        // Reuse only this exact account's home, never edit a name collision.
-        if(![First(share,@"dsAttrTypeNative:directory_path") isEqual:home])return ShareFailure("command home identity",nil);
-        if(![First(share,@"dsAttrTypeNative:smb_shared") isEqual:@"1"]||
-           ![First(share,@"dsAttrTypeNative:smb_guestaccess") isEqual:@"0"]){
-            if(Run(@"/usr/sbin/sharing",[NSArray arrayWithObjects:@"-e",name,@"-s",@"001",@"-g",@"000",nil]))return ShareFailure("native edit command",nil);
-        }
-    }else if(Run(@"/usr/sbin/sharing",[NSArray arrayWithObjects:@"-a",home,@"-n",name,@"-s",@"001",@"-g",@"000",nil]))return ShareFailure("native create command",nil);
-    shares=HomeShares(node,name);if([shares count]!=1)return ShareFailure("command read-back query",nil);
-    VIMAccountRecord *share=[shares objectAtIndex:0];
-    BOOL verified=[First(share,@"dsAttrTypeNative:directory_path") isEqual:home]&&
-        [First(share,@"dsAttrTypeNative:smb_name") isEqual:name]&&
-        [First(share,@"dsAttrTypeNative:smb_shared") isEqual:@"1"]&&
-        [First(share,@"dsAttrTypeNative:smb_guestaccess") isEqual:@"0"];
-    return verified?YES:ShareFailure("command read-back attributes",nil);
-}
-#endif
 /* Setup Assistant names the computer after its first account; automatic
  * setup skips Setup Assistant, which otherwise leaves 10.4–10.12 with no
  * Sharing name or Finder sidebar device. Apply the same convention natively
@@ -300,7 +235,7 @@ int main(int argc,char **argv) {@autoreleasepool {
     NSString *version=[[NSDictionary dictionaryWithContentsOfFile:@"/System/Library/CoreServices/SystemVersion.plist"] objectForKey:@"ProductVersion"];
 #ifdef VIM_MODERN_ACCOUNT_SETUP
     NSString *guest=VIMGuestForSystemVersion(version);
-    if(geteuid()!=0||![[NSArray arrayWithObjects:@"mojave",@"catalina",@"bigsur",nil] containsObject:guest]||!VIMModernSetupGuestMachine())return 77;
+    if(geteuid()!=0||![VIMModernGuests() containsObject:guest]||!VIMModernSetupGuestMachine())return 77;
 #else
     if(geteuid()!=0||!VIMOpenGLGuestForSystemVersion(version)||!VIMOpenGLGuestMachine())return 77;
 #endif
@@ -370,6 +305,23 @@ int main(int argc,char **argv) {@autoreleasepool {
                 return Failure("retiring native first-login policy");
             if([[ownership objectForKey:@"FileSharing"] boolValue]){
                 int result=VIMOpenGLConfigureFileSharing();if(result)return result;
+            }
+            // Test installs: the screensaver never starts, for the user on
+            // this host and at the login window. Never set for user installs.
+            if([[ownership objectForKey:@"ScreenSaverDisabled"] isEqual:@YES]){
+                CFNumberRef never=(CFNumberRef)[NSNumber numberWithInt:0];
+                CFPreferencesSetValue(CFSTR("idleTime"),never,CFSTR("com.apple.screensaver"),(CFStringRef)name,kCFPreferencesCurrentHost);
+                CFPreferencesSetValue(CFSTR("idleTime"),never,CFSTR("/Library/Preferences/com.apple.screensaver"),kCFPreferencesCurrentUser,kCFPreferencesAnyHost);
+                if(!CFPreferencesSynchronize(CFSTR("com.apple.screensaver"),(CFStringRef)name,kCFPreferencesCurrentHost)||
+                   !CFPreferencesSynchronize(CFSTR("/Library/Preferences/com.apple.screensaver"),kCFPreferencesCurrentUser,kCFPreferencesAnyHost))
+                    return Failure("turning off the test screensaver");
+            }
+            // macOS can re-lock the automatic login after our first write
+            // (autoLoginUserScreenLocked); the desktop is meant to stay open.
+            if([[ownership objectForKey:@"AutomaticLogin"] boolValue]){
+                CFStringRef domain=CFSTR("/Library/Preferences/com.apple.loginwindow");
+                CFPreferencesSetValue(CFSTR("autoLoginUserScreenLocked"),kCFBooleanFalse,domain,kCFPreferencesCurrentUser,kCFPreferencesAnyHost);
+                CFPreferencesSynchronize(domain,kCFPreferencesCurrentUser,kCFPreferencesAnyHost);
             }
             BOOL ours=[VIMOpenGLLoginUser() isEqual:name]&&Owned(@"/etc/kcpassword",NO)&&
                 [[journal objectForKey:@"AutoLoginSHA256"] isEqual:SHA([NSData dataWithContentsOfFile:@"/etc/kcpassword"])];
@@ -510,7 +462,9 @@ int main(int argc,char **argv) {@autoreleasepool {
 #endif
                 return DirectoryFailure("preparing this account's SMB authentication",directoryError);
 #endif
-            if(!ShareHome(node,name,home))return Failure("creating and confirming this account's file share");
+            // Native authenticated home access needs this account's SMB hash,
+            // not an explicit home SharePoint (which adds Finder banners).
+            // Do not remove or rewrite shares in already configured guests.
             [journal setObject:[NSNumber numberWithBool:YES] forKey:@"FileSharingAccountPrepared"];
             [journal setObject:[NSNumber numberWithInt:1] forKey:@"FileSharingCredentialVersion"];
             if(!Save(journal,journalPath))return Failure("saving file-sharing account setup");
@@ -518,7 +472,7 @@ int main(int argc,char **argv) {@autoreleasepool {
         if([version hasPrefix:@"10.5."]||[version hasPrefix:@"10.6."]){
             // Period first-boot SharePoints services depend on native desktop
             // initialization. Do not hold account/autologin creation behind
-            // that service: prepare only the exact account/share here, then
+            // that service: prepare only the exact account credentials here, then
             // use the existing verified-desktop finalizer to enable the job.
             [journal setObject:[NSNumber numberWithBool:YES] forKey:@"FileSharingDeferredUntilDesktop"];
         }else{
@@ -641,6 +595,12 @@ int main(int argc,char **argv) {@autoreleasepool {
         return errno==EAGAIN?75:Failure("preparing the first desktop login");
     int marker=open("/var/db/.AppleSetupDone",O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW,0644);
     if(marker>=0)close(marker);else if(errno!=EEXIST)return Failure("completing native Setup Assistant policy");
+    // Sequoia's Setup Assistant leaves this marker at first boot until its
+    // Terms pane is accepted; while it exists, loginwindow runs Setup
+    // Assistant again (-MiniBuddyYes) at the Terms pane instead of logging
+    // in. The automated setup accepts the license through startosinstall's
+    // --agreetolicense, so retire the marker with the rest of Setup Assistant.
+    if(unlink("/var/db/.AppleSetupTermsOfService")&&errno!=ENOENT)return Failure("completing native Setup Assistant terms");
     [journal setObject:@"autologin-armed" forKey:@"Phase"];
     if(!Save(journal,journalPath))return Failure("saving desktop handoff");
     puts("{\"AccountCreated\":true,\"HomeVerified\":true,\"SetupCompleted\":true,\"RestartRequired\":true}");

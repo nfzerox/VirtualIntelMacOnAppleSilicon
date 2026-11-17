@@ -111,6 +111,7 @@ _Static_assert(sizeof(struct DGHelloFeatures)<=sizeof(DG_LAYOUT),"HELLO features
 #define glDeleteTextures DGPrivateDeleteTextures
 #define glDeleteFramebuffersEXT DGPrivateDeleteFramebuffers
 #define glFramebufferTexture2DEXT DGPrivateAttachTexture
+#include "accumulation-buffer-host.h"
 #ifdef VIM_BACKING_SCATTER_EXPERIMENT
 #include "direct-backing-scatter-host.h"
 static uint64_t dg_scatter_stats[4]; // plans, completed copies, copied bytes, scoped admissions
@@ -124,6 +125,8 @@ struct DGHostContext {
     struct DGPrivateTextureWatch color_watch,back_watch,spare_watches[4];
     IOSurfaceRef color_storage,back_storage;
     GLint depth_bits,stencil_bits,double_buffer,client_storage;GLenum error,read_mode,draw_mode;
+    GLint accumulation_bits;
+    struct DGAccumulationEngine accumulation;
     unsigned profile,client_features;
     // Executor-owned native array enables, never speculative guest GL state.
     // VAO switches/deletes and client-stack restores invalidate this witness.
@@ -202,6 +205,7 @@ struct DGHostContext {
 };
 // Explicit research-oracle selection. Zero keeps normal host GPU selection.
 static GLint dg_reference_renderer;
+#include "initial-backing-policy.h"
 struct DGHostDrawable {
     uint32_t name;int width,height;GLuint framebuffer,color,back,depth;
     struct DGPrivateTextureWatch color_watch,back_watch;
@@ -215,6 +219,8 @@ struct DGHostDrawable {
     int scope_canonical;
 #endif
     uint64_t write_serial;
+    struct VIMInitialBackingState initial_backing;
+    struct DGAccumulationBuffer accumulation;
     struct DGHostDrawable *next;
 };
 #ifdef VIM_BACKING_CANONICAL_EXPERIMENT
@@ -498,6 +504,7 @@ static void DGRetireStorage(struct DGHostContext *c,IOSurfaceRef surface,int cac
 {DGRetireStorageTexture(c,surface,0,0,0,cache);}
 static void DGDeleteDrawableStorage(struct DGHostContext *c,int cache)
 {
+    if(c->drawable)DGAccumulationDeleteBuffer(&c->drawable->accumulation);
     if(c->drawable && c->drawable->prepared){
         c->drawable->prepared=0;
         __atomic_fetch_add(&dg_prepared_drawable_stats[3],1,__ATOMIC_RELAXED);
@@ -570,7 +577,7 @@ static IOSurfaceRef DGDrawableStorage(struct DGHostContext *c,int width,int heig
         int exact=dg_drawable_texture_reuse && c->spare_textures[i] &&
             c->spare_widths[i]==width && c->spare_heights[i]==height;
         if(IOSurfaceGetWidth(spare)>=(size_t)width && IOSurfaceGetHeight(spare)>=(size_t)height &&
-           DGIOSurfaceViewPitchMatches(spare,(size_t)width,view_pitch) &&
+           DGIOSurfaceViewPitchMatches(spare,(size_t)width,(size_t)height,view_pitch) &&
            (best==4 || exact>best_exact || (exact==best_exact && bytes<best_bytes)))
             {best=i;best_bytes=bytes;best_exact=exact;}
     }
@@ -587,6 +594,9 @@ static IOSurfaceRef DGDrawableStorage(struct DGHostContext *c,int width,int heig
     if(dg_storage_reuse) {
         size_t w=(capacity_width+127)&~(size_t)127,h=(capacity_height+127)&~(size_t)127;
         w=DGIOSurfaceViewCapacityWidth(capacity_width,w,4,view_pitch);
+        // Tiled views may change layout when only height changes (notably
+        // one-row CI lookup targets). Keep both logical extents exact.
+        if(view_pitch==DG_VIEW_PITCH_UNKNOWN)h=capacity_height;
         if(w*h*4<=DG_DISPLAY_MAX_BYTES) { capacity_width=w;capacity_height=h; }
     }
     size_t row=(capacity_width*4+63)&~(size_t)63,bytes=row*capacity_height;
@@ -672,6 +682,10 @@ static void DGSetDrawBuffers(struct DGHostContext *c,GLsizei n,const GLenum *buf
 static int DGVirtualInteger(struct DGHostContext *c,GLenum key,GLint *value)
 {
     GLint binding=0;
+    if(key>=GL_ACCUM_RED_BITS && key<=GL_ACCUM_ALPHA_BITS){
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING_EXT,&binding);
+        if(c->framebuffer && (GLuint)binding==c->framebuffer){*value=c->accumulation_bits/4;return 1;}
+    }
     if(key==GL_DOUBLEBUFFER) { *value=c->double_buffer;return 1; }
     if(key==GL_UNPACK_CLIENT_STORAGE_APPLE) { *value=c->client_storage;return 1; }
     if(key>=GL_DRAW_BUFFER0_ARB&&key<=GL_DRAW_BUFFER15_ARB){
@@ -905,8 +919,9 @@ static int DGSendDrawableSurface(struct DGHostContext *c,const struct DGMessage 
 }
 /* Private bridge transactions preserve host state locally, not with a dozen
  * synchronous guest glGet calls. Pixels stay in the existing bottom-up order. */
+#include "initial-backing-host.c"
 static int DGImportDrawableSurface(struct DGHostContext *c,const void *pixels,
-    size_t stride,size_t x,size_t y,size_t width,size_t height,int reverse)
+    size_t stride,size_t x,size_t y,size_t width,size_t height,int reverse,int *seed_back)
 {
     IOSurfaceRef surface=c->color_storage;
     if(!surface || IOSurfaceGetPlaneCount(surface) || IOSurfaceGetBytesPerElement(surface)!=4 ||
@@ -925,6 +940,9 @@ static int DGImportDrawableSurface(struct DGHostContext *c,const void *pixels,
     kern_return_t unlocked=IOSurfaceUnlock(surface,0,NULL);
     if(!base || unlocked!=kIOReturnSuccess)c->error=GL_INVALID_OPERATION;
     c->drawable->alias_dirty=1;++c->drawable->write_serial;
+    // FRONT's ownership/result is unchanged if the optional BACK copy fails.
+    if(*seed_back && (!base || unlocked!=kIOReturnSuccess ||
+        DGInitialBackingCPU(c,pixels,stride,width,height,reverse))) *seed_back=0;
     return 1;
 }
 static int DGDrawablePixels(struct DGHostContext *c,struct DGMessage *m,int reading)
@@ -942,13 +960,20 @@ static int DGDrawablePixels(struct DGHostContext *c,struct DGMessage *m,int read
     uint64_t stride=view?m->args[2]:width*element;
     if(stride<width*element || stride>DG_MAX_BYTES || (view && (reading || m->args[3]>1)) ||
        (height-1)*stride+width*element!=m->bytes)return -1;
+    int seed_back=!reading && VIMInitialBackingClaim(DGInitialBackingEnabled(),&c->drawable->initial_backing,
+        c->double_buffer,(uintptr_t)c->color_storage,(uintptr_t)c->back_storage,c->color,c->back,
+        c->drawable->width,c->drawable->height,c->drawable->write_serial,x,y,width,height);
     const unsigned char *pixels=(const void *)(m+1);unsigned char *converted=NULL;
-    if(!reading && dg_surface_import &&
-       DGImportDrawableSurface(c,pixels,(size_t)stride,(size_t)x,(size_t)y,
-           (size_t)width,(size_t)height,view && m->args[3]))return 0;
+    int front_imported=!reading && dg_surface_import &&
+        DGImportDrawableSurface(c,pixels,(size_t)stride,(size_t)x,(size_t)y,
+            (size_t)width,(size_t)height,view && m->args[3],&seed_back);
+    if(front_imported && !seed_back)return 0;
     if(view && (m->args[3] || stride!=width*4)) {
         converted=malloc((size_t)(width*height*4));
-        if(!converted) { c->error=GL_OUT_OF_MEMORY;return 0; }
+        if(!converted) {
+            if(front_imported)return 0;
+            c->error=GL_OUT_OF_MEMORY;return 0;
+        }
         for(uint64_t row=0;row<height;++row)memcpy(converted+row*width*4,
             pixels+(m->args[3]?height-1-row:row)*stride,(size_t)(width*4));
         pixels=converted;
@@ -987,8 +1012,10 @@ static int DGDrawablePixels(struct DGHostContext *c,struct DGMessage *m,int read
         glBindTexture(GL_TEXTURE_RECTANGLE_ARB,c->color);
         glTexSubImage2D(GL_TEXTURE_RECTANGLE_ARB,0,(GLint)x,(GLint)y,(GLsizei)width,(GLsizei)height,
             GL_BGRA,GL_UNSIGNED_INT_8_8_8_8_REV,pixels);
+        if(seed_back)DGInitialBackingUpload(c,pixels,(size_t)width,(size_t)height);
         glBindTexture(GL_TEXTURE_RECTANGLE_ARB,(GLuint)texture);
-        c->drawable->alias_dirty=1;++c->drawable->write_serial;
+        c->drawable->alias_dirty=1;
+        if(!front_imported)++c->drawable->write_serial;
     }
     free(converted);glBindBuffer(target,(GLuint)buffer);
     glPixelStorei(reading ? GL_PACK_ROW_LENGTH : GL_UNPACK_ROW_LENGTH,row);
@@ -1038,6 +1065,8 @@ static int DGBindDrawableTexture(struct DGHostContext *c,struct DGMessage *m,str
 {
     GLenum internal=(GLenum)m->args[0];uint64_t width=m->args[1],height=m->args[2];
     int back=!!(m->args[3]&2);
+    // An exported BACK may have independent writers, even before our first draw.
+    if(back && c->drawable)VIMInitialBackingExpose(DGInitialBackingEnabled(),&c->drawable->initial_backing);
     IOSurfaceRef storage=back?c->back_storage:c->color_storage;
     unsigned format=storage && IOSurfaceGetPixelFormat(storage)==DGSurfaceNativeFormat(VIM_GL_PIXEL_RGBA16)?
         VIM_GL_PIXEL_RGBA16:VIM_GL_PIXEL_BGRA8;
@@ -1123,7 +1152,7 @@ static int DGSelectDrawableMode(struct DGHostContext *c,uint32_t name,int width,
         struct DGHostDrawable *previous=c->drawable;DGLoadDrawable(c,NULL);
         int reserved=0;
 #ifdef VIM_BACKING_CANONICAL_EXPERIMENT
-        if(prepared && c->profile==kCGLOGLPVersion_Legacy && !c->double_buffer && !c->depth_bits && !c->stencil_bits){
+        if(prepared && c->profile==kCGLOGLPVersion_Legacy && !c->double_buffer && !c->depth_bits && !c->stencil_bits && !c->accumulation_bits){
             glGenFramebuffersEXT(1,&c->framebuffer);
             if(c->framebuffer){
                 glBindFramebufferEXT(GL_FRAMEBUFFER_EXT,c->framebuffer);
@@ -1186,6 +1215,7 @@ static void DGDestroyDrawables(struct DGHostContext *c)
     }
 #endif
     while(c->drawables) DGDropDrawable(c,c->drawables->name);
+    DGAccumulationDeleteEngine(&c->accumulation);
     DGVRAMDelete(c);
     if(c->vram_copy_context)CGLDestroyContext(c->vram_copy_context);
     c->vram_copy_context=NULL;c->vram_copy_framebuffer=0;
@@ -1204,6 +1234,7 @@ static void DGDestroyDrawables(struct DGHostContext *c)
     c->spare_bytes=0;
 }
 #include "passthrough-opengl-surfaces-host.c"
+#include "passthrough-opengl-accumulation-host.c"
 #include "direct-vram-drawable-host.c"
 #ifdef VIM_BACKING_FUTURE_EXPERIMENT
 #include "direct-backing-future-host.c"
@@ -1691,21 +1722,12 @@ static void DGHostTexture3D(struct DGHostContext *c,int subimage,GLenum target,G
 static void DGTraceTexture(struct DGHostContext *c,int w,int h,GLenum format,GLenum type,const void *pixels)
 {
     if(!dg_diagnostics || c->texture_debug_count++>=32) return;
-    size_t bytes=DGPixelBytes(c,w,h,format,type,0),nonzero=0,samples=0;
-    if(pixels && bytes!=SIZE_MAX) {
-        size_t stride=bytes/4096 ? bytes/4096 : 1;
-        for(size_t i=0;i<bytes;i+=stride) { ++samples;if(((const unsigned char *)pixels)[i]) ++nonzero; }
-    }
-    fprintf(stderr,"direct texture upload=%dx%d format=%x type=%x bytes=%zu nonzero=%zu/%zu\n",w,h,format,type,bytes,nonzero,samples);
-    if(pixels && w==256 && h==256) {
-        GLint pitch=0,row=0;glGetIntegerv(GL_UNPACK_ROW_BYTES_APPLE,&pitch);glGetIntegerv(GL_UNPACK_ROW_LENGTH,&row);
-        fprintf(stderr,"direct texture pixelstore row_bytes=%d row_length=%d input_rgba:",pitch,row);
-        for(unsigned y=0;y<256;y+=16) {
-            const unsigned char *p=(const unsigned char *)pixels+y*1024;
-            fprintf(stderr," %u:%u,%u,%u,%u",y,p[0],p[1],p[2],p[3]);
-        }
-        fputc('\n',stderr);
-    }
+    /* The decoder has already restored the caller's unpack state. Its row
+     * span can exceed this upload's compact payload, and a PBO value is an
+     * offset rather than a CPU pointer. Log metadata only here; bounded
+     * texture-content capture belongs to DGTraceProgram's native readback. */
+    fprintf(stderr,"direct texture upload=%dx%d format=%x type=%x data=%s\n",
+        w,h,format,type,pixels?"supplied":"null");
 }
 static void DGTraceRead(struct DGHostContext *c,int w,int h,GLenum format,GLenum type,const void *pixels)
 {
@@ -2255,7 +2277,7 @@ static int DGInterpretCommand(struct DGInterpreter *s,int fd,struct DGMessage *m
                     DG_FEATURE_EVALUATOR_UPLOADS|DG_FEATURE_INTEGER_PARAMETERS|
                     DG_FEATURE_TEXTURE_READ_LAYOUT|DG_FEATURE_TEXTURE_READ_CHUNKS|
                     DG_FEATURE_TRANSFORM_FEEDBACK_NAMES|DG_FEATURE_INDEXED_STATE|DG_FEATURE_INTEGER_VERTEX_ARRAYS,
-                    DG_HELLO_FEATURES2_MAGIC,0,DG_HELLO_FEATURES3_MAGIC,DG_FEATURE3_STIPPLE_READ|DG_FEATURE3_COMPACT_IMAGING|DG_FEATURE3_COMPACT_TEXTURE|DG_FEATURE3_BIG_ENDIAN_ARRAY_ELEMENT};
+                    DG_HELLO_FEATURES2_MAGIC,0,DG_HELLO_FEATURES3_MAGIC,DG_FEATURE3_STIPPLE_READ|DG_FEATURE3_COMPACT_IMAGING|DG_FEATURE3_COMPACT_TEXTURE|DG_FEATURE3_BIG_ENDIAN_ARRAY_ELEMENT|DG_FEATURE3_ACCUMULATION_BUFFER};
                 if(dlsym(RTLD_DEFAULT,"glClearBufferiv") && dlsym(RTLD_DEFAULT,"glClearBufferuiv") &&
                    dlsym(RTLD_DEFAULT,"glClearBufferfv") && dlsym(RTLD_DEFAULT,"glClearBufferfi"))
                     features.features|=DG_FEATURE_CLEAR_BUFFER;
@@ -2427,6 +2449,7 @@ static int DGInterpretCommand(struct DGInterpreter *s,int fd,struct DGMessage *m
         uint64_t share=m->args[0];
         unsigned profile=m->args[5]?(unsigned)m->args[5]:kCGLOGLPVersion_Legacy;
         if(s->next>=256 || share>=s->next || (share && !contexts[share].cgl) || m->args[1]>24 || m->args[2]>8 || m->args[3]>1 || m->args[4]>1 ||
+            (m->args[6] && (m->args[6]!=128 || profile!=kCGLOGLPVersion_Legacy)) ||
             (m->args[5] && m->args[5]!=kCGLOGLPVersion_Legacy &&
              m->args[5]!=kCGLOGLPVersion_3_2_Core && m->args[5]!=DG_CGL_PROFILE_GL4)) error=-1;
         else if(profile==DG_CGL_PROFILE_GL4 && !dg_core_api.gl4_profile)reply.error=GL_INVALID_OPERATION;
@@ -2452,6 +2475,7 @@ static int DGInterpretCommand(struct DGInterpreter *s,int fd,struct DGMessage *m
             }
             else { contexts[s->next].depth_bits=(GLint)m->args[1];contexts[s->next].stencil_bits=(GLint)m->args[2];
                 contexts[s->next].profile=profile;
+                contexts[s->next].accumulation_bits=(GLint)m->args[6];
                 contexts[s->next].client_features=s->client_features;
                 contexts[s->next].native_screen_count=count;contexts[s->next].native_hardware_screen=-1;
                 memcpy(contexts[s->next].surface_namespace,s->surface_namespace,sizeof(s->surface_namespace));
@@ -2552,7 +2576,18 @@ static int DGInterpretCommand(struct DGInterpreter *s,int fd,struct DGMessage *m
                 /* Complete interface families, not a copy of every native
                  * extension. Native availability AND a new guest decoder
                  * are required; no added query, copy or polling per draw. */
-                static const char *const completed[]={"GL_ARB_occlusion_query",
+                /* Older games discover these core-promoted operations by
+                 * their ARB names even when GL_VERSION is already 2.1. The
+                 * typed selectors/coordinate arrays, combine state and cube
+                 * faces are forwarded, not emulated. Match native discovery
+                 * as well as pixels; omitting multitexture makes Unity 1.x
+                 * assume one unit. Its image effects also reject three-input
+                 * combiners without ATI_combine3, although the existing
+                 * TexEnv codec already carries all its state/operations. */
+                static const char *const completed[]={"GL_ARB_multitexture",
+                    "GL_ARB_texture_env_combine","GL_ARB_texture_cube_map",
+                    "GL_ARB_texture_env_dot3","GL_EXT_blend_color","GL_NV_blend_square",
+                    "GL_ATI_texture_env_combine3","GL_ARB_occlusion_query",
                     "GL_ARB_point_parameters","GL_EXT_fog_coord","GL_EXT_secondary_color",
                     "GL_ARB_transpose_matrix","GL_ARB_window_pos"};
                 for(unsigned i=0;i<sizeof(completed)/sizeof(completed[0]);++i)
@@ -2562,6 +2597,14 @@ static int DGInterpretCommand(struct DGInterpreter *s,int fd,struct DGMessage *m
             }
             DGAppendIndexedExtensions(out,4096,ext,m->args[3],m->args[4]);
             DGAppendTextureExtensions(out,4096,ext,m->args[3],m->args[4],m->args[5]);
+            /* Valve ToGL and other compatibility clients discover this
+             * separately from core FBOs. The existing blit codec is qualified
+             * through both native guest-framework ABIs, but an old public
+             * framework must not advertise a symbol it cannot export. */
+            if(m->args[3]>=9 && (m->args[6]&DG_FRONTEND_FRAMEBUFFER_BLIT) &&
+               DGHostHasExtension(ext,"GL_EXT_framebuffer_blit")){
+                size_t used=strlen(out);snprintf(out+used,4096-used," GL_EXT_framebuffer_blit");
+            }
             /* Old clients echo the executor's entire features2 word,
              * including bits they cannot implement. Require the client
              * dispatch revision before advertising these families. */

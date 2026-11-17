@@ -11,6 +11,17 @@ spec = importlib.util.spec_from_file_location('freshness', Path(__file__).with_n
 freshness = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(freshness)
 
+package_spec = importlib.util.spec_from_file_location('package_runtime', Path(__file__).with_name('package-app-runtime.py'))
+package = importlib.util.module_from_spec(package_spec)
+package_spec.loader.exec_module(package)
+assert package.public_configure_arguments({
+    'arm64': ['--enable-pvg', '--python=/private/build tools/python', '-Dhvdbt_engine=/private/cache/engine'],
+    'x86_64': ['--cpu=x86_64', '--extra-cflags=-arch x86_64 -mmacosx-version-min=11.0'],
+}) == {
+    'arm64': ['--enable-pvg', '--python=${BUILD_PYTHON}', '-Dhvdbt_engine=${HYBRID_ENGINE}'],
+    'x86_64': ['--cpu=x86_64', '--extra-cflags=-arch x86_64 -mmacosx-version-min=11.0'],
+}
+
 with tempfile.TemporaryDirectory(prefix='vim-freshness-test-') as temporary:
     root = Path(temporary)
     source = root/'Source'
@@ -21,6 +32,9 @@ with tempfile.TemporaryDirectory(prefix='vim-freshness-test-') as temporary:
     (qemu/'machine.c').write_text('original')
     helper = source/'compat/PVGHostAIRRepair.m'
     helper.parent.mkdir(); helper.write_text('helper')
+    engine = source/'HybridHypervisor/Sources/Engine/CPU.swift'
+    engine.parent.mkdir(parents=True); engine.write_text('engine')
+    packed = qemu/'apple-gfx-packed422.h'; packed.write_text('packed backing policy')
     recipe = source/'scripts/build-app-runtime.py'
     recipe.parent.mkdir(); recipe.write_text('recipe')
     archive = source/'vendor/qemu-dependency-sources.tar.gz'
@@ -42,7 +56,7 @@ with tempfile.TemporaryDirectory(prefix='vim-freshness-test-') as temporary:
         binary.chmod(0o644)
         binary.unlink()
         assert not freshness.current(receipt, before, binary.parent)
-        for path in (qemu/'machine.c', helper, recipe, archive):
+        for path in (qemu/'machine.c', helper, engine, packed, recipe, archive):
             old = path.read_bytes(); path.write_bytes(old+b'changed')
             assert freshness.snapshot(source, 'runtime') != before, path
             path.write_bytes(old)
@@ -73,4 +87,4 @@ with tempfile.TemporaryDirectory(prefix='vim-freshness-test-') as temporary:
             pass
         else:
             raise AssertionError('Accepted inputs changing during compilation')
-print('PASS: source/helper/recipe/dependency/toolchain changes, new/deleted files, corrupt/missing outputs, legacy receipts, relocation and build races')
+print('PASS: source/helper/HybridHypervisor/recipe/dependency/toolchain changes, new/deleted files, corrupt/missing outputs, legacy receipts, relocation and build races')

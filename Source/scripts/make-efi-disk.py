@@ -18,7 +18,7 @@ def crc(data):
     return zlib.crc32(data) & 0xffffffff
 
 
-def create(source, destination, quiet=False, registration=None, signature_only_amfi=False, runtime_policy=None):
+def create(source, destination, quiet=False, registration=None, signature_only_amfi=False, runtime_policy=None, product=None):
     data = bytearray(source.read_bytes())
     if len(data) < 512 or data[510:512] != b'\x55\xaa':
         raise ValueError('source is not a FAT boot image')
@@ -53,6 +53,13 @@ def create(source, destination, quiet=False, registration=None, signature_only_a
         fat.write('EFI/OC/config.plist',plistlib.dumps(config,sort_keys=False),replace=True)
         if registration:
             registration=runtime_policy/'PVGOpenGLProbe.kext'
+    if product:
+        # A later release's profile: the same OpenCore image, presenting a Mac
+        # model that release supports. OpenCore derives the rest (Automatic).
+        fat=runpy.run_path(str(Path(__file__).with_name('efi-fat32.py')))['FAT32'](data)
+        config=plistlib.loads(fat.read('EFI/OC/config.plist'))
+        config['PlatformInfo']['Generic']['SystemProductName']=product
+        fat.write('EFI/OC/config.plist',plistlib.dumps(config,sort_keys=False),replace=True)
     if registration:
         runpy.run_path(str(Path(__file__).with_name('bigsur-efi-registration.py')))['add_registration'](data,registration)
     if quiet or signature_only_amfi:
@@ -121,7 +128,8 @@ if __name__ == '__main__':
     parser.add_argument('destination', type=Path)
     parser.add_argument('--quiet', action='store_true', help='hide OpenCore picker and guest verbose boot in output only')
     parser.add_argument('--bigsur-gl-registration',type=Path,help='prepared-guest-only GL registration kext')
+    parser.add_argument('--product',help='SMBIOS model for a profile derived from another release')
     parser.add_argument('--signature-only-amfi',action='store_true',help='identity-preserving guest boot policy; requires verified guest Library Validation preference')
     parser.add_argument('--runtime-policy',type=Path,help='RELEASE policy driver that reads QEMU fw_cfg; no EFI variants')
     options = parser.parse_args()
-    create(options.source, options.destination, options.quiet, options.bigsur_gl_registration, options.signature_only_amfi, options.runtime_policy)
+    create(options.source, options.destination, options.quiet, options.bigsur_gl_registration, options.signature_only_amfi, options.runtime_policy, options.product)

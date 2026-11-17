@@ -1,6 +1,8 @@
 #import "VIMLocalization.h"
+#import "VIMGuestFamilies.h"
 #import "VIMInstallerWindow.h"
 #import "VIMInstallerCatalog.h"
+#import "VIMInstallerSource.h"
 #import "VIMLibraryLocation.h"
 #import "VIMDownload.h"
 #import "VIMInstallerAssembly.h"
@@ -91,18 +93,30 @@ static VIMInstallerWindow *installerController;
 - (void)setBusy:(BOOL)busy {
     self.active=busy;self.selection.enabled=!busy;self.refreshButton.enabled=!busy;
     self.downloadButton.enabled=!busy&&self.catalog!=nil;self.pauseButton.enabled=busy;
-    BOOL inputs=self.downloadedFiles[@"assistant"]!=nil&&([self.downloadedGuest isEqual:@"bigsur"]||
+    BOOL inputs=self.downloadedFiles[@"assistant"]!=nil&&(VIMIsAssistantGuest(self.downloadedGuest)||
         (self.downloadedFiles[@"recovery"]!=nil&&self.downloadedFiles[@"esd"]!=nil));
     self.prepareButton.enabled=!busy&&inputs;
 }
 - (void)download:(id)sender {
     NSInteger selected=self.selection.indexOfSelectedItem;
     if(self.active||selected<0||selected>=self.catalog.supportedInstallers.count)return;
-    self.files=self.catalog.supportedInstallers[selected][@"Files"];self.index=0;
-    self.downloadedGuest=self.catalog.supportedInstallers[selected][@"Guest"];
+    NSDictionary *installer=self.catalog.supportedInstallers[selected];
+    self.files=installer[@"Files"];self.index=0;
+    self.downloadedGuest=installer[@"Guest"];
     self.downloadedFiles=[NSMutableDictionary dictionary];
     self.downloadRoot=VIMLibraryLocation.downloadsURL;self.location.stringValue=self.downloadRoot.path;
-    [self setBusy:YES];[self nextFile];
+    [self setBusy:YES];
+    if(![installer[@"SoftwareUpdate"] isKindOfClass:NSDictionary.class]){[self nextFile];return;}
+    // Big Sur and later: Apple keeps only the newest package; resolve it now.
+    self.status.stringValue=VIMLocalized(@"viminstallerwindow.finding-the-latest-installer-from-apple", @"Finding the latest installer from Apple…");self.progress.indeterminate=YES;[self.progress startAnimation:nil];
+    NSString *guest=self.downloadedGuest;__weak VIMInstallerWindow *weakSelf=self;
+    [VIMInstallerCatalog resolveAssistantForGuest:guest completion:^(NSDictionary *file,NSError *error){
+        VIMInstallerWindow *controller=weakSelf;if(!controller||![controller.downloadedGuest isEqual:guest])return;
+        [controller.progress stopAnimation:nil];controller.progress.indeterminate=NO;
+        if([controller finishTerminationIfNeeded])return;
+        if(!file){[controller setBusy:NO];controller.status.stringValue=error.localizedDescription;return;}
+        controller.files=@[file];[controller nextFile];
+    }];
 }
 - (void)nextFile {
     if(self.index>=self.files.count) {
@@ -124,7 +138,7 @@ static VIMInstallerWindow *installerController;
         if(state==VIMDownloadStateWaitingToRetry)
             controller.status.stringValue=[NSString stringWithFormat:VIMLocalized(@"download.recovery-countdown-pause", @"Reconnecting in %ld s. You can pause while waiting."),(long)MAX(1,ceil(delay))];
         else if(state==VIMDownloadStateVerifying)
-            controller.status.stringValue=[VIMInstallerCatalog fileForURL:source][@"SHA256"]?VIMLocalized(@"download.checking-sha256", @"Checking SHA-256…"):VIMLocalized(@"download.checking-download", @"Checking download…");
+            controller.status.stringValue=[VIMInstallerSource isMavericksRecoveryAsset:source]&&[VIMInstallerCatalog fileForURL:source][@"SHA256"]?VIMLocalized(@"download.checking-sha256", @"Checking SHA-256…"):VIMLocalized(@"download.checking-download", @"Checking download…");
         else if(state==VIMDownloadStateAuthorizing)controller.status.stringValue=VIMLocalized(@"download.connecting-server", @"Connecting to the download server…");
     };
     self.transfer.progress=^(int64_t received,int64_t total){
@@ -146,7 +160,11 @@ static VIMInstallerWindow *installerController;
 - (void)pause:(id)sender {
     self.pauseButton.enabled=NO;
     if(self.assembly){self.assembly.cancelled=YES;self.status.stringValue=VIMLocalized(@"installerwindow.stopping-preparation-downloaded-files-will-be-kept", @"Stopping preparation; downloaded files will be kept…");}
-    else [self.transfer pause];
+    else if(self.transfer)[self.transfer pause];
+    else { // Still asking Apple's catalog: abandon that lookup.
+        self.downloadedGuest=nil;[self.progress stopAnimation:nil];self.progress.indeterminate=NO;
+        if(![self finishTerminationIfNeeded]){[self setBusy:NO];self.status.stringValue=VIMLocalized(@"viminstallerwindow.stopped-click-download-to-try-again", @"Stopped. Click Download to try again.");}
+    }
 }
 - (void)prepare:(id)sender {
     if(self.active||!self.prepareButton.enabled)return;
@@ -171,8 +189,8 @@ static VIMInstallerWindow *installerController;
         NSError *failure=nil;
         NSURL *installer=[worker assembleGuest:guest files:files jobDirectory:assemblyJob error:&failure];
         NSURL *media=nil;
-        if(installer)media=[guest isEqual:@"bigsur"]?
-            [worker createBigSurMediaFromInstaller:installer jobDirectory:mediaJob error:&failure]:
+        if(installer)media=VIMIsAssistantGuest(guest)?
+            [worker createAssistantMediaFromInstaller:installer guest:guest jobDirectory:mediaJob error:&failure]:
             [worker createRecoveryMediaFromInstaller:installer guest:guest jobDirectory:mediaJob error:&failure];
         if(media) {
             [VIMInstallerAssembly retireCompletedDownloads:files];

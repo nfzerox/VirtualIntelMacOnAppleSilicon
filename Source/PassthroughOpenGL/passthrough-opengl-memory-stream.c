@@ -13,6 +13,12 @@
 #define DG_MEMORY_STREAM_LIMIT 128u /* Same bound as the research device. */
 struct DGMemoryRing {
     size_t first,used;
+    /* A large transfer can be consumed straight from its producer's
+     * allocation. The writer stays blocked, retaining these vectors, until
+     * consumed or cancelled. No pointer survives the write callback. */
+    const struct iovec *borrowed;
+    int borrowed_index;
+    size_t borrowed_offset,borrowed_remaining;
     unsigned char bytes[DG_MEMORY_RING_BYTES];
 };
 struct DGMemoryStream {
@@ -88,12 +94,49 @@ static ssize_t DGMemoryVectorIO(struct DGMemoryStream *s,int server,int writing,
     if(!total)return 0;
     unsigned direction=writing?(server?1:0):(server?0:1);
     pthread_mutex_lock(&s->lock);struct DGMemoryRing *r=&s->ring[direction];
-    while(!s->closed && (writing?r->used==DG_MEMORY_RING_BYTES:!r->used)){
+    while(!s->closed && (writing?(r->borrowed || r->used==DG_MEMORY_RING_BYTES):
+                                 (!r->used && !r->borrowed_remaining))){
         int error=pthread_cond_wait(writing?&s->writable[direction]:&s->readable[direction],&s->lock);
         if(error){pthread_mutex_unlock(&s->lock);errno=error;return -1;}
     }
-    if((writing && s->closed) || s->cancelled || (!writing && !r->used)){
+    if((writing && s->closed) || s->cancelled || (!writing && !r->used && !r->borrowed_remaining)){
         pthread_mutex_unlock(&s->lock);if(writing){errno=EPIPE;return -1;}return 0;
+    }
+    if(writing && total>DG_MEMORY_RING_BYTES){
+        /* Preserve the ring for small asynchronous commands/headers. Large
+         * pixel uploads and replies already require a reader; avoid bouncing
+         * every 64 KB through the ring. A queued header stays ahead of this
+         * borrowed body: readers must drain ring bytes before these vectors.
+         * The caller retains the source until this blocking write returns. */
+        r->borrowed=v;r->borrowed_index=0;r->borrowed_offset=0;r->borrowed_remaining=total;
+        pthread_cond_signal(&s->readable[direction]);int error=0;
+        while(r->borrowed_remaining && !s->closed && !error)
+            error=pthread_cond_wait(&s->writable[direction],&s->lock);
+        size_t done=total-r->borrowed_remaining;
+        r->borrowed=NULL;r->borrowed_remaining=0;
+        pthread_cond_broadcast(&s->writable[direction]);
+        pthread_mutex_unlock(&s->lock);
+        if(done)return (ssize_t)done;
+        errno=error?error:EPIPE;return -1;
+    }
+    if(!writing && !r->used && r->borrowed_remaining){
+        size_t wanted=total<r->borrowed_remaining?total:r->borrowed_remaining,done=0;
+        for(int i=0;i<count && done<wanted;++i){
+            unsigned char *destination=v[i].iov_base;size_t left=v[i].iov_len;
+            if(left>wanted-done)left=wanted-done;
+            while(left){
+                const struct iovec *source=&r->borrowed[r->borrowed_index];
+                size_t n=source->iov_len-r->borrowed_offset;
+                if(!n){++r->borrowed_index;r->borrowed_offset=0;continue;}
+                if(n>left)n=left;
+                memcpy(destination,(const unsigned char *)source->iov_base+r->borrowed_offset,n);
+                destination+=n;left-=n;done+=n;r->borrowed_offset+=n;r->borrowed_remaining-=n;
+            }
+        }
+        /* Wake the borrowing owner even if another writer is also waiting
+         * behind it. A signal could choose that writer and strand the owner. */
+        pthread_cond_broadcast(&s->writable[direction]);
+        pthread_mutex_unlock(&s->lock);return (ssize_t)done;
     }
     size_t available=writing?DG_MEMORY_RING_BYTES-r->used:r->used;
     size_t wanted=total<available?total:available,done=0;

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Rebuild the ten shipping OpenGL pairs and 2D companions from shared source.
+"""Rebuild shipping OpenGL pairs and pre-Metal 2D companions from shared source.
 
-Only these three owned libraries are refreshed: existing guest controls, kernel
+Only the owned GL libraries are refreshed: existing guest controls, kernel
 drivers, audio, system frameworks and firmware are left alone. Ordinary app
 builds still consume the checked-in payloads and do not need historical SDKs.
 """
@@ -14,13 +14,19 @@ import sys
 
 
 GUESTS = ('tiger', 'leopard', 'snowleopard', 'lion', 'mountainlion',
-          'mavericks', 'yosemite', 'elcapitan', 'sierra', 'highsierra')
+          'mavericks', 'yosemite', 'elcapitan', 'sierra', 'highsierra', 'mojave')
 LIBRARIES = ('GLEngine', 'libVIMPassthroughOpenGL.dylib',
              'VMsvga2GA.plugin/Contents/MacOS/VMsvga2GA')
 
 
+def libraries(guest):
+    # Mojave retains PVG Metal and its existing selector/transport. Refresh
+    # its GL pair without installing a pre-Metal display accelerator.
+    return LIBRARIES[:2] if guest == 'mojave' else LIBRARIES
+
+
 def verify_libraries(stage, guest):
-    for relative in LIBRARIES:
+    for relative in libraries(guest):
         binary = stage/relative
         arches = ['i386'] if guest == 'tiger' else ['x86_64', 'i386']
         for arch in arches:
@@ -40,10 +46,10 @@ def publish(root, directory, guests):
         verify_libraries(directory/'Libraries'/guest, guest)
     for guest in guests:
         target = root/'prebuilt/PassthroughOpenGL'/guest/'GuestTools'
-        for relative in LIBRARIES:
+        for relative in libraries(guest):
             shutil.copy2(directory/'Libraries'/guest/relative, target/relative)
             (target/relative).chmod(0o755)
-    print('Published the three owned libraries for: '+', '.join(guests))
+    print('Published the owned GL libraries for: '+', '.join(guests))
 
 
 def main():
@@ -55,7 +61,7 @@ def main():
     destination.add_argument('--publish-from', type=Path,
                              help='Publish an existing candidate directory, without rebuilding it')
     parser.add_argument('--guest', action='append', choices=GUESTS,
-                        help='Repeat to rebuild a subset; default: all ten')
+                        help='Repeat to rebuild a subset; default: Tiger through Mojave')
     parser.add_argument('--cc', type=Path, default=os.environ.get('VIM_OPENGL_CC',
         root/'resources/xcode/XcodeMojave.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang'))
     parser.add_argument('--sdk', type=Path, default=os.environ.get('VIM_OPENGL_SDK',
@@ -124,12 +130,13 @@ def main():
                                   VIM_OPENGL_DISPATCH_SDK=str(dispatch.resolve()),
                                   VIM_GUEST_GL_PAIR_BUILD=str(build),
                                   VIM_PASSTHROUGH_OPENGL_BUILD=str(build))
-                for recipe in ('build-opengl-guest-gl-pair', 'build-opengl-ga'):
+                recipes=('build-opengl-guest-gl-pair',) if guest=='mojave' else ('build-opengl-guest-gl-pair', 'build-opengl-ga')
+                for recipe in recipes:
                     subprocess.run([root/'scripts'/recipe], env=target_env,
                                    stdout=log, stderr=subprocess.STDOUT, check=True)
-                ga = build/'GA/VMsvga2GA'
+                ga = None if guest=='mojave' else build/'GA/VMsvga2GA'
         stage = args.output/'Libraries'/guest
-        for relative, source in zip(LIBRARIES, (build/'GLEngine', build/'libVIMPassthroughOpenGL.dylib', ga)):
+        for relative, source in zip(libraries(guest), (build/'GLEngine', build/'libVIMPassthroughOpenGL.dylib', ga)):
             destination = stage/relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)

@@ -29,6 +29,12 @@ int main(void) { @autoreleasepool {
     NSURL *changed=[root URLByAppendingPathComponent:@"added"];
     Check([@"corrupt" writeToURL:changed atomically:YES encoding:NSUTF8StringEncoding error:&error],error.description);
     Check(![transaction verifyPublished:&error],@"Changed installed file verified");
+    Check([transaction verifyPublishedExcludingPaths:[NSSet setWithObject:@"added"] error:&error],
+          @"Explicitly retired mutable target was still verified");
+    Check([@"other corrupt" writeToURL:[root URLByAppendingPathComponent:@"existing"] atomically:YES encoding:NSUTF8StringEncoding error:&error],error.description);
+    Check(![transaction verifyPublishedExcludingPaths:[NSSet setWithObject:@"added"] error:&error],
+          @"Excluding one preference hid a different changed target");
+    Check([@"replacement" writeToURL:[root URLByAppendingPathComponent:@"existing"] atomically:YES encoding:NSUTF8StringEncoding error:&error],error.description);
     Check([@"replacement" writeToURL:changed atomically:YES encoding:NSUTF8StringEncoding error:&error],error.description);
     Check([transaction verifyPublished:&error],error.description);
     Check(![stale rollback:&error],@"Stale transaction was accepted");

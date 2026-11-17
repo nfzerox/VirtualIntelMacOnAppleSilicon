@@ -69,6 +69,81 @@ IOReturn CLASS::directFramebufferControl(uintptr_t mode,void* output,size_t* siz
     IOLockUnlock(m_framebuffer_blit_lock);return kIOReturnSuccess;
 }
 
+IOReturn CLASS::readBootFramebuffer(IOMemoryDescriptor* memory,uint64_t destination_offset,
+                                   uint64_t destination_length,uint32_t destination_pitch,
+                                   void const* region,int delta_x,int delta_y)
+{
+    const IOAccelDeviceRegion* rgn=static_cast<const IOAccelDeviceRegion*>(region);
+    if(!rgn || !m_framebuffer_blit_lock || !m_framebuffer || !m_svga ||
+       !destination_pitch || !destination_length ||
+       destination_offset>UINT64_MAX-destination_length)return kIOReturnUnsupported;
+    IOLockLock(m_framebuffer_blit_lock);
+    IOReturn result=kIOReturnUnsupported;
+    m_framebuffer->lockDevice();
+    bool available=m_svga->ReadReg(VIM_GL_BOOT_FRAMEBUFFER_REGISTER)==VIM_GL_BOOT_FRAMEBUFFER_MAGIC;
+    m_framebuffer->unlockDevice();
+    if(!available)goto out;
+    if(memory && (destination_offset>memory->getLength() ||
+       destination_length>memory->getLength()-destination_offset))goto out;
+    if(!m_framebuffer_blit_buffer){
+        if(setupAllocator()!=kIOReturnSuccess)goto out;
+        m_framebuffer_blit_buffer=VRAMMalloc(sizeof(VIMGLDevicePacket)+VIM_GL_CHUNK);
+        if(!m_framebuffer_blit_buffer)goto out;
+    }
+    {
+        VIMGLDevicePacket* packet=static_cast<VIMGLDevicePacket*>(m_framebuffer_blit_buffer);
+        VIMGLBootFramebufferSegment* segments=reinterpret_cast<VIMGLBootFramebufferSegment*>(packet+1);
+        uint32_t count=0,total=0;uint64_t vram_base=0,vram_length=0;
+        if(!directGLVRAMRange(&vram_base,&vram_length))goto out;
+        m_framebuffer->lockDevice();
+        uint32_t source_pitch=m_svga->getCurrentPitch();
+        uint64_t source_length=static_cast<uint64_t>(source_pitch)*m_svga->getCurrentHeight();
+        bool valid=source_pitch!=0;
+        uint32_t rects=rgn->num_rects?rgn->num_rects:1;
+        for(uint32_t i=0;valid && i<rects;++i){
+            const IOAccelBounds& rect=rgn->num_rects?rgn->rect[i]:rgn->bounds;
+            if(rect.w<=0 || rect.h<=0)continue;
+            uint32_t row_bytes=static_cast<uint32_t>(rect.w)*4;
+            int64_t source=static_cast<int64_t>(rect.y)*source_pitch+static_cast<int64_t>(rect.x)*4;
+            int64_t destination=(static_cast<int64_t>(rect.y)+delta_y)*destination_pitch+
+                                (static_cast<int64_t>(rect.x)+delta_x)*4;
+            for(int row=0;valid && row<rect.h;++row){
+                if(source<0 || destination<0 || static_cast<uint64_t>(source)>source_length ||
+                   row_bytes>source_length-static_cast<uint64_t>(source) ||
+                   static_cast<uint64_t>(destination)>destination_length ||
+                   row_bytes>destination_length-static_cast<uint64_t>(destination) ||
+                   total>256U*1024U*1024U-row_bytes){valid=false;break;}
+                uint32_t remaining=row_bytes;uint64_t position=destination_offset+destination,from=source;
+                while(valid && remaining){
+                    IOByteCount length=remaining;
+                    addr64_t address=memory?VIMPhysicalSegment(memory,position,&length):position;
+                    if(length>remaining)length=remaining;
+                    uint32_t kind=memory?1:0;
+                    if(memory && address>=vram_base && address-vram_base<vram_length){address-=vram_base;kind=0;}
+                    if(!length || from>UINT32_MAX || count==VIM_GL_FRAMEBUFFER_BLIT_MAX_SEGMENTS ||
+                       (!kind && (address>vram_length || length>vram_length-address))){valid=false;break;}
+                    VIMGLBootFramebufferSegment& entry=segments[count++];
+                    entry.destination=address;entry.source=static_cast<uint32_t>(from);
+                    entry.bytes=static_cast<uint32_t>(length);entry.kind=kind;entry.reserved=0;
+                    remaining-=static_cast<uint32_t>(length);position+=length;from+=length;
+                }
+                total+=row_bytes;source+=source_pitch;destination+=destination_pitch;
+            }
+        }
+        if(valid && count){
+            bzero(packet,sizeof(*packet));packet->magic=VIM_GL_MAGIC;packet->action=16;
+            packet->bytes=total;packet->reserved=count;packet->result=-1;
+            if(m_direct_gl_doorbell_supported && m_direct_gl_doorbell_enabled)
+                m_svga->WriteDirectGLDoorbell(static_cast<uint32_t>(offsetInVRAM(packet)));
+            else m_svga->WriteReg(VIM_GL_REGISTER,static_cast<uint32_t>(offsetInVRAM(packet)));
+            if(packet->result==static_cast<int32_t>(total))result=kIOReturnSuccess;
+        }
+        m_framebuffer->unlockDevice();
+    }
+out:
+    IOLockUnlock(m_framebuffer_blit_lock);return result;
+}
+
 IOReturn CLASS::directFramebufferBlit(IOMemoryDescriptor* memory,uint64_t source_offset,
                                      uint64_t source_length,uint32_t source_pitch,void const* region)
 {

@@ -2,6 +2,12 @@
 # Compile Leopard's cold control/account services and unprivileged fixtures.
 # This is not a complete guest-support package or authorization to install it.
 set -euo pipefail
+controls_only=0
+case "${1:-}" in
+    '') ;;
+    --controls-only) controls_only=1 ;;
+    *) echo 'Usage: build-opengl-leopard-control [--controls-only]' >&2;exit 64 ;;
+esac
 root="$(cd "$(dirname "$0")/.." && pwd)"
 : "${VIM_LEOPARD_SDK:?Set VIM_LEOPARD_SDK to the actual MacOSX10.5.sdk}"
 : "${VIM_OPENGL_AGENT_BUILD:?Set VIM_OPENGL_AGENT_BUILD to a derived output directory}"
@@ -62,6 +68,8 @@ fi
 "$cc" "${flags[@]}" "$root/PassthroughOpenGL/opengl-display-agent.m" -o "$output/opengl-display-agent"
 codesign --force --sign - --digest-algorithm=sha1,sha256 "$output/opengl-display-agent"
 codesign --verify --strict "$output/opengl-display-agent"
-python3 "$root/scripts/build-leopard-samba.py" --output "$output/LeopardSMB"
-python3 "$root/scripts/build-tiger-smb-client.py" --guest leopard --output "$output/LeopardSMBClient"
+if [[ "$controls_only" == 0 ]]; then
+    python3 "$root/scripts/build-leopard-samba.py" --output "$output/LeopardSMB"
+    python3 "$root/scripts/build-tiger-smb-client.py" --guest leopard --output "$output/LeopardSMBClient"
+fi
 echo "$output"

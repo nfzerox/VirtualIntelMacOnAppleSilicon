@@ -1,0 +1,15 @@
+#!/bin/zsh
+# Finite stock-host check: sign only a disposable copy of our guest helper.
+# Requires no developer tools, administrator access, guest or VM disk.
+set -euo pipefail
+root=${0:A:h:h}
+allocator="$root/vendor/host-codesign/codesign_allocate"
+work=$(mktemp -d "${TMPDIR:-/private/tmp}/vim-host-codesign.XXXXXX")
+trap 'rm -f -- "$work/Helper.dylib"; rmdir -- "$work"' EXIT
+cp "$root/prebuilt/bigsur/PVGBigSurMetalCompat.dylib" "$work/Helper.dylib"
+/usr/bin/codesign --verify --strict -R '=anchor apple' "$allocator"
+# A missing developer directory makes accidental xcrun/CLT fallback fail.
+DEVELOPER_DIR="$work/no-developer-tools" CODESIGN_ALLOCATE="$allocator" \
+    /usr/bin/codesign --force --sign - --preserve-metadata=entitlements "$work/Helper.dylib"
+/usr/bin/codesign --verify --strict "$work/Helper.dylib"
+print 'PASS bundled native allocator signs the guest helper without developer tools'

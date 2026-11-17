@@ -2,7 +2,8 @@
 """Read-only packaging checks using an app's actual OpenGL guest inputs.
 
 Does not launch a VM, mutate the app, or turn a research build into a release.
-The receipt assembled here is a test fixture, not production build evidence.
+Negative cases alter private copies of the app's packaging receipt, not the
+app itself. They are test fixtures, not replacement production build evidence.
 """
 import argparse
 import copy
@@ -19,22 +20,16 @@ def main():
     args = parser.parse_args()
     source = Path(__file__).resolve().parents[1]
     verifier = runpy.run_path(str(source/'scripts/verify-release-build.py'))
-    digest, verify = verifier['digest'], verifier['verify_opengl_runtime']
+    verify = verifier['verify_opengl_runtime']
     runtime = args.app/'Contents/Resources/Runtime'
-    executor = digest(runtime/'bin/libVIMPassthroughOpenGLHost.dylib')
     guests = ('leopard', 'snowleopard', 'lion', 'mountainlion', 'mavericks',
               'yosemite', 'elcapitan', 'sierra', 'highsierra')
-    fixture = {'OpenGLGuests': {guest: {
-        'GuestSupport': {},
-        'HostExecutorPackagedSHA256': executor,
-        'EFIImageSHA256': digest(runtime/'Firmware'/guest/'EFI.img'),
-    } for guest in guests}}
-    packaging = runtime/'Packaging.plist'
-    if packaging.is_file():
-        unified = plistlib.loads(packaging.read_bytes()).get('UnifiedEFI')
-        if unified:
-            fixture['UnifiedEFI'] = unified
-            verifier['verify_unified_firmware'](runtime, source, fixture)
+    # The normal packager now records each profile's mutable VARS and the one
+    # Common EFI/CODE pair. Do not reconstruct an obsolete per-guest EFI copy
+    # or invent missing Firmware fields merely to make the fixture pass.
+    fixture = plistlib.loads((runtime/'Packaging.plist').read_bytes())
+    if fixture.get('UnifiedEFI'):
+        verifier['verify_unified_firmware'](runtime, source, fixture)
     verify(runtime, source, fixture)
     print('PASS actual nine-guest inputs, x64/i386 slices, minimum OS, signatures, linkage and quiet firmware')
     cases = []

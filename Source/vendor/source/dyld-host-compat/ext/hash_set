@@ -1,0 +1,7 @@
+#pragma once
+#include <ext/hash_map>
+#include <unordered_set>
+namespace __gnu_cxx {
+template<class K, class H = hash<K>, class E = std::equal_to<K>>
+using hash_set = std::unordered_set<K, H, E>;
+}

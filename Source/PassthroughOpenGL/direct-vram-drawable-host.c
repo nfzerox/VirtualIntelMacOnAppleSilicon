@@ -344,20 +344,23 @@ static int DGVRAMTransfer(struct DGHostContext *c,const struct DGMessage *m,stru
         b->experiment_cpu_locked=0;
     }
 #endif
-    /* Textured publication owns a PRIVATE context. Changing the producer's
-     * read/draw FBOs, buffers, scissor and sRGB state beforehand serves no
-     * purpose: the helper samples c->color directly and restores the current
-     * context itself. Keep the existing state transaction for blit/import and
-     * laboratory alternatives that actually use the producer's framebuffer. */
-    int private_publish=publish && dg_vram_draw_publish && dg_vram_private_copy_state;
+    /* Textured transfers own a PRIVATE context. Intel framebuffer-blit reads
+     * of client storage can return wrong pixels despite a completed fence;
+     * sample the backing for full imports and sparse patches as well.
+     * Changing the producer's read/draw FBOs, buffers, scissor and sRGB state
+     * beforehand serves no
+     * purpose: the helper binds its own source and restores the current
+     * context itself. Retain the producer-state transaction for laboratory
+     * alternatives that actually use its framebuffer. */
+    int private_copy=dg_vram_draw_publish && dg_vram_private_copy_state;
 #ifdef VIM_VRAM_COMPLETION_EXPERIMENT
-    if(vim_vram_copy_draw)private_publish=0;
+    if(vim_vram_copy_draw)private_copy=0;
 #endif
 #ifdef VIM_VRAM_COPYTEX_EXPERIMENT
-    if(dg_vram_copytex && !m->args[9])private_publish=0;
+    if(dg_vram_copytex && !m->args[9])private_copy=0;
 #endif
     int good;
-    if(private_publish){
+    if(private_copy){
         int completed=0,copied=DGVRAMCopyDrawable(c,m,count,&completed);
         good=completed || DGVRAMWait();
         good=glGetError()==GL_NO_ERROR && good && copied;

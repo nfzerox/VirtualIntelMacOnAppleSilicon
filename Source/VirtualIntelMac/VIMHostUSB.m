@@ -129,6 +129,12 @@ void VIMHostRequestUSBStorageAccess(NSDictionary *device,NSArray<NSURL *> *prote
                 }
                 for(NSDictionary *interface in interfaces)if(![interface isKindOfClass:NSDictionary.class]||![interface[@"PluginCreated"] boolValue]) {
                     uint32_t status=[interface[@"IOReturn"] unsignedIntValue];
+                    // Some older IOUSBLib versions cannot create a legacy
+                    // client directly on this native registry interface. The
+                    // helper recovered Start's actual Unsupported result;
+                    // libusb's capture/compatibility iterator remains the real
+                    // access decision. Never skip an actual denied/busy error.
+                    if(status==kIOReturnUnsupported)continue;
                     BOOL denied=status==kIOReturnNotPermitted||status==kIOReturnNotPrivileged;
                     completion([NSError errorWithDomain:@"VirtualIntelMac.USB" code:status userInfo:@{
                         NSLocalizedDescriptionKey:denied?VIMLocalized(@"hostusb.allow-access-to-this-usb-drive", @"Allow access to this USB drive"):VIMLocalized(@"hostusb.this-mac-couldn-t-open-the-usb-interface", @"This Mac couldn’t open the USB interface"),

@@ -54,7 +54,7 @@ static inline int VIMGLProductFeature(const char *name)
 #if defined(__i386__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ == 1040
     return !value||strcmp(value,"0");
 #else
-    return value!=NULL;
+    return value && strcmp(value,"0");
 #endif
 }
 #endif

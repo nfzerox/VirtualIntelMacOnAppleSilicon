@@ -123,6 +123,41 @@ static void check_bitmap_set(void)
     bitmap_set_case(bitmap_set_atomic);
 }
 
+static void check_bitmap_count_and_clear_atomic(void)
+{
+    unsigned long initial[BITS_TO_LONGS(BMAP_SIZE)];
+    unsigned long expected[BITS_TO_LONGS(BMAP_SIZE)];
+    unsigned long observed[BITS_TO_LONGS(BMAP_SIZE)];
+
+    for (int pattern = 0; pattern < 3; pattern++) {
+        for (int i = 0; i < G_N_ELEMENTS(initial); i++) {
+            initial[i] = pattern == 0 ? 0 : pattern == 1 ? ~0UL :
+                ((unsigned long)g_test_rand_int() << (BITS_PER_LONG / 2)) |
+                g_test_rand_int();
+        }
+        for (int start = 0; start <= 2 * BITS_PER_LONG; start++) {
+            for (int length = 0; length <= 2 * BITS_PER_LONG; length++) {
+                unsigned long count = 0;
+                memcpy(expected, initial, sizeof(initial));
+                memcpy(observed, initial, sizeof(initial));
+                for (int i = start; i < start + length; i++) {
+                    count += test_and_clear_bit(i, expected) != 0;
+                }
+                g_assert_cmpuint(bitmap_count_and_clear_atomic(observed,
+                                                              start, length),
+                                 ==, count);
+                g_assert_cmpmem(observed, sizeof(observed),
+                                expected, sizeof(expected));
+            }
+        }
+        memcpy(observed, initial, sizeof(initial));
+        unsigned long count = bitmap_count_one(initial, BMAP_SIZE);
+        g_assert_cmpuint(bitmap_count_and_clear_atomic(observed, 0, BMAP_SIZE),
+                         ==, count);
+        g_assert(bitmap_empty(observed, BMAP_SIZE));
+    }
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
@@ -131,6 +166,8 @@ int main(int argc, char **argv)
                     check_bitmap_copy_with_offset);
     g_test_add_func("/bitmap/bitmap_set",
                     check_bitmap_set);
+    g_test_add_func("/bitmap/bitmap_count_and_clear_atomic",
+                    check_bitmap_count_and_clear_atomic);
 
     g_test_run();
 

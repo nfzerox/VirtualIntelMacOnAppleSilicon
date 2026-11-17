@@ -8,9 +8,13 @@
 #endif
 #import <OpenGL/CGLRenderers.h>
 #include "opengl-reference-renderer.h"
+extern CGLError CGLGetSurface(CGLContextObj,uint32_t *,uint32_t *,uint32_t *);
+extern int CGSGetSurfaceBounds(int,int,int,CGRect *);
+extern int CGSGetSurfaceResolution(int,int,int,CGFloat *,CGSize *);
 static unsigned probeFailures;
 static unsigned probeFrames;
 static unsigned probeRecoveryKinds;
+static unsigned probeMoveLimit=6;
 #if VIM_GL_WINDOW_CORE
 static GLuint windowShader(GLenum kind,const char *source)
 {
@@ -34,10 +38,17 @@ static GLuint windowShader(GLenum kind,const char *source)
 @end
 @implementation VIMGLView
 @synthesize moveStep=_moveStep;
-#if VIM_GL_WINDOW_CORE
 - (void)prepareOpenGL
 {
     [super prepareOpenGL];[[self openGLContext] makeCurrentContext];
+    const char *interval=getenv("VIM_GL_WINDOW_SWAP_INTERVAL");
+    if(interval){GLint requested=atoi(interval),observed=-1;
+        [self.openGLContext setValues:&requested forParameter:NSOpenGLCPSwapInterval];
+        [self.openGLContext getValues:&observed forParameter:NSOpenGLCPSwapInterval];
+        fprintf(stderr,"window swap interval requested=%d observed=%d\n",requested,observed);
+        if(observed!=requested)probeFailures++;
+    }
+#if VIM_GL_WINDOW_CORE
     const char *vs="#version 150\nin vec2 position;in vec3 color;out vec3 tint;"
         "void main(){gl_Position=vec4(position,0,1);tint=color;}";
     const char *fs="#version 150\nin vec3 tint;out vec4 outputColor;"
@@ -69,12 +80,12 @@ static GLuint windowShader(GLenum kind,const char *source)
     fprintf(stderr,"%s window core version=%s mask=%x error=%x\n",
         good?"PASS":"FAIL",version,mask,error);
     if(!good)probeFailures++;
-}
 #endif
+}
 - (void)finishProbe:(NSTimer *)timer
 {
     (void)timer;
-    if(!probeFrames || (getenv("VIM_GL_WINDOW_MOVE") && self.moveStep!=6))probeFailures++;
+    if(!probeFrames || (getenv("VIM_GL_WINDOW_MOVE") && self.moveStep!=probeMoveLimit))probeFailures++;
     if(getenv("VIM_GL_WINDOW_RECOVERY")&&probeRecoveryKinds!=3)probeFailures++;
     fprintf(stderr,"probe completed frames=%u moves=%lu failures=%u\n",probeFrames,
         (unsigned long)self.moveStep,probeFailures);
@@ -82,7 +93,7 @@ static GLuint windowShader(GLenum kind,const char *source)
 }
 - (void)moveProbe:(NSTimer *)timer
 {
-    if(self.moveStep==6) { [timer invalidate];return; }
+    if(self.moveStep==probeMoveLimit) { [timer invalidate];return; }
     NSWindow *window=self.window;
     NSRect frame=window.frame;
     frame.origin.x+=(self.moveStep&1) ? -32 : 48;
@@ -138,8 +149,20 @@ static GLuint windowShader(GLenum kind,const char *source)
         }
     }
     NSRect r=[self convertRectToBacking:[self bounds]];glViewport(0,0,r.size.width,r.size.height);
+    GLint surfaceSize[2]={0},viewport[4]={0};
+    CGLError surfaceError=CGLGetParameter(self.openGLContext.CGLContextObj,kCGLCPSurfaceBackingSize,surfaceSize);
+    glGetIntegerv(GL_VIEWPORT,viewport);
     fprintf(stderr,"window logical=%gx%g backing=%gx%g scale=%g\n",self.bounds.size.width,
         self.bounds.size.height,r.size.width,r.size.height,self.window.backingScaleFactor);
+    fprintf(stderr,"window CGL backing=%dx%d error=%d viewport=%d,%d %dx%d\n",
+        surfaceSize[0],surfaceSize[1],surfaceError,viewport[0],viewport[1],viewport[2],viewport[3]);
+    uint32_t ids[3]={0};CGRect bounds={0};CGFloat resolution=0;CGSize pixels={0};
+    CGLError idsError=CGLGetSurface(self.openGLContext.CGLContextObj,ids,ids+1,ids+2);
+    int boundsError=idsError?-1:CGSGetSurfaceBounds(ids[0],ids[1],ids[2],&bounds);
+    int resolutionError=idsError?-1:CGSGetSurfaceResolution(ids[0],ids[1],ids[2],&resolution,&pixels);
+    fprintf(stderr,"window CGS surface=%x ids-error=%d bounds=%gx%g error=%d resolution=%g pixels=%gx%g error=%d\n",
+        ids[2],idsError,bounds.size.width,bounds.size.height,boundsError,resolution,
+        pixels.width,pixels.height,resolutionError);
     glClearColor(0.035,0.055,0.12,1);glClear(GL_COLOR_BUFFER_BIT);
 #if VIM_GL_WINDOW_CORE
     glUseProgram(_program);glBindVertexArray(_vao);glDrawArrays(GL_TRIANGLES,0,15);
@@ -182,6 +205,10 @@ static GLuint windowShader(GLenum kind,const char *source)
 int main(void)
 {
     @autoreleasepool {
+        if(getenv("VIM_GL_WINDOW_MOVE_COUNT")) {
+            probeMoveLimit=(unsigned)strtoul(getenv("VIM_GL_WINDOW_MOVE_COUNT"),NULL,10);
+            if(!probeMoveLimit||probeMoveLimit>60)return 64;
+        }
         NSApplication *app=[NSApplication sharedApplication];
         [app setActivationPolicy:NSApplicationActivationPolicyRegular];
         GLint intel=getenv("VIM_GL_WINDOW_INTEL_HD5000")?VIMReferenceIntelHD5000():0;
@@ -204,9 +231,14 @@ int main(void)
             (NSOpenGLPixelFormatAttribute)(intel?intel:0x01036000),
             (NSOpenGLPixelFormatAttribute)kCGLPFASupportsAutomaticGraphicsSwitching,
             NSOpenGLPFAColorSize,24,NSOpenGLPFAAlphaSize,8,0};
-        NSOpenGLPixelFormat *pf=[[NSOpenGLPixelFormat alloc] initWithAttributes:
+        const NSOpenGLPixelFormatAttribute *selected=
             getenv("VIM_GL_WINDOW_RECOVERY") ? recoveryAttrs :getenv("VIM_GL_WINDOW_SOFTWARE") ? softwareAttrs :
-                getenv("VIM_GL_WINDOW_INTEL_HD5000") ? intelAttrs : attrs];
+                getenv("VIM_GL_WINDOW_INTEL_HD5000") ? intelAttrs : attrs;
+        NSOpenGLPixelFormatAttribute chosen[32];unsigned attributeCount=0;
+        while(selected[attributeCount]){chosen[attributeCount]=selected[attributeCount];++attributeCount;}
+        if(getenv("VIM_GL_WINDOW_DOUBLEBUFFER"))chosen[attributeCount++]=NSOpenGLPFADoubleBuffer;
+        chosen[attributeCount]=0;
+        NSOpenGLPixelFormat *pf=[[NSOpenGLPixelFormat alloc] initWithAttributes:chosen];
         if(!pf) { fprintf(stderr,"No window pixel format\n");return 2; }
         BOOL behindMenu=getenv("VIM_GL_WINDOW_BEHIND_MENU")!=NULL;
         NSRect frame=behindMenu ? [[NSScreen mainScreen] frame] : NSMakeRect(150,150,640,440);
@@ -216,6 +248,7 @@ int main(void)
         const char *title=getenv("VIM_GL_WINDOW_TITLE");
         [window setTitle:title ? [NSString stringWithUTF8String:title] : @"PassthroughOpenGL — native Mavericks OpenGL window"];
         VIMGLView *view=[[VIMGLView alloc] initWithFrame:NSMakeRect(0,0,frame.size.width,frame.size.height) pixelFormat:pf];
+        if(getenv("VIM_GL_WINDOW_LAYERED")) [view setWantsLayer:YES];
         if(getenv("VIM_GL_WINDOW_HIDPI")) [view setWantsBestResolutionOpenGLSurface:YES];
         const char *seconds=getenv("VIM_GL_WINDOW_SECONDS");
         if(!seconds&&getenv("VIM_GL_WINDOW_OPACITY_PROBE"))seconds="5";

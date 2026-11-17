@@ -54,12 +54,15 @@ static int RepairClient(NSDictionary *owner,NSString *build,BOOL *restart){
         return Error("a previous native SMB client load was interrupted; its recovery state was retained");
     NSDictionary *native=[NSDictionary dictionaryWithContentsOfFile:@"/System/Library/Extensions/smbfs.kext/Contents/Info.plist"];
     NSDictionary *candidate=[NSDictionary dictionaryWithContentsOfFile:[Tools stringByAppendingPathComponent:ClientInfo]];
-    // Match the genuine installed client's ABI declaration, not a particular
-    // OS build number. A changed native ABI remains untouched for diagnosis.
+    // OSBundleLibraries declares minimum dependency versions, not an ABI
+    // fingerprint to copy from another kext. Original Leopard's native
+    // client requests8.0/9.0.0d3 while its running kernel exports9.0.0;
+    // our9.0.0 client passes that kernel's actual loader validation below.
+    // Keep the original filesystem untouched and let the native loader check
+    // the candidate's dependencies/symbols against this running kernel.
     if(![[native objectForKey:@"CFBundleIdentifier"] isEqual:[candidate objectForKey:@"CFBundleIdentifier"]]||
-       ![[native objectForKey:@"CFBundleVersion"] isEqual:[candidate objectForKey:@"CFBundleVersion"]]||
-       ![[native objectForKey:@"OSBundleLibraries"] isEqual:[candidate objectForKey:@"OSBundleLibraries"]])
-        return Error("this system has a different native SMB client ABI");
+       ![[native objectForKey:@"OSBundleLibraries"] isKindOfClass:[NSDictionary class]])
+        return Error("the native SMB filesystem is not recognized");
     if(!Directory(root,0755)||!Directory(bundle,0755)||!Directory(contents,0755)||!Directory(executables,0755))
         return Error("the private native SMB client directory is unavailable");
     BOOL changed=![Digest(binary) isEqual:expected]||![Digest(info) isEqual:Digest([Tools stringByAppendingPathComponent:ClientInfo])];

@@ -10,9 +10,7 @@ if [[ $(uname -m) == arm64 ]]; then
     export PATH="/opt/homebrew/bin:$PATH"
     export PKG_CONFIG=/opt/homebrew/bin/pkgconf
     export PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig
-    host_args=(--enable-tcg --disable-hvf
-        --extra-cflags=-mmacosx-version-min=15.2
-        --extra-objcflags=-mmacosx-version-min=15.2)
+    host_args=(--enable-tcg --disable-hvf)
 else
     build=${PVG_QEMU_BUILD:-$repo/Build/qemu/build-pvg}
     export PATH="$deps/install/bin:$deps/venv/bin:$PATH"
@@ -20,6 +18,10 @@ else
     export PKG_CONFIG_PATH="$deps/install/lib/pkgconfig:/usr/local/lib/pkgconfig"
     host_args=(--python="$deps/venv/bin/python3" --enable-hvf)
 fi
+export MACOSX_DEPLOYMENT_TARGET=11.0
+host_args+=(--extra-cflags=-mmacosx-version-min=11.0
+    --extra-objcflags=-mmacosx-version-min=11.0
+    --extra-ldflags=-mmacosx-version-min=11.0)
 [[ -x $source_dir/configure && -x $PKG_CONFIG ]] || exit 66
 case ${PVG_QEMU_LTO:-0} in
     0) host_args+=(--disable-lto) ;;

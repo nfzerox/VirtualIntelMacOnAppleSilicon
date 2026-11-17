@@ -2,14 +2,14 @@
 #define main DGExecutorMain
 #include "../PassthroughOpenGL/passthrough-opengl-host.c"
 #undef main
-static int run(unsigned profile)
+static int run(unsigned profile,int doubled)
 {
     CGLPixelFormatAttribute attrs[]={kCGLPFAAccelerated,kCGLPFANoRecovery,
         kCGLPFAOpenGLProfile,(CGLPixelFormatAttribute)profile,0};
     CGLPixelFormatObj pf=NULL;GLint count=0;struct DGHostContext c={0};
     if(CGLChoosePixelFormat(attrs,&pf,&count) || CGLCreateContext(pf,NULL,&c.cgl))return 0;
     CGLDestroyPixelFormat(pf);CGLSetCurrentContext(c.cgl);c.profile=profile;
-    c.draw_mode=c.read_mode=GL_FRONT;
+    c.draw_mode=c.read_mode=GL_FRONT;c.double_buffer=doubled;
     int good=DGCreateAliases(&c,NULL) && DGSelectDrawable(&c,1,16,12);
     dg_surface_import=1;
     struct {struct DGMessage m;unsigned char data[80*12];} packet={0};
@@ -44,10 +44,32 @@ static int run(unsigned profile)
             good=(y==5 && (x==4 || x==5)?p[0]==127 && p[1]==127 && p[2]==127 && p[3]==127:
                 p[0]==x && p[1]==11-y && p[2]==63 && p[3]==255) && good;
         }
+        if(doubled) {
+            glReadBuffer(GL_COLOR_ATTACHMENT1_EXT);
+            glReadPixels(0,0,16,12,GL_BGRA,GL_UNSIGNED_INT_8_8_8_8_REV,actual);
+            for(unsigned y=0;y<12;++y)for(unsigned x=0;x<16;++x) {
+                unsigned char *p=actual+(y*16+x)*4;
+                // The first full import seeds BACK, but later FRONT imports
+                // and partial patches must preserve its independent drawing.
+                good=(iteration ? p[0]==0 && p[1]==255 && p[2]==0 && p[3]==255 :
+                    p[0]==x && p[1]==11-y && p[2]==63 && p[3]==255) && good;
+            }
+            glReadBuffer(GL_COLOR_ATTACHMENT0_EXT);
+            glDrawBuffer(GL_COLOR_ATTACHMENT1_EXT);
+            glClearColor(0,1,0,1);glClear(GL_COLOR_BUFFER_BIT);
+            glDrawBuffer(GL_COLOR_ATTACHMENT0_EXT);
+        }
         good=glGetError()==GL_NO_ERROR && good;
     }
     DGDestroyDrawables(&c);DGDestroyAliases(&c);CGLSetCurrentContext(NULL);CGLDestroyContext(c.cgl);
-    printf("%s profile=%x CPU/GPU imports, pitched flip, partial preservation, caller unpack state\n",good?"PASS":"FAIL",profile);
+    printf("%s profile=%x doubled=%d CPU/GPU imports, pitched flip, partial preservation, caller unpack state, independent BACK\n",good?"PASS":"FAIL",profile,doubled);
     return good;
 }
-int main(void) {int legacy=run(kCGLOGLPVersion_Legacy),core=run(kCGLOGLPVersion_3_2_Core);return !(legacy && core);}
+int main(void) {
+    int good=1;
+    for(int doubled=0;doubled<2;++doubled) {
+        good=run(kCGLOGLPVersion_Legacy,doubled) && good;
+        good=run(kCGLOGLPVersion_3_2_Core,doubled) && good;
+    }
+    return !good;
+}

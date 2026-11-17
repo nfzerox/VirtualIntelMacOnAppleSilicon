@@ -246,6 +246,12 @@ void end_exclusive(void)
     qemu_mutex_unlock(&qemu_cpu_list_lock);
 }
 
+/* A non-TCG execution loop must also yield to QEMU's exclusive operations. */
+bool cpu_exclusive_pending(void)
+{
+    return qatomic_read(&pending_cpus) != 0;
+}
+
 /* Wait for exclusive ops to finish, and begin cpu execution.  */
 void cpu_exec_start(CPUState *cpu)
 {

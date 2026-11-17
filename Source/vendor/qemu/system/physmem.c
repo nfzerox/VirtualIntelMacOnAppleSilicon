@@ -19,6 +19,7 @@
 
 #include "qemu/osdep.h"
 #include "exec/page-vary.h"
+#include "accel/tcg/handoff.h"
 #include "qapi/error.h"
 
 #include "qemu/cutils.h"
@@ -1068,10 +1069,11 @@ void physical_memory_set_dirty_range(ram_addr_t start, ram_addr_t length,
  * @return:
  * - Number of dirty guest pages found within [start, start + length).
  */
-uint64_t physical_memory_test_and_clear_dirty(ram_addr_t start,
+static uint64_t physical_memory_test_and_clear_dirty_internal(ram_addr_t start,
                                               ram_addr_t length,
                                               unsigned client,
-                                              unsigned long *bmap)
+                                              unsigned long *bmap,
+                                              bool notify)
 {
     DirtyMemoryBlocks *blocks;
     unsigned long end, page, start_page;
@@ -1098,13 +1100,18 @@ uint64_t physical_memory_test_and_clear_dirty(ram_addr_t start,
             unsigned long idx = page / DIRTY_MEMORY_BLOCK_SIZE;
             unsigned long offset = page % DIRTY_MEMORY_BLOCK_SIZE;
 
+            if (!bmap) {
+                unsigned long pages = MIN(end - page,
+                                         DIRTY_MEMORY_BLOCK_SIZE - offset);
+                num_dirty += bitmap_count_and_clear_atomic(blocks->blocks[idx],
+                                                          offset, pages);
+                page += pages;
+                continue;
+            }
+
             if (bitmap_test_and_clear_atomic(blocks->blocks[idx], offset, 1)) {
-                if (bmap) {
-                    unsigned long k = page - (ramblock->offset >> TARGET_PAGE_BITS);
-                    if (!test_and_set_bit(k, bmap)) {
-                        num_dirty++;
-                    }
-                } else {
+                unsigned long k = page - (ramblock->offset >> TARGET_PAGE_BITS);
+                if (!test_and_set_bit(k, bmap)) {
                     num_dirty++;
                 }
             }
@@ -1117,11 +1124,46 @@ uint64_t physical_memory_test_and_clear_dirty(ram_addr_t start,
         memory_region_clear_dirty_bitmap(ramblock->mr, mr_offset, mr_size);
     }
 
-    if (num_dirty) {
+    if (num_dirty && notify) {
         physical_memory_dirty_bits_cleared(start, length);
     }
 
     return num_dirty;
+}
+
+uint64_t physical_memory_test_and_clear_dirty(ram_addr_t start,
+                                            ram_addr_t length,
+                                            unsigned client,
+                                            unsigned long *bmap)
+{
+    return physical_memory_test_and_clear_dirty_internal(start, length, client,
+                                                         bmap, true);
+}
+
+uint64_t physical_memory_test_and_clear_dirty_ranges(const RAMDirtyRange *ranges,
+                                                    size_t count,
+                                                    unsigned client)
+{
+    uint64_t dirty = 0;
+    if (!count) {
+        return 0;
+    }
+    RCU_READ_LOCK_GUARD();
+    RAMBlock *block = qemu_get_ram_block(ranges[0].start);
+    for (size_t i = 0; i < count; i++) {
+        assert(ranges[i].length && ranges[i].start >= block->offset &&
+               ranges[i].length <= block->used_length &&
+               ranges[i].start - block->offset <= block->used_length - ranges[i].length);
+        assert(!i || ranges[i].start >= ranges[i - 1].start + ranges[i - 1].length);
+        dirty += physical_memory_test_and_clear_dirty_internal(ranges[i].start,
+                    ranges[i].length, client, NULL, false);
+    }
+    if (dirty) {
+        const RAMDirtyRange *last = &ranges[count - 1];
+        physical_memory_dirty_bits_cleared(ranges[0].start,
+                            last->start + last->length - ranges[0].start);
+    }
+    return dirty;
 }
 
 static void physical_memory_clear_dirty_range(ram_addr_t addr, ram_addr_t length)
@@ -3128,6 +3170,8 @@ MemoryRegion *get_system_io(void)
     return system_io;
 }
 
+const TcgHandoffOps *tcg_handoff;
+
 static void invalidate_and_set_dirty(MemoryRegion *mr, hwaddr addr,
                                      hwaddr length)
 {
@@ -3137,6 +3181,9 @@ static void invalidate_and_set_dirty(MemoryRegion *mr, hwaddr addr,
     /* We know we're only called for RAM MemoryRegions */
     assert(ramaddr != RAM_ADDR_INVALID);
     addr += ramaddr;
+    if (unlikely(tcg_handoff)) {
+        tcg_handoff->note_write(addr, length, false);
+    }
 
     /* No early return if dirty_log_mask is or becomes 0, because
      * physical_memory_set_dirty_range will still call

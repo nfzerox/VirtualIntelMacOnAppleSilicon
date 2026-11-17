@@ -1,6 +1,6 @@
 #pragma once
 
-// Native 11.x PVG leaves MTLIOAccelTexture's API usage metadata at zero.
+// Native 11.x and later PVG (measured through Monterey 21H1320) leaves MTLIOAccelTexture's API usage metadata at zero.
 // CIMetalCommandBufferCopyTexture checks ShaderWrite and silently skips ROI
 // copies when this is zero. Preserve the caller's actual descriptor, as the
 // older-guest adapter already does. This does not change storage or wire data.
@@ -32,7 +32,7 @@ static id pvgBigSurInitSurface(id self,SEL selector,id device,MTLTextureDescript
 }
 static BOOL pvgBigSurUsageMarker(id self,SEL selector){(void)self;(void)selector;return YES;}
 static void pvgInstallBigSurTextureUsage(void) {
-    if(NSProcessInfo.processInfo.operatingSystemVersion.majorVersion!=11||pvgBigSurDeviceInit)return;
+    if(NSProcessInfo.processInfo.operatingSystemVersion.majorVersion<11||pvgBigSurDeviceInit)return;
     Class texture=objc_getClass("AppleParavirtTexture");
     Ivar usage=class_getInstanceVariable(objc_getClass("MTLIOAccelTexture"),"_usage");
     if(!texture||!usage||strcmp(ivar_getTypeEncoding(usage),@encode(NSUInteger)))return;

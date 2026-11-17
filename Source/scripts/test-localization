@@ -21,6 +21,7 @@ catalog = app_source / 'Localizable.xcstrings'
 assert catalog.is_file(), 'The application has no localization catalog'
 
 format_specifier = re.compile(r'%(?:(\d+)\$)?[-+ #0]*(?:\d+|\*)?(?:\.(?:\d+|\*))?(?:hh|ll|[hljztL])?([@diuoxXfFeEgGaAcCsSp%])')
+cjk_latin_space = re.compile(r'[\u3400-\u9fff][ \u00a0]+[A-Za-z0-9]|[A-Za-z0-9][ \u00a0]+[\u3400-\u9fff]')
 
 
 def arguments(text):
@@ -48,20 +49,34 @@ with tempfile.TemporaryDirectory(prefix='vim-localization-') as work:
         'CFBundlePackageType': 'APPL',
         'CFBundleDevelopmentRegion': 'en',
     }))
-    for name in ('Localizable', 'InfoPlist'):
+    for name in ('Localizable', 'InfoPlist', 'InstallerProgress'):
         path = app_source / (name + '.xcstrings')
         document = json.loads(path.read_text())
         assert document['sourceLanguage'] == 'en'
         for key, entry in document['strings'].items():
+            assert not re.match(r'^v\d+\.', key), f'{name}: release-specific translation key {key}'
             if entry.get('shouldTranslate') is False:
                 continue
             english = entry['localizations']['en']['stringUnit']['value']
             chinese = entry['localizations']['zh-Hans']['stringUnit']['value']
             assert english and chinese, f'{name}: empty translation for {key}'
+            assert not cjk_latin_space.search(chinese), f'{name}: manual CJK/Latin spacing in {key}'
             assert arguments(english) == arguments(chinese), f'{name}: incompatible format arguments for {key}'
         subprocess.run(['xcrun', 'xcstringstool', 'compile', str(path),
                         '--output-directory', str(resources)], check=True)
     entries = json.loads(catalog.read_text())['strings']
+    # All native host-worker progress copy must have a translation. This is
+    # a source coverage test only; unknown runtime phases still display their
+    # original title and never interrupt installation.
+    progress_entries = json.loads((app_source / 'InstallerProgress.xcstrings').read_text())['strings']
+    worker = (source / 'tools/HostInstall/install-worker.m').read_text()
+    for title in re.findall(r'@"([^"\n]*…)"', worker):
+        assert title in progress_entries, f'Missing native installer progress: {title}'
+    guest_labels = (app_source / 'VIMGuestSetupLabels.h').read_text()
+    label_names = set(re.findall(r'@"((?:[^"\\]|\\.)*)":VIMLocalized', guest_labels))
+    guest_ui = (source / 'tools/guest-progress.m').read_text()
+    for title in re.findall(r'\[self text:@"((?:[^"\\]|\\.)*)"\]', guest_ui):
+        assert title in label_names, f'Missing standalone guest UI label: {title}'
     for path in app_source.glob('*.[mh]'):
         code = '\n'.join(line for line in path.read_text().splitlines() if not line.startswith('#define VIMLocalized'))
         calls = re.findall(r'VIMLocalized\(@"([^"\n]+)",\s*@"((?:[^"\\]|\\.)*)"\)', code)
@@ -90,13 +105,15 @@ with tempfile.TemporaryDirectory(prefix='vim-localization-') as work:
             localized = product / 'Contents/Resources' / (language + '.lproj')
             assert (localized / 'Localizable.strings').is_file(), f'Missing packaged {language} strings'
             assert (localized / 'InfoPlist.strings').is_file(), f'Missing packaged {language} permissions'
+            assert (localized / 'InstallerProgress.strings').is_file(), f'Missing packaged {language} installer progress'
         for directory in (product / 'Contents/Resources').glob('*.lproj'):
             shutil.copytree(directory, resources / directory.name, dirs_exist_ok=True)
     subprocess.run(['xcrun', 'clang', '-fobjc-arc', '-fmodules', '-framework', 'Cocoa',
                     '-I', str(app_source), str(source / 'probes/localization-tests.m'),
                     '-o', str(executable)], check=True)
-    for language in ('en', 'zh-Hans', 'fr'):
-        subprocess.run([str(executable), '-AppleLanguages', f'({language})', language], check=True)
+    for language, expected in (('en', 'en'), ('zh-Hans', 'zh-Hans'),
+                               ('zh-CN', 'zh-Hans'), ('zh_CN', 'zh-Hans'), ('fr', 'fr')):
+        subprocess.run([str(executable), '-AppleLanguages', f'({language})', expected], check=True)
     if options.derived_data:
         import platform
         objects = options.derived_data / 'Build/Intermediates.noindex/VirtualIntelMac.build' / options.configuration / 'Virtual Intel Mac.build/Objects-normal' / platform.machine()
@@ -107,5 +124,7 @@ with tempfile.TemporaryDirectory(prefix='vim-localization-') as work:
                         '-I', str(app_source), str(source / 'probes/localization-integration-tests.m'),
                         *inputs, '-o', str(integration)], check=True)
         for language in ('en', 'zh-Hans'):
-            subprocess.run([str(integration), '-AppleLanguages', f'({language})', work, language], check=True)
+            for experimental in ('NO', 'YES'):
+                subprocess.run([str(integration), '-AppleLanguages', f'({language})',
+                                '-VIMEnableExperimentalModernGuests', experimental, work, language], check=True)
 print('Localization checks passed: translations, formats, XIB coverage, language selection and stable identifiers.')

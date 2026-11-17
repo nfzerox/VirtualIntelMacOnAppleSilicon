@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Exercise the real app worker protocol with the reference Tiger recipe.
+
+Development only. Do not include this Python adapter in Runtime/HostInstall.
+"""
+
+import argparse
+import os
+from pathlib import Path
+import plistlib
+import re
+import subprocess
+import sys
+from types import SimpleNamespace
+
+from host_install_hfs import assemble, shadow_hash
+
+
+class Cancelled(Exception):
+    pass
+
+
+def read_request(path):
+    attempt = Path.cwd()
+    if path.parent.resolve() != attempt or path.name != "Request.plist" or path.is_symlink():
+        raise ValueError("The worker request must be in its private attempt directory")
+    data = plistlib.loads(path.read_bytes())
+    if not isinstance(data, dict) or data.get("FormatVersion") != 1 or data.get("Guest") != "tiger":
+        raise ValueError("The development worker only supports the original Tiger restore recipe")
+    for policy in ("AutomaticLogin", "RemoteLogin", "FileSharing"):
+        if type(data.get(policy)) is not bool:
+            raise ValueError("The automatic setup options are missing")
+    size, username = data["DiskGiB"], data["Username"]
+    if type(size) is not int or not 8 <= size <= 2048 or not isinstance(username, str) or \
+            not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", username):
+        raise ValueError("The disk size or Tiger account name is invalid")
+    sources = data["Media"]
+    if not isinstance(sources, dict) or set(sources) not in ({"installer"}, {"diskimage"}):
+        raise ValueError("Choose the original Tiger restore disk image")
+    media, = (Path(value).resolve(strict=True) for value in sources.values())
+    app = Path(data["Application"]).resolve(strict=True)
+    runtime = app / "Contents/Resources/Runtime"
+    if not media.is_file() or not (runtime / "OpenGLGuests/tiger/Support.plist").is_file() or \
+            not os.access(runtime / "bin/qemu-img", os.X_OK):
+        raise ValueError("The original installer or packaged Tiger support is unavailable")
+
+    def checkpoint():
+        if (attempt / "Cancel").exists():
+            raise Cancelled("Tiger preparation was cancelled")
+
+    return SimpleNamespace(guest="tiger", media=media, app=app, output=attempt / "Prepared.vintelmac",
+                           username=username, full_name=username, size=size, auto_login=data["AutomaticLogin"],
+                           ssh=data["RemoteLogin"], ssh_port=23224, file_sharing=data["FileSharing"], checkpoint=checkpoint)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--request", type=Path, required=True)
+    cli = parser.parse_args()
+    try:
+        args = read_request(cli.request)
+        args.checkpoint()
+        password = sys.stdin.buffer.read(512)
+        password.decode("utf-8")
+        shadow_hash(password)
+        assemble(args, password)
+    except Cancelled as error:
+        print(error, file=sys.stderr)
+        return 130
+    except UnicodeError:
+        print("The Tiger setup password is not valid UTF-8", file=sys.stderr)
+        return 1
+    except (OSError, TypeError, ValueError, KeyError, subprocess.SubprocessError) as error:
+        print(f"Tiger host assembly could not finish: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

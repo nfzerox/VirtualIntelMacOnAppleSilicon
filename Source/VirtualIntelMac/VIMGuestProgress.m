@@ -1,6 +1,7 @@
 #import "VIMLocalization.h"
 #import "VIMGuestProgress.h"
 #import "VIMGuestAgent.h"
+#import "VIMGuestSetupLabels.h"
 static NSError *ProgressError(NSString *message){return [NSError errorWithDomain:@"VirtualIntelMac.GuestProgress" code:1 userInfo:@{NSLocalizedDescriptionKey:message}];}
 static NSDictionary *ProgressJSON(NSDictionary *command) {
     id value=[command[@"exitcode"] isEqual:@0]?[NSJSONSerialization JSONObjectWithData:command[@"stdout"]?:NSData.data options:0 error:NULL]:nil;
@@ -23,7 +24,8 @@ static NSDictionary *ProgressJSON(NSDictionary *command) {
     NSString *tool=[directory stringByAppendingPathComponent:@"guest-progress"];
     [agent runExecutable:@"/bin/chmod" arguments:@[@"0700",tool] timeout:15 completion:^(NSDictionary *mode,NSError *error){
         if(error||![mode[@"exitcode"] isEqual:@0]){completion(nil,error?:ProgressError(VIMLocalized(@"guestprogress.could-not-prepare-the-guest-setup-window", @"Could not prepare the guest setup window.")));return;}
-        [agent runExecutable:tool arguments:@[@"--start",[directory stringByAppendingPathComponent:@"SupportIcon.png"]] timeout:60 completion:^(NSDictionary *result,NSError *failure){
+        NSData *labels=[NSJSONSerialization dataWithJSONObject:VIMGuestSetupLabels() options:0 error:nil];
+        [agent runExecutable:tool arguments:@[@"--start",[directory stringByAppendingPathComponent:@"SupportIcon.png"],@"--labels"] standardInput:labels timeout:60 completion:^(NSDictionary *result,NSError *failure){
             NSDictionary *started=ProgressJSON(result);NSMutableDictionary *receipt=[started mutableCopy];receipt[@"Tool"]=tool;
             VIMGuestProgress *progress=[self progressWithAgent:agent receipt:receipt];
             NSString *detail=[[NSString alloc] initWithData:result[@"stderr"]?:NSData.data encoding:NSUTF8StringEncoding];

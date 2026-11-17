@@ -9,10 +9,10 @@ int DGSupportsRAMScatterReads(void)
 { return DGSupportsScatterReads() && dg_current->connection->ram_scatter_supported; }
 int DGSupportsMaskedScatterReads(void)
 { return DGSupportsRAMScatterReads() && dg_current->connection->masked_scatter_supported; }
-static int DGReadDrawableRectPrepared(const void *prepare,size_t size,int x,int y,int width,int height)
+static int DGReadMessagePrepared(const void *prepare,size_t size,const struct DGMessage *command,int require_result)
 {
     struct DGContext *c=dg_current;
-    uint64_t bytes=(uint64_t)width*height*4;
+    uint64_t bytes=command->bytes;
     struct DGConnection *connection=c->connection;pthread_mutex_lock(&connection->lock);
 #if VIM_GL_SHARED_ONLY
     // The native Tiger Rosetta namespace lacks the optional Mach-clock
@@ -36,14 +36,12 @@ static int DGReadDrawableRectPrepared(const void *prepare,size_t size,int x,int 
         c->error=GL_INVALID_OPERATION;return 0;
     }
     uint32_t token=result.token;
-    struct DGMessage command={0};command.op=DG_READ_DRAWABLE_RECT;command.context=c->id;
-    command.flags=DG_REPLY|DG_OUTPUT_ONLY;command.bytes=(uint32_t)bytes;
-    command.args[0]=width;command.args[1]=height;command.args[2]=x;command.args[3]=y;
     struct DGReply reply={0};
-    int failed=connection->dead || DGDrain(connection) || DGConnectionTransfer(connection,&command,sizeof(command),1) ||
+    int failed=connection->dead || DGDrain(connection) || DGConnectionTransfer(connection,(void *)command,sizeof(*command),1) ||
         DGConnectionTransfer(connection,&reply,sizeof(reply),0) || reply.bytes!=bytes;
     if(timing)submitted=mach_absolute_time();
-    if(!failed && reply.error)failed=DGDiscardReply(connection,reply.bytes);
+    if(!failed && (reply.error || (require_result && reply.result!=1)))
+        failed=DGDiscardReply(connection,reply.bytes);
     else if(!failed) {
         struct VIMGLScatterRequest receive={1,0,token,(uint32_t)bytes};outsize=sizeof(result);
         error=IOConnectCallStructMethod(connection->device,kIOVM2DDirectGLScatter,&receive,sizeof(receive),&result,&outsize);
@@ -67,7 +65,33 @@ static int DGReadDrawableRectPrepared(const void *prepare,size_t size,int x,int 
     }
     if(failed) { connection->dead=1;c->error=GL_INVALID_OPERATION; }
     else if(reply.error)c->error=reply.error;
-    pthread_mutex_unlock(&connection->lock);return !failed && !reply.error;
+    pthread_mutex_unlock(&connection->lock);return !failed && !reply.error && (!require_result || reply.result==1);
+}
+static int DGReadDrawableRectPrepared(const void *prepare,size_t size,int x,int y,int width,int height)
+{
+    struct DGMessage command={0};command.op=DG_READ_DRAWABLE_RECT;command.context=dg_current->id;
+    command.flags=DG_REPLY|DG_OUTPUT_ONLY;command.bytes=(uint32_t)width*height*4;
+    command.args[0]=width;command.args[1]=height;command.args[2]=x;command.args[3]=y;
+    return DGReadMessagePrepared(prepare,size,&command,0);
+}
+/* A completed imported-texture serial is already an ordered host CPU-readable
+ * IOSurface. Receive its tight response into pinned guest rows directly,
+ * preserving pitch padding without allocating/copying a full guest packet. */
+static int DGReadIOSurfaceRowsPrepared(GLuint texture,uint64_t serial,unsigned width,unsigned height,
+    void *pixels,size_t stride,unsigned element_bytes)
+{
+    uint64_t row=(uint64_t)width*element_bytes,bytes=row*height;
+    if(!height || height>VIM_GL_RAM_SCATTER_MAX_ROWS || bytes>DG_MAX_BYTES ||
+       (height>1 && stride>(SIZE_MAX-row)/(height-1)))return -1;
+    size_t span=(height-1)*stride+(size_t)row;
+    if(span>VIM_GL_SCATTER_MAX_BYTES || (uintptr_t)pixels>UINTPTR_MAX-span)return -1;
+    struct { struct VIMGLScatterRequest header;struct VIMGLScatterRows rows; } prepare={
+        {0,height,0,(uint32_t)bytes},{(uintptr_t)pixels,stride,(uint32_t)row,0}};
+    struct DGMessage command={0};command.op=DG_READ_IOSURFACE_TEXTURE;command.context=dg_current->id;
+    command.flags=DG_REPLY|DG_OUTPUT_ONLY;command.bytes=(uint32_t)bytes;
+    command.args[0]=texture;command.args[1]=serial;command.args[2]=width;command.args[3]=height;
+    command.args[4]=row;command.args[5]=1;command.args[6]=element_bytes==4?0:element_bytes;
+    return DGReadMessagePrepared(&prepare,sizeof(prepare),&command,1);
 }
 static int DGValidReadRows(void *pixels,size_t stride,int x,int y,int width,int height,unsigned maximum_rows)
 {

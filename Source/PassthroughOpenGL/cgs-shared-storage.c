@@ -71,7 +71,7 @@ static void VIMDestroyCGSContext(struct VIMContext *c)
 static int VIMCGSState(io_connect_t connection,struct VIMSurfaceState *state)
 {
     size_t bytes=sizeof(*state);memset(state,0,bytes);
-    IOReturn error=IOConnectCallStructMethod(connection,kIOVM2DGetSurfaceState,NULL,0,state,&bytes);
+    IOReturn error=VIMSurfaceMetadataQuery(connection,kIOVM2DGetSurfaceState,state,&bytes);
     return !error && bytes==sizeof(*state) && state->version==VIM_SURFACE_STATE_VERSION &&
         state->object && state->incarnation && state->content_epoch &&
         (state->flags&VIM_SURFACE_STATE_CONTEXT_LOCKED) && !(state->flags&VIM_SURFACE_STATE_CPU_WRITER);

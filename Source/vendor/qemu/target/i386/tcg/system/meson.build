@@ -8,3 +8,6 @@ i386_system_ss.add(when: ['CONFIG_TCG', 'CONFIG_SYSTEM_ONLY'], if_true: files(
   'svm_helper.c',
   'seg_helper.c',
 ))
+if hvdbt.found()
+  i386_system_ss.add(files('hvdbt.c'), hvdbt)
+endif

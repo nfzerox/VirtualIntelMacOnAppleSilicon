@@ -1,10 +1,11 @@
 #import <AppKit/AppKit.h>
 // Export standard 64px ICNS slices, or downsample the supplied raster artwork.
 int main(int argc,const char **argv) { @autoreleasepool {
-    if(argc!=6)return 2;
-    NSArray *names=@[@"RecommendedUTM",@"RecommendedVirtualBuddy",@"RecommendedParallels",@"RecommendedVirtualMac"];
+    BOOL single=argc==5&&!strcmp(argv[2],"--icon");
+    if(argc!=6&&!single)return 2;
+    NSArray *names=single?@[@(argv[3])]:@[@"RecommendedUTM",@"RecommendedVirtualBuddy",@"RecommendedParallels",@"RecommendedVirtualMac"];
     for(NSUInteger i=0;i<names.count;i++) {
-        NSImage *image=[[NSImage alloc] initWithContentsOfFile:@(argv[i+2])];if(!image)return 1;
+        NSImage *image=[[NSImage alloc] initWithContentsOfFile:@(argv[single?4:i+2])];if(!image)return 1;
         NSBitmapImageRep *bitmap=nil;
         for(NSImageRep *rep in image.representations)
             if([rep isKindOfClass:NSBitmapImageRep.class]&&rep.pixelsWide==64&&rep.pixelsHigh==64){bitmap=(id)rep;break;}

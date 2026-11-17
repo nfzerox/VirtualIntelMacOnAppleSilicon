@@ -4,6 +4,7 @@
  * oracle. Retained GPU resources are gated separately while cropped primary
  * views and the remaining interoperability contracts are qualified. */
 #include <CoreGraphics/CoreGraphics.h>
+#include <dlfcn.h>
 #include <math.h>
 #include <sys/sysctl.h>
 #include <uuid/uuid.h>
@@ -15,6 +16,7 @@
 #include "../vendor/source/VMsvga2/vminclude/vim_passthrough_opengl.h"
 #include "../vendor/source/VMsvga2/vminclude/vim_gl_surface_service.h"
 #include "../vendor/source/VMsvga2/AC/UCMethods.h"
+#include "cgs-metadata-query.h"
 #include "passthrough-opengl-surfaces.h"
 #include "passthrough-opengl-read-mask.h"
 #include "gli-cpu-copy.h"
@@ -40,6 +42,10 @@ extern int CGSFlushSurface(int,int,int,void *);
  */
 typedef IOReturn (*VIMNativeBindSurface)(int,int,uint32_t *,uint32_t,io_service_t);
 static VIMNativeBindSurface vim_native_bind_surface;
+#if VIM_GLI_DISPATCH_COUNT == 975
+#include "pvg-drawable.h"
+static int (*vim_pvg_flush_surface)(int,int,int,void *,uint32_t,uint32_t);
+#endif
 static io_service_t vim_native_accelerator;
 #include "gli-accelerator-service.h"
 struct VIMPrimaryReadMask {
@@ -82,10 +88,125 @@ struct VIMCGSDrawable {
     uint64_t cache_object,cache_incarnation;
     struct VIMCGSDrawable *cache_next;
     unsigned pixel_format; // Canonical typed pbuffer format; zero is old BGRA8.
-#if VIM_GLI_DISPATCH_COUNT == 968
+#if VIM_GLI_DISPATCH_COUNT == 764 || VIM_GLI_DISPATCH_COUNT == 968
     int ordinary_draw_prepared;
 #endif
+#if VIM_GLI_DISPATCH_COUNT == 975
+    io_connect_t pvg_drawable;
+    IOSurfaceRef pvg_surface;
+    struct VIMCGSDrawable *pvg_next;
+    CGFloat bitmap_resolution;
+    CGRect bitmap_bounds;
+    int preserve_bitmap_binding;
+#endif
 };
+#if VIM_GLI_DISPATCH_COUNT == 975
+// Native GLDDeviceRec also looks up GL drawables by surface ID within its
+// process. AppKit consumes a producer's front buffer in another CGL context.
+// Retain the IOSurface under this metadata lock, never a peer context or GL
+// binding; destruction/resize may proceed after lookup without dangling data.
+static pthread_mutex_t vim_pvg_surfaces_lock=PTHREAD_MUTEX_INITIALIZER;
+static struct VIMCGSDrawable *vim_pvg_surfaces;
+/* A CGS window surface outlives the CGL context's current drawable. Native
+ * Intel keeps its published surface bound when CA borrows the context for a
+ * different layer. Releasing our auxiliary bitmap window at that point
+ * instead unbinds the old layer (mode1 -> mode0) and erases its toolbar.
+ * Retain only the server backing, not a GPU context/FBO/readback allocation.
+ * Validate the actual binding before reuse: a recycled numeric surface ID is
+ * not an object lifetime. Closed/replaced surfaces are collected on attachment,
+ * not by a timer, polling loop, or a fixed-size cache that drops visible layers.
+ */
+struct VIMRetainedBitmapBacking {
+    int connection,window,surface,backing,width,height;
+    void *region;
+    CGFloat resolution;
+    CGRect bounds;
+    struct VIMRetainedBitmapBacking *next;
+};
+static pthread_mutex_t vim_bitmap_backings_lock=PTHREAD_MUTEX_INITIALIZER;
+static struct VIMRetainedBitmapBacking *vim_bitmap_backings;
+static int VIMOwnsBitmapBinding(int connection,int window,int surface,int backing)
+{
+    int (*query)(int,int,unsigned,int *,int *,int *)=dlsym(RTLD_DEFAULT,"SLSGetSurfaceBinding");
+    int mode=0,first=0,second=0;
+    return query && !query(connection,window,surface,&mode,&first,&second) &&
+        mode==1 && first==0 && second==backing;
+}
+static void VIMReleaseBitmapBacking(struct VIMRetainedBitmapBacking *b)
+{
+    CGSReleaseWindow(b->connection,b->backing);
+    if(b->region)CGSReleaseRegion(b->region);
+    free(b);
+}
+static void VIMPreserveBitmapBacking(struct VIMCGSDrawable *d)
+{
+    if(!VIMOwnsBitmapBinding(d->connection,d->window,d->surface,d->backing))return;
+    struct VIMRetainedBitmapBacking *b=calloc(1,sizeof(*b));if(!b)return;
+    *b=(struct VIMRetainedBitmapBacking){.connection=d->connection,.window=d->window,
+        .surface=d->surface,.backing=d->backing,.width=d->width,.height=d->height,
+        .region=d->region,.resolution=d->bitmap_resolution,.bounds=d->bitmap_bounds};
+    pthread_mutex_lock(&vim_bitmap_backings_lock);
+    b->next=vim_bitmap_backings;vim_bitmap_backings=b;
+    pthread_mutex_unlock(&vim_bitmap_backings_lock);
+    d->backing=0;d->region=NULL;
+}
+static void VIMTakeBitmapBacking(struct VIMCGSDrawable *d)
+{
+    pthread_mutex_lock(&vim_bitmap_backings_lock);
+    struct VIMRetainedBitmapBacking **link=&vim_bitmap_backings;
+    while(*link){
+        struct VIMRetainedBitmapBacking *b=*link;
+        int target=b->connection==d->connection && b->window==d->window && b->surface==d->surface;
+        if(target){
+            *link=b->next;
+            if(VIMOwnsBitmapBinding(b->connection,b->window,b->surface,b->backing) &&
+               b->width==d->width && b->height==d->height &&
+               b->resolution==d->bitmap_resolution && CGRectEqualToRect(b->bounds,d->bitmap_bounds)){
+                d->backing=b->backing;d->region=b->region;free(b);
+                pthread_mutex_unlock(&vim_bitmap_backings_lock);return;
+            } else VIMReleaseBitmapBacking(b);
+            break;
+        }
+        link=&b->next;
+    }
+    // Collect only when allocating a new backing, not for every switch among
+    // existing CA layers. A successful reuse makes one binding query, not one
+    // WindowServer round trip per retained window in the application.
+    link=&vim_bitmap_backings;
+    while(*link){
+        struct VIMRetainedBitmapBacking *b=*link;
+        if(!VIMOwnsBitmapBinding(b->connection,b->window,b->surface,b->backing)){
+            *link=b->next;VIMReleaseBitmapBacking(b);
+        } else link=&b->next;
+    }
+    pthread_mutex_unlock(&vim_bitmap_backings_lock);
+}
+static void VIMReleaseRetainedBitmapBackings(void)
+{
+    pthread_mutex_lock(&vim_bitmap_backings_lock);
+    struct VIMRetainedBitmapBacking *b=vim_bitmap_backings;vim_bitmap_backings=NULL;
+    pthread_mutex_unlock(&vim_bitmap_backings_lock);
+    while(b){struct VIMRetainedBitmapBacking *next=b->next;VIMReleaseBitmapBacking(b);b=next;}
+}
+static IOSurfaceRef VIMCopyPVGSurface(uint32_t identifier)
+{
+    IOSurfaceRef surface=NULL;
+    pthread_mutex_lock(&vim_pvg_surfaces_lock);
+    for(struct VIMCGSDrawable *d=vim_pvg_surfaces;d;d=d->pvg_next)
+        if((uint32_t)d->surface==identifier){surface=(IOSurfaceRef)CFRetain(d->pvg_surface);break;}
+    pthread_mutex_unlock(&vim_pvg_surfaces_lock);return surface;
+}
+static CGLError VIMGetPVGSurfaceInfo(GLint *value)
+{
+    IOSurfaceRef surface=VIMCopyPVGSurface((uint32_t)value[0]);
+    if(!surface)return kCGLBadDrawable;
+    // Measured gldGetInteger(502): {surfaceID,0,0,0} becomes
+    // {GL_BGRA,GL_UNSIGNED_INT_8_8_8_8_REV,width,height} for this BGRA8 front.
+    value[0]=GL_BGRA;value[1]=GL_UNSIGNED_INT_8_8_8_8_REV;
+    value[2]=(GLint)IOSurfaceGetWidth(surface);value[3]=(GLint)IOSurfaceGetHeight(surface);
+    CFRelease(surface);return kCGLNoError;
+}
+#endif
 /* The finite x64 upload probe decodes only these owned fields. Fail its build
  * contract if this layout changes; never infer Apple private structure offsets. */
 #if UINTPTR_MAX == UINT64_MAX
@@ -270,9 +391,21 @@ static IOReturn VIMLockReadTextureSurface(io_connect_t connection,struct VIMSurf
 static void VIMDestroyDrawable(struct VIMCGSDrawable *d)
 {
     if(!d) return;
+#if VIM_GLI_DISPATCH_COUNT == 975
+    pthread_mutex_lock(&vim_pvg_surfaces_lock);
+    struct VIMCGSDrawable **link=&vim_pvg_surfaces;
+    while(*link&&*link!=d)link=&(*link)->pvg_next;
+    if(*link)*link=d->pvg_next;
+    pthread_mutex_unlock(&vim_pvg_surfaces_lock);
+    if(d->pvg_surface)CFRelease(d->pvg_surface);
+    VIMPVGDrawableClose(d->pvg_drawable);
+#endif
     if(d->backing) {
         if(d->locked) CGSUnlockWindowBits(d->connection,d->backing,NULL);
-        CGSReleaseWindow(d->connection,d->backing);
+#if VIM_GLI_DISPATCH_COUNT == 975
+        if(d->preserve_bitmap_binding)VIMPreserveBitmapBacking(d);
+#endif
+        if(d->backing)CGSReleaseWindow(d->connection,d->backing);
     }
     if(d->region) CGSReleaseRegion(d->region);
     if(d->vram) VIMIOConnectUnmapMemory64(d->framebuffer,110,mach_task_self(),d->vram);
@@ -282,40 +415,7 @@ static void VIMDestroyDrawable(struct VIMCGSDrawable *d)
     DGReleaseBuffer(d->backend_context,d->storage_key);
     free(d->storage_key);free(d->readback);free(d->clip);free(d->read_mask);free(d->vram_rects);free(d->gpu_regions);free(d->ram_reply);free(d);
 }
-#if defined(VIM_GLI_CONNECTION_REUSE_EXPERIMENT)
-/* UNQUALIFIED latency candidate: held-step trials miss the first movement;
- * the restored baseline can miss it too, so causality is not established.
- * Keep outside normal builds pending actual event/detach investigation;
- * eliminating service calls is not end-to-end acceptance.
- * An attach still performs set_surface's fresh provider lookup and all geometry,
- * clip, identity and ownership queries. Recycle only an unused accelerator
- * connection, after binding adoption or drawing-view retirement. Changing
- * drawing-view geometry must not force another service open. Explicitly
- * unbind its retained surface;
- * never cache a CPU lock, mapping, surface ID or pixel/version promise here.
- * Context-local, bounded to two ports: real display access adopts a binding
- * then retires another view at detach. A single slot closes/reopens one port
- * each cycle (verified with bounded IOKit caller stacks). Failed attaches
- * retain normal teardown. This does not pool textures' owning connections.
- */
-static volatile int vim_reuse_drawable_connection=1; // Same-process debugger comparison.
-static volatile uint64_t vim_drawable_connection_stats[3]; // reuse, recycle, rejected reset.
-static void VIMRecycleDrawable(struct VIMContext *c,struct VIMCGSDrawable *d)
-{
-    if(vim_reuse_drawable_connection && c->idle_drawable_connection_count<2 && d->updates &&
-       d->accelerator_surface && !d->locked && !d->backing && !d->framebuffer && !d->vram) {
-        uint64_t args[]={0,0};uint32_t record[11]={0};size_t size=sizeof(record);
-        IOReturn error=IOConnectCallMethod(d->updates,kIOVM2DSetSurface,args,2,NULL,0,NULL,NULL,record,&size);
-        if(!error) {
-            c->idle_drawable_connections[c->idle_drawable_connection_count++]=d->updates;d->updates=0;
-            __atomic_fetch_add(&vim_drawable_connection_stats[1],1,__ATOMIC_RELAXED);
-        } else __atomic_fetch_add(&vim_drawable_connection_stats[2],1,__ATOMIC_RELAXED);
-    }
-    VIMDestroyDrawable(d);
-}
-#else
-#define VIMRecycleDrawable(context,drawable) VIMDestroyDrawable(drawable)
-#endif
+#include "cgs-idle-connections.h"
 /* Retain allocations, NOT surface contents or a reusable CGS number. Every
  * hit below was freshly rebound/locked and carries a lifetime-unique kernel
  * object/incarnation. Its current CPU/GPU contents are imported as usual.
@@ -593,15 +693,15 @@ static CGLError VIMImportAcceleratorBacking(struct VIMContext *c,struct VIMCGSDr
     if(imported && unlocked)VIMRememberOrdinaryDrawable(c,d,&imported_state);
     return imported && unlocked ? kCGLNoError : kCGLBadDrawable;
 }
-#if VIM_GLI_DISPATCH_COUNT == 968
+#if VIM_GLI_DISPATCH_COUNT == 764 || VIM_GLI_DISPATCH_COUNT == 968
 static inline int VIMPrepareOrdinaryDrawing(GLIContext opaque)
 {
     struct VIMContext *c=(void *)opaque;
     struct VIMCGSDrawable *d=c->drawable;
     if(!d || d->ordinary_draw_prepared || c->inside_begin || d->pixel_format ||
        !d->imported_state.version || !VIMPreservesOrdinaryDrawable(c,d))return 1;
-    /* Lion scrolls ordinary window backings on the CPU between native GL
-     * batches. Check the provider epoch before drawing over that backing,
+    /* Snow Leopard and Lion scroll ordinary window backings on the CPU
+     * between native GL batches. Check the provider epoch before drawing over that backing,
      * not at flush after the new GL pixels have already been produced. */
     if(VIMImportAcceleratorBacking(c,d)) {
         if(!c->error)c->error=GL_INVALID_OPERATION;
@@ -652,8 +752,8 @@ static CGLError VIMCreateFullscreen(struct VIMContext *c,const uint32_t *record)
     if(error || !d->vram || (uint64_t)layout.offset+(uint64_t)layout.row_bytes*layout.height>d->vram_size) {
         VIMDestroyDrawable(d);return kCGLBadDrawable;
     }
-    io_service_t accel=VIMIOServiceForClass("VMsvga2Accel");
-    if(accel) { IOServiceOpen(accel,mach_task_self(),2,&d->updates);IOObjectRelease(accel); }
+    io_service_t accel=VIMRendererAccelerator();
+    if(accel) IOServiceOpen(accel,mach_task_self(),2,&d->updates);
     if(!d->updates) { VIMDestroyDrawable(d);return kCGLBadDrawable; }
     d->width=(int)layout.width;d->height=(int)layout.height;d->layout=layout;
     d->readback=calloc((size_t)d->width*d->height,4);
@@ -673,17 +773,81 @@ static CGLError VIMCreateDrawable(struct VIMContext *c,const int *ids)
     if(!isfinite(bounds.size.width) || !isfinite(bounds.size.height) ||
        bounds.size.width<1 || bounds.size.height<1 ||
        bounds.size.width>8192 || bounds.size.height>8192) return kCGLBadValue;
+    CGSize backing_pixels=bounds.size;
+#if VIM_GLI_DISPATCH_COUNT == 975
+    CGFloat backing_resolution=1;
+    int pvg=VIMIOObjectConformsTo(vim_native_accelerator,"AppleParavirtAccelerator");
+    if(pvg) {
+        // Surface bounds are points, not pixels. Actual native Mojave Intel
+        // returns 640x440 bounds with resolution2 and 1280x880 backing. The
+        // auxiliary bitmap window must use that same resolution; allocating
+        // from bounds alone clips a Retina viewport to its bottom quarter.
+        int query=CGSGetSurfaceResolution(ids[0],ids[1],ids[2],&backing_resolution,&backing_pixels);
+        if(query || !isfinite(backing_resolution) || backing_resolution<=0 ||
+           !isfinite(backing_pixels.width) || !isfinite(backing_pixels.height) ||
+           backing_pixels.width<1 || backing_pixels.height<1 ||
+           backing_pixels.width>8192 || backing_pixels.height>8192)
+            return kCGLBadDrawable;
+    }
+#endif
+    // Reattaching the same Mojave bitmap target is not a new drawable. Keep
+    // its host FBO and storage until the actual surface or pixel extent
+    // changes, rather than destroying/recreating them on each update.
+#if VIM_GLI_DISPATCH_COUNT == 975
+    if(pvg && c->drawable && c->drawable->backing &&
+       c->drawable->connection==ids[0] && c->drawable->window==ids[1] &&
+       c->drawable->surface==ids[2] && c->drawable->width==(int)backing_pixels.width &&
+       c->drawable->height==(int)backing_pixels.height &&
+       CGRectEqualToRect(c->drawable->bitmap_bounds,bounds) &&
+       c->drawable->bitmap_resolution==backing_resolution)
+        return VIMSetPrivateDrawable(c,c->drawable->width,c->drawable->height,c->drawable->storage_key);
+#endif
     struct VIMCGSDrawable *d=calloc(1,sizeof(*d));
     if(d) d->backend_context=c->backend;
     if(!d) return kCGLBadAlloc;
     d->connection=ids[0];d->window=ids[1];d->surface=ids[2];
-    d->width=(int)bounds.size.width;d->height=(int)bounds.size.height;
+#if VIM_GLI_DISPATCH_COUNT == 975
+    d->bitmap_resolution=backing_resolution;
+    d->bitmap_bounds=bounds;
+#endif
+    d->width=(int)backing_pixels.width;d->height=(int)backing_pixels.height;
     d->readback=calloc((size_t)d->width*d->height,4);
     if(!d->readback) { VIMDestroyDrawable(d);return kCGLBadAlloc; }
-    int error=CGSNewRegionWithRect(&bounds,&d->region);
-    if(!error) error=CGSNewWindow(d->connection,2,0,0,d->region,&d->backing);
+    int error=0;
+#if VIM_GLI_DISPATCH_COUNT == 975
+    if(pvg)VIMTakeBitmapBacking(d);
+    int restored_bitmap=d->backing!=0;
+#endif
+    if(!d->backing){
+        error=CGSNewRegionWithRect(&bounds,&d->region);
+        if(!error)error=CGSNewWindow(d->connection,2,0,0,d->region,&d->backing);
+    }
     if(!error) error=CGSSetWindowDepth(d->connection,d->backing,4);
+#if VIM_GLI_DISPATCH_COUNT == 975
+    if(!error && pvg) {
+        // SLSSetWindowResolution takes CGFloat (float in i386, double in
+        // x86_64), verified in both native Mojave SkyLight slices.
+        int (*set_resolution)(int,int,CGFloat)=dlsym(RTLD_DEFAULT,"SLSSetWindowResolution");
+        error=set_resolution?set_resolution(d->connection,d->backing,backing_resolution):kCGLBadDrawable;
+        VIMGLITrace("bitmap window resolution=%g pixels=%dx%d result=%d",
+            backing_resolution,d->width,d->height,error);
+    }
+#endif
     if(!error) error=CGSBindSurface(d->connection,d->window,d->surface,1,0,d->backing);
+#if VIM_GLI_DISPATCH_COUNT == 975
+    if(!error && pvg) {
+        // The CGS surface's opacity belongs to the GL view, not its parent
+        // AppKit window. Our auxiliary bitmap window must carry that same
+        // flag: otherwise alpha-zero GL pixels cover CPU toolbar artwork
+        // with black. Native Intel's transparent-window fixture composites
+        // the underlying CPU pixels without rewriting framebuffer alpha.
+        unsigned char opaque=1;
+        int (*get_opacity)(int,int,int,unsigned char *)=dlsym(RTLD_DEFAULT,"SLSGetSurfaceOpacity");
+        int (*set_opacity)(int,int,unsigned char)=dlsym(RTLD_DEFAULT,"SLSSetWindowOpacity");
+        if(get_opacity && set_opacity && !get_opacity(d->connection,d->window,d->surface,&opaque))
+            error=set_opacity(d->connection,d->backing,opaque);
+    }
+#endif
     if(error) { VIMDestroyDrawable(d);return kCGLBadDrawable; }
     /* Host GL default framebuffer dimensions must follow the drawable. */
     void *pixels=VIMAllocatePrivateStorageKey(d->width,d->height);
@@ -691,6 +855,31 @@ static CGLError VIMCreateDrawable(struct VIMContext *c,const int *ids)
     CGLError e=VIMSetPrivateDrawable(c,d->width,d->height,pixels);
     if(e) { free(pixels);VIMDestroyDrawable(d);return e; }
     d->storage_key=pixels;VIMReplaceDrawable(c,d);
+#if VIM_GLI_DISPATCH_COUNT == 975
+    d->preserve_bitmap_binding=pvg;
+    if(restored_bitmap){
+        /* Keeping the server binding alone is insufficient: this context's
+         * independent GPU allocation was retired when it visited another
+         * surface. Native Intel retains the front image across that switch.
+         * Restore the current server pixels before any partial GL redraw,
+         * including CPU AppKit artwork written while this surface was idle.
+         * Do this only for a freshly recreated allocation, never every frame
+         * or an unchanged attachment (which could overwrite queued GL work).
+         */
+        CGRect locked_bounds={0};int depth=0,strides[4]={0};void *planes[4]={0};
+        int lock=CGSLockWindowBits(d->connection,d->backing,&locked_bounds,&depth,planes,strides);
+        if(lock){VIMReplaceDrawable(c,NULL);return kCGLBadDrawable;}
+        struct VIMSavedBinding previous=VIMSaveGLI((GLIContext)c);
+        int imported=planes[0] && depth==4 && strides[0]>=d->width*4 &&
+            locked_bounds.size.width*d->bitmap_resolution>=d->width &&
+            locked_bounds.size.height*d->bitmap_resolution>=d->height &&
+            VIMBindGLI((GLIContext)c) &&
+            DGImportDrawable(planes[0],d->width,d->height,strides[0],1);
+        VIMRestoreGLI(previous,(GLIContext)c);
+        int unlock=CGSUnlockWindowBits(d->connection,d->backing,NULL);
+        if(!imported || unlock){VIMReplaceDrawable(c,NULL);return kCGLBadDrawable;}
+    }
+#endif
     void (*external)(GLboolean)=(void *)DGGetProcAddress("DGSetExternalPresent");
     if(external && VIMBindGLI((GLIContext)c)) external(GL_TRUE);
     return kCGLNoError;
@@ -702,19 +891,10 @@ static CGLError VIMCreateAcceleratorDrawable(struct VIMContext *c,const uint32_t
     if(d) d->backend_context=c->backend;
     if(!d) return kCGLBadAlloc;
     IOReturn error=0;
-#if defined(VIM_GLI_CONNECTION_REUSE_EXPERIMENT)
-    if(vim_reuse_drawable_connection && c->idle_drawable_connection_count) {
-        unsigned index=--c->idle_drawable_connection_count;
-        d->updates=c->idle_drawable_connections[index];c->idle_drawable_connections[index]=0;
-        __atomic_fetch_add(&vim_drawable_connection_stats[0],1,__ATOMIC_RELAXED);
-    } else
-#endif
-    {
-        io_service_t service=vim_renderer_accelerator;
-        int discovered=!service;
-        if(discovered)service=VIMIOServiceForClass("VMsvga2Accel");
+    d->updates=VIMTakeIdleDrawableConnection(c);
+    if(!d->updates){
+        io_service_t service=VIMRendererAccelerator();
         error=service ? IOServiceOpen(service,mach_task_self(),2,&d->updates) : kIOReturnNotFound;
-        if(service && discovered)IOObjectRelease(service);
     }
     VIMGLITrace("surface open=%x",error);
     // Bind the existing CGS surface without changing its pixel format.
@@ -796,7 +976,7 @@ static CGLError VIMCreateAcceleratorDrawable(struct VIMContext *c,const uint32_t
     struct VIMSurfaceMapping mapping;
     if(!error) {
         struct VIMSurfaceGeometry geometry={0};size_t bytes=sizeof(geometry);
-        IOReturn query=IOConnectCallStructMethod(d->updates,kIOVM2DGetSurfaceGeometry,NULL,0,&geometry,&bytes);
+        IOReturn query=VIMSurfaceMetadataQuery(d->updates,kIOVM2DGetSurfaceGeometry,&geometry,&bytes);
         if(!query && bytes==sizeof(geometry) && geometry.version==VIM_SURFACE_GEOMETRY_VERSION)
             d->gpu_family_root=geometry.reserved;
     }
@@ -822,8 +1002,7 @@ static CGLError VIMCreateAcceleratorDrawable(struct VIMContext *c,const uint32_t
                 // smaller than its padded allocation. This server attachment
                 // has no client CGS window to query. Keep CPU layout untouched.
                 struct VIMSurfaceDrawingSize drawing={0};size_t bytes=sizeof(drawing);
-                IOReturn query=IOConnectCallStructMethod(d->updates,kIOVM2DGetSurfaceDrawingSize,
-                    NULL,0,&drawing,&bytes);
+                IOReturn query=VIMSurfaceMetadataQuery(d->updates,kIOVM2DGetSurfaceDrawingSize,&drawing,&bytes);
                 if(!query && bytes==sizeof(drawing) && drawing.width && drawing.height &&
                    drawing.width<=d->layout.width && drawing.height<=d->layout.height) {
                     d->width=(int)drawing.width;d->height=(int)drawing.height;
@@ -831,8 +1010,7 @@ static CGLError VIMCreateAcceleratorDrawable(struct VIMContext *c,const uint32_t
             }
             if(ids[2]==1 || d->gpu_family_root) {
                 struct VIMSurfaceGeometry geometry={0};size_t bytes=sizeof(geometry);
-                IOReturn query=IOConnectCallStructMethod(d->updates,kIOVM2DGetSurfaceGeometry,
-                    NULL,0,&geometry,&bytes);
+                IOReturn query=VIMSurfaceMetadataQuery(d->updates,kIOVM2DGetSurfaceGeometry,&geometry,&bytes);
                 if(!query) {
                     if(bytes!=sizeof(geometry) || geometry.version!=VIM_SURFACE_GEOMETRY_VERSION ||
                        geometry.source_width!=d->layout.width || geometry.source_height!=d->layout.height ||
@@ -922,9 +1100,117 @@ static CGLError VIMCreateAcceleratorDrawable(struct VIMContext *c,const uint32_t
     if(external && VIMBindGLI((GLIContext)c)) external(GL_TRUE);
     return VIMImportAcceleratorBacking(c,d);
 }
+#if VIM_GLI_DISPATCH_COUNT == 975
+static CGLError VIMCreatePVGWindowDrawable(struct VIMContext *c,const uint32_t *ids)
+{
+    if(!vim_pvg_flush_surface)return kCGLBadDrawable;
+    struct VIMCGSDrawable *d=calloc(1,sizeof(*d));
+    if(!d)return kCGLBadAlloc;
+    d->backend_context=c->backend;
+    d->connection=ids[0];d->window=ids[1];d->surface=ids[2];d->native_window=1;
+    struct VIMPVGDrawableOutput result={0};
+    IOReturn status=VIMPVGDrawableOpen(vim_native_accelerator,&d->pvg_drawable);
+    if(!status)status=VIMPVGDrawableSet(d->pvg_drawable,ids[2],c->format->double_buffer,&result);
+    if(!status)status=VIMPVGDrawableLookup(d->pvg_drawable,1,&d->pvg_surface);
+    VIMGLITrace("PVG drawable geometry status=%x mode=%llx drawable=%ux%u surface=%ux%u storage=%zux%zu",
+        status,(unsigned long long)result.mode,result.width,result.height,
+        result.surface_width,result.surface_height,d->pvg_surface?IOSurfaceGetWidth(d->pvg_surface):0,
+        d->pvg_surface?IOSurfaceGetHeight(d->pvg_surface):0);
+    if(status || !result.width || !result.height || result.width>8192 || result.height>8192 ||
+       (result.mode&15)!=4) {
+        VIMGLITrace("PVG drawable create=%x",status);
+        VIMDestroyDrawable(d);return kCGLBadDrawable;
+    }
+    d->width=(int)result.width;d->height=(int)result.height;
+    void *pixels=VIMAllocatePrivateStorageKey(d->width,d->height);
+    if(!pixels){VIMDestroyDrawable(d);return kCGLBadAlloc;}
+    CGLError error=VIMSetPrivateDrawable(c,d->width,d->height,pixels);
+    if(error){free(pixels);VIMDestroyDrawable(d);return error;}
+    d->storage_key=pixels;VIMReplaceDrawable(c,d);
+    pthread_mutex_lock(&vim_pvg_surfaces_lock);
+    d->pvg_next=vim_pvg_surfaces;vim_pvg_surfaces=d;
+    pthread_mutex_unlock(&vim_pvg_surfaces_lock);
+    void (*external)(GLboolean)=(void *)DGGetProcAddress("DGSetExternalPresent");
+    if(external&&VIMBindGLI((GLIContext)c))external(GL_TRUE);
+    VIMGLITrace("PVG drawable ready %dx%d format=%x",d->width,d->height,
+        (unsigned)IOSurfaceGetPixelFormat(d->pvg_surface));
+    return kCGLNoError;
+}
+static void VIMPresentPVGWindow(struct VIMContext *c,struct VIMCGSDrawable *d)
+{
+    // Native Mojave GLEngine derives callback bit0 from SwapInterval.
+    // AppKit uses it for VBL pacing, not the PVG IOSurface buffer index.
+    unsigned sync_options=!!c->swap_interval;
+    IOSurfaceRef surface=d->pvg_surface;
+    size_t planes=IOSurfaceGetPlaneCount(surface);
+    size_t width=planes?IOSurfaceGetWidthOfPlane(surface,0):IOSurfaceGetWidth(surface);
+    size_t height=planes?IOSurfaceGetHeightOfPlane(surface,0):IOSurfaceGetHeight(surface);
+    size_t stride=planes?IOSurfaceGetBytesPerRowOfPlane(surface,0):IOSurfaceGetBytesPerRow(surface);
+    size_t element=planes?IOSurfaceGetBytesPerElementOfPlane(surface,0):IOSurfaceGetBytesPerElement(surface);
+    if(planes>1 || IOSurfaceGetPixelFormat(surface)!=0x42475241u || element!=4 ||
+       width<(size_t)d->width || height<(size_t)d->height || stride<(size_t)d->width*4 ||
+       stride>SIZE_MAX/(size_t)d->height) {c->error=GL_INVALID_OPERATION;return;}
+    if(!d->scatter_unavailable && DGSupportsRAMScatterReads()) {
+        uint32_t seed=0;IOReturn status=IOSurfaceLock(surface,0,&seed);
+        if(status){c->error=GL_INVALID_OPERATION;return;}
+        void *destination=planes?IOSurfaceGetBaseAddressOfPlane(surface,0):IOSurfaceGetBaseAddress(surface);
+        // The read source is our independent host GL drawable, not this
+        // guest IOSurface. Complete the prepared receive into its actual
+        // pitched/reversed rows while holding native CPU write ownership.
+        // Keep the existing allocation and AppKit consumer notification.
+        int read=destination?DGReadDrawableRectRows(destination,stride,1,0,0,d->width,d->height):0;
+        status=IOSurfaceUnlock(surface,0,&seed);
+        if(status || !read){c->error=GL_INVALID_OPERATION;return;}
+        if(read>0) {
+            if(d->direct_present_traces++<3)VIMGLITrace("PVG prepared publication surface=%u size=%dx%d stride=%zu",
+                IOSurfaceGetID(surface),d->width,d->height,stride);
+            if(c->native_surface_flush)c->native_surface_flush(d->connection,d->window,d->surface,NULL,sync_options);
+            else if(vim_pvg_flush_surface(d->connection,d->window,d->surface,NULL,1,1))
+                c->error=GL_INVALID_OPERATION;
+            return;
+        }
+        // Negative means preparation was refused before any read command.
+        // Unlock before the established read-before-lock fallback; never
+        // replay a submitted read or retain an unsupported pin every frame.
+        d->scatter_unavailable=1;
+    }
+    if(!VIMEnsureReadback(d)){c->error=GL_OUT_OF_MEMORY;return;}
+    if(!DGReadDrawable(d->readback,d->width,d->height)){c->error=GL_INVALID_OPERATION;return;}
+    uint32_t seed=0;IOReturn status=IOSurfaceLock(surface,0,&seed);
+    if(status){c->error=GL_INVALID_OPERATION;return;}
+    void *destination=planes?IOSurfaceGetBaseAddressOfPlane(surface,0):IOSurfaceGetBaseAddress(surface);
+    if(destination)for(int y=0;y<d->height;++y)
+        memcpy((char *)destination+(size_t)y*stride,
+            d->readback+(size_t)(d->height-1-y)*d->width*4,(size_t)d->width*4);
+    else c->error=GL_INVALID_OPERATION;
+    status=IOSurfaceUnlock(surface,0,&seed);
+    if(status)c->error=GL_INVALID_OPERATION;
+    if(d->direct_present_traces++<3){
+        unsigned char *p=d->readback+((size_t)d->height/2*d->width+d->width/2)*4;
+        VIMGLITrace("PVG CPU publication surface=%u center=%u,%u,%u,%u lockbase=%p unlock=%x seed=%u",
+            IOSurfaceGetID(surface),p[0],p[1],p[2],p[3],destination,status,seed);
+    }
+    // Native GLDRendererMetal publishes the IOSurface returned for index1.
+    // CGSFlushSurface is a wrapper selecting index0: it succeeds but exposes
+    // the untouched buffer, producing a black window despite valid GL pixels.
+    if(destination&&!status){
+        if(c->native_surface_flush)c->native_surface_flush(d->connection,d->window,d->surface,NULL,sync_options);
+        else if(vim_pvg_flush_surface(d->connection,d->window,d->surface,NULL,1,1))
+            c->error=GL_INVALID_OPERATION;
+    }
+}
+#endif
 static CGLError VIMCreateNativeWindowDrawable(struct VIMContext *c,const uint32_t *ids)
 {
     if(!ids || !vim_native_bind_surface || !vim_native_accelerator) return kCGLBadDrawable;
+#if VIM_GLI_DISPATCH_COUNT == 975
+    int pvg=VIMIOObjectConformsTo(vim_native_accelerator,"AppleParavirtAccelerator");
+    // Mojave's non-layer-backed native GLDRendererMetal window also remains
+    // black with valid GPU pixels. Use the qualified CGS bitmap publication
+    // for that older consumer; a registered AppKit callback selects the
+    // native Surface2/IOSurface queue below without per-app preferences.
+    if(pvg&&!c->native_surface_flush)return VIMCreateDrawable(c,(const int *)ids);
+#endif
     uint32_t record[6]={ids[0],ids[1],ids[2],0,0,0};
     // Actual 10J3250 Intel gldAttachDrawable masks its pixel-format mode by
     // 0x7f803f before the native bind callback: ARGB8888 window mode is 0x24,
@@ -940,9 +1226,17 @@ static CGLError VIMCreateNativeWindowDrawable(struct VIMContext *c,const uint32_
     // Physical ARGB8888: single-buffer bind flags 0x824; double-buffer 0xc24.
     uint32_t flags=c->format->double_buffer ? 0xc24 : 0x824;
 #endif
+#if VIM_GLI_DISPATCH_COUNT == 975
+    // Measured native GLDRendererMetal -> SLSBindSurface uses Surface2.
+    // The older Intel surface mode cannot bind a PVG-owned window.
+    if(pvg)flags|=VIM_PVG_SURFACE2;
+#endif
     IOReturn error=vim_native_bind_surface(ids[0],ids[1],&record[2],flags,vim_native_accelerator);
     VIMGLITrace("native window bind=%x surface=%x accelerator=%x",error,record[2],vim_native_accelerator);
     if(error) return kCGLBadDrawable;
+#if VIM_GLI_DISPATCH_COUNT == 975
+    if(pvg)return VIMCreatePVGWindowDrawable(c,record);
+#endif
     CGLError result=VIMCreateAcceleratorDrawable(c,record,0);
     if(!result) {
         c->drawable->native_window=1;c->drawable->connection=ids[0];c->drawable->window=ids[1];
@@ -959,6 +1253,51 @@ static CGLError VIMTextureFromAcceleratorSurface(struct VIMContext *c,unsigned o
     if(!a[0] || (a[1]!=GL_TEXTURE_RECTANGLE_ARB && a[1]!=GL_TEXTURE_2D) ||
        (a[2]!=GL_RGBA && a[2]!=GL_RGBA8 && a[2]!=GL_RGB && a[2]!=GL_RGB8 && a[2]!=GL_RGBA16) ||
        !a[3] || !a[4] || a[3]>8192 || a[4]>8192) return kCGLBadValue;
+    /* Lion11G63's real Intel WindowServer supplies a nonzero final word for
+     * RECT backdrop imports. Native gliSetInteger calls gleGenSurfaceMipmaps,
+     * which immediately declines the rectangle target without a GL error.
+     * RECT has only level zero: that word must not select a stale CPU import
+     * instead of the live GPU alias. Preserve the ordinary 2D mipmap request,
+     * and never read this word from the shorter 3e6/3e7 records. */
+    unsigned mipmaps=operation==0x3e5 && a[1]!=GL_TEXTURE_RECTANGLE_ARB ? a[7] : 0;
+#if VIM_GLI_DISPATCH_COUNT == 975
+    // Exported front storage can subsequently be written through a shared
+    // texture/FBO, without a glDrawBuffer(FRONT) on the window context.
+    // Keep the established publication path for the entire sharing group.
+    if(operation!=0x3e5 || a[6]!=GL_BACK)VIMRequireFrontPublication((GLIContext)c);
+    struct VIMCGSDrawable *window_source=c->drawable;
+    if(operation==0x3e5 && window_source &&
+       (window_source->backing || window_source->pvg_drawable) && c->format->double_buffer &&
+       a[0]==(uint32_t)window_source->surface && a[1]==GL_TEXTURE_RECTANGLE_ARB &&
+       a[6]==GL_BACK && !mipmaps && a[3]<=(uint32_t)window_source->width &&
+       a[4]<=(uint32_t)window_source->height) {
+        // Native Mojave Intel accepts Core Image's current-window GL_BACK
+        // import and exposes it in opposite-row surface coordinates. A
+        // bitmap/PVG window has no VMsvga2 surface to lock. Use the same
+        // ordered GPU back-buffer alias as older native window drawables,
+        // before the front-only PVG IOSurface/foreign-surface routes below.
+        if(!VIMBindGLI((GLIContext)c))return kCGLBadContext;
+        if(DGSupportsBackDrawableAliases()) {
+            GLuint texture=VIMAppleTexture((GLIContext)c,a[1]);
+            if(!DGBindBackDrawableTexture(a[2],a[3],a[4],!window_source->unflipped))return kCGLBadDrawable;
+            VIMForgetCGSTextures((GLIContext)c,1,&texture);
+            VIMGLITrace("window back-buffer alias surface=%u size=%ux%u",a[0],a[3],a[4]);
+            return kCGLNoError;
+        }
+    }
+    IOSurfaceRef pvg_surface=VIMCopyPVGSurface(a[0]);
+    if(pvg_surface){
+        // Only 3e5 has flags/mipmap words. Native AppKit's 3e6/3e7
+        // requests have five words; inspecting a[7] reads unrelated stack
+        // data (the i386 Retina consumer was rejected with kCGLBadDrawable).
+        if(operation==0x3e5 && (mipmaps || (a[6]!=GL_FRONT && a[6]!=GL_FRONT_LEFT))){
+            CFRelease(pvg_surface);return kCGLBadDrawable;
+        }
+        CGLError error=CGLTexImageIOSurface2D(&c->api,a[1],a[2],a[3],a[4],
+            GL_BGRA,GL_UNSIGNED_INT_8_8_8_8_REV,pvg_surface,0);
+        CFRelease(pvg_surface);return error;
+    }
+#endif
     if(!VIMBindGLI((GLIContext)c)) return kCGLBadContext;
     // Measured native menu-bar transaction: 3e5, flags 404, source equals
     // the currently attached 1280x22 accelerator drawable. Earlier GL draws
@@ -969,7 +1308,7 @@ static CGLError VIMTextureFromAcceleratorSurface(struct VIMContext *c,unsigned o
      * ImageKit uses this for subpixel text. A CPU/front-buffer snapshot loses
      * the just-drawn destination and produces corrupt text on resize. Do not
      * map GL_BACK to front on a single-buffer context (native returns zero). */
-    if(operation==0x3e5 && a[6]==GL_BACK && !a[7] && source && source->accelerator_surface &&
+    if(operation==0x3e5 && a[6]==GL_BACK && !mipmaps && source && source->accelerator_surface &&
        c->format->double_buffer && a[0]==(uint32_t)source->surface &&
        a[1]==GL_TEXTURE_RECTANGLE_ARB && a[3]<=(uint32_t)source->width &&
        a[4]<=(uint32_t)source->height && DGSupportsBackDrawableAliases()) {
@@ -980,12 +1319,12 @@ static CGLError VIMTextureFromAcceleratorSurface(struct VIMContext *c,unsigned o
     if(source && source->pixel_format==VIM_GL_PIXEL_RGBA16 && source->unflipped &&
        !c->format->double_buffer && a[0]==(uint32_t)source->surface &&
        a[1]==GL_TEXTURE_RECTANGLE_ARB && a[3]<=(uint32_t)source->width && a[4]<=(uint32_t)source->height &&
-       (operation!=0x3e5 || ((a[6]==0x400 || a[6]==0x404) && !a[7]))) {
+       (operation!=0x3e5 || ((a[6]==0x400 || a[6]==0x404) && !mipmaps))) {
         GLuint texture=VIMAppleTexture((GLIContext)c,a[1]);
         if(!DGBindDrawableTexture(a[2],a[3],a[4]))return kCGLBadDrawable;
         VIMForgetCGSTextures((GLIContext)c,1,&texture);return kCGLNoError;
     }
-    if((operation==0x3e6 || operation==0x3e7 || (operation==0x3e5 && (a[6]==0x400 || a[6]==0x404) && !a[7])) &&
+    if((operation==0x3e6 || operation==0x3e7 || (operation==0x3e5 && (a[6]==0x400 || a[6]==0x404) && !mipmaps)) &&
        source && source->accelerator_surface && !source->unflipped &&
        !c->format->double_buffer && a[0]==(uint32_t)source->surface &&
        a[1]==GL_TEXTURE_RECTANGLE_ARB && a[3]<=(uint32_t)source->width &&
@@ -1011,7 +1350,7 @@ static CGLError VIMTextureFromAcceleratorSurface(struct VIMContext *c,unsigned o
         (!source->region_view && !source->origin_x && !source->origin_y &&
          source->width==(int)source->layout.width && source->height==(int)source->layout.height)) &&
        source->unflipped && !c->format->double_buffer && (a[0]==(uint32_t)source->surface || a[0]==source->gpu_family_root) &&
-       (operation==0x3e6 || operation==0x3e7 || ((a[6]==0x400 || a[6]==0x404) && !a[7])) && a[1]==GL_TEXTURE_RECTANGLE_ARB &&
+       (operation==0x3e6 || operation==0x3e7 || ((a[6]==0x400 || a[6]==0x404) && !mipmaps)) && a[1]==GL_TEXTURE_RECTANGLE_ARB &&
        a[3]<=(uint32_t)source->width && a[4]<=(uint32_t)source->height &&
        VIMGLProductFeature("VIM_RETAINED_CGS_SURFACES") && DGSupportsDrawableAliases()) {
         // A private self-import orders current queued drawing, even when
@@ -1027,24 +1366,23 @@ static CGLError VIMTextureFromAcceleratorSurface(struct VIMContext *c,unsigned o
        !c->format->double_buffer && a[0]==(uint32_t)source->surface &&
        a[6]==0x404 && a[3]<=(uint32_t)source->width && a[4]<=(uint32_t)source->height &&
        !(VIMGLProductFeature("VIM_RETAINED_CGS_SURFACES") && DGSupportsSurfaceEpochs() && DGSupportsSurfaceHolds() &&
-         a[1]==GL_TEXTURE_RECTANGLE_ARB && !a[7] && !source->region_view && !source->origin_x && !source->origin_y &&
+         a[1]==GL_TEXTURE_RECTANGLE_ARB && !mipmaps && !source->region_view && !source->origin_x && !source->origin_y &&
          a[3]<=source->layout.width && a[4]<=source->layout.height &&
          ((a[3]==source->layout.width && a[4]==source->layout.height) || DGSupportsSurfaceViews())))
-        return DGSnapshotDrawableTexture(a[1],a[2],a[3],a[4],a[7]) ? kCGLNoError : kCGLBadDrawable;
+        return DGSnapshotDrawableTexture(a[1],a[2],a[3],a[4],mipmaps) ? kCGLNoError : kCGLBadDrawable;
     io_connect_t connection=0;
-    io_service_t service=VIMIOServiceForClass("VMsvga2Accel");
+    io_service_t service=VIMRendererAccelerator();
     IOReturn error=service ? IOServiceOpen(service,mach_task_self(),2,&connection) : kIOReturnNotFound;
-    if(service) IOObjectRelease(service);
     uint64_t args[]={a[0],0x800};uint32_t record[11]={0};size_t size=sizeof(record);
     if(!error) error=IOConnectCallMethod(connection,kIOVM2DSetSurface,args,2,NULL,0,NULL,NULL,record,&size);
     struct VIMSurfaceMapping mapping;
     int locked=0;
     int retained_candidate=VIMGLProductFeature("VIM_RETAINED_CGS_SURFACES") && DGSupportsSurfaceEpochs() && DGSupportsSurfaceHolds() &&
-        a[1]==GL_TEXTURE_RECTANGLE_ARB && (operation!=0x3e5 || ((a[6]==0x400 || a[6]==0x404) && !a[7]));
+        a[1]==GL_TEXTURE_RECTANGLE_ARB && (operation!=0x3e5 || ((a[6]==0x400 || a[6]==0x404) && !mipmaps));
     if(!error) { error=retained_candidate?VIMLockReadTextureSurface(connection,&mapping):VIMLockSurface(connection,&mapping);locked=!error; }
     if(!error && mapping.layout.bits_per_pixel==64) {
         if(a[1]==GL_TEXTURE_RECTANGLE_ARB && a[3]==mapping.layout.width && a[4]==mapping.layout.height &&
-           (operation!=0x3e5 || ((a[6]==0x400 || a[6]==0x404) && !a[7])))
+           (operation!=0x3e5 || ((a[6]==0x400 || a[6]==0x404) && !mipmaps)))
             return VIMImportCGSTexture(c,a,connection,&mapping);
         // The compatibility CPU codec below is BGRA8-only. An unsupported
         // typed view must not reinterpret its eight-byte pixels as four.
@@ -1053,7 +1391,7 @@ static CGLError VIMTextureFromAcceleratorSurface(struct VIMContext *c,unsigned o
     if(!error && VIMGLProductFeature("VIM_RETAINED_CGS_SURFACES") && DGSupportsSurfaceEpochs() && DGSupportsSurfaceHolds() &&
        a[1]==GL_TEXTURE_RECTANGLE_ARB && a[3]<=mapping.layout.width && a[4]<=mapping.layout.height &&
        ((a[3]==mapping.layout.width && a[4]==mapping.layout.height) || (a[0]!=1 && DGSupportsSurfaceViews())) &&
-       (operation!=0x3e5 || ((a[6]==0x400 || a[6]==0x404) && !a[7]))) {
+       (operation!=0x3e5 || ((a[6]==0x400 || a[6]==0x404) && !mipmaps))) {
         // Physical 3e5 and 3e7 both retain a live alias, including when
         // importing the current unflipped drawable before glFlush. Publish
         // earlier GPU commands first, without reading back stale CPU pixels.
@@ -1111,7 +1449,7 @@ static CGLError VIMTextureFromAcceleratorSurface(struct VIMContext *c,unsigned o
         glPixelStorei(GL_UNPACK_SWAP_BYTES,0);glPixelStorei(GL_UNPACK_LSB_FIRST,0);
         glTexImage2D(a[1],0,(GLint)a[2],(GLsizei)a[3],(GLsizei)a[4],0,
             GL_BGRA,GL_UNSIGNED_INT_8_8_8_8_REV,pixels);
-        if(operation==0x3e5 && a[7]) glGenerateMipmapEXT(a[1]);
+        if(mipmaps) glGenerateMipmapEXT(a[1]);
         glPixelStorei(GL_UNPACK_ROW_LENGTH,row);glPixelStorei(GL_UNPACK_ALIGNMENT,alignment);
         glPixelStorei(GL_UNPACK_SKIP_ROWS,skip_rows);glPixelStorei(GL_UNPACK_SKIP_PIXELS,skip_pixels);
         glPixelStorei(GL_UNPACK_SWAP_BYTES,swap_bytes);glPixelStorei(GL_UNPACK_LSB_FIRST,lsb_first);
@@ -1359,7 +1697,7 @@ static uint32_t VIMTryGPUFramebufferCopy(io_connect_t connection,uint32_t surfac
     struct VIMCGSDrawable *d=c?c->drawable:NULL;
     if(!status || !d || (!d->gpu_family_root && (!c->primary_drawable || !c->primary_drawable->gpu_family_root)))return 0;
     struct VIMSurfaceGeometry geometry={0};size_t bytes=sizeof(geometry);
-    IOReturn error=IOConnectCallStructMethod(connection,kIOVM2DGetSurfaceGeometry,NULL,0,&geometry,&bytes);
+    IOReturn error=VIMSurfaceMetadataQuery(connection,kIOVM2DGetSurfaceGeometry,&geometry,&bytes);
     if(error || bytes!=sizeof(geometry) || geometry.version!=VIM_SURFACE_GEOMETRY_VERSION || !geometry.reserved)return 0;
     /* This opcode is an IN-PLACE copy within one canonical display family.
      * It cannot source the framebuffer into an unrelated destination, or a
@@ -1627,6 +1965,12 @@ static void VIMCopyDrawableBackToFront(struct VIMContext *c)
     GLboolean scissor=glIsEnabled(GL_SCISSOR_TEST);
     glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&read_fb);
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&draw_fb);
+#if VIM_GLI_DISPATCH_COUNT == 975
+    // Actual Mojave Intel leaves the window's front/back images untouched
+    // when Swap is issued against an offscreen draw FBO. The later flush
+    // still completes/imports that FBO; do not copy the window behind it.
+    if(draw_fb)return;
+#endif
     glBindFramebufferEXT(GL_READ_FRAMEBUFFER,0);glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER,0);
     glGetIntegerv(GL_READ_BUFFER,&read_buffer);glGetIntegerv(GL_DRAW_BUFFER,&draw_buffer);
     void (*set_scissor)(GLboolean)=c->format->profile!=0x1000?
@@ -1641,6 +1985,37 @@ static void VIMCopyDrawableBackToFront(struct VIMContext *c)
     glBindFramebufferEXT(GL_READ_FRAMEBUFFER,(GLuint)read_fb);
     glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER,(GLuint)draw_fb);
 }
+#if VIM_GLI_DISPATCH_COUNT == 975
+static int VIMPresentBitmapRAM(struct VIMContext *c,struct VIMCGSDrawable *d)
+{
+    if(!d->backing || !d->bitmap_resolution || d->scatter_unavailable || !DGSupportsRAMScatterReads())return 0;
+    CGRect bounds={0};int depth=0,strides[4]={0};void *planes[4]={0};
+    int error=CGSLockWindowBits(d->connection,d->backing,&bounds,&depth,planes,strides);
+    if(error){c->error=GL_INVALID_OPERATION;return 1;}
+    d->locked=1;
+    int read=0;
+    if(planes[0] && depth==4 && strides[0]>=d->width*4 &&
+       bounds.size.width*d->bitmap_resolution>=d->width &&
+       bounds.size.height*d->bitmap_resolution>=d->height) {
+        // Pin the actual destination while WindowServer grants CPU ownership.
+        // Native readv writes reversed/pitched rows directly into that backing,
+        // avoiding a guest heap frame and an emulated per-row flip/copy loop.
+        read=DGReadDrawableRectRows(planes[0],strides[0],1,0,0,d->width,d->height);
+    }
+    error=CGSUnlockWindowBits(d->connection,d->backing,d->region);d->locked=0;
+    if(error){c->error=GL_INVALID_OPERATION;return 1;}
+    if(read<0){
+        // Optional prepare failed before any read command/pixel write. Keep
+        // the original read-before-lock path; never replay a submitted read.
+        d->scatter_unavailable=1;return 0;
+    }
+    if(!read)c->error=GL_INVALID_OPERATION;
+    else CGSFlushSurface(d->connection,d->window,d->surface,NULL);
+    if(d->direct_present_traces++<3)VIMGLITrace("prepared bitmap present size=%dx%d stride=%d result=%d",
+        d->width,d->height,strides[0],read);
+    return 1;
+}
+#endif
 static void VIMPresentDrawableKnown(GLIContext opaque,int known_framebuffer,GLint draw_framebuffer)
 {
     struct VIMContext *c=(struct VIMContext *)opaque;
@@ -1648,7 +2023,10 @@ static void VIMPresentDrawableKnown(GLIContext opaque,int known_framebuffer,GLin
     if(!d || !VIMBindGLI(opaque)) return;
     if(!known_framebuffer)glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&draw_framebuffer);
     if(draw_framebuffer) return; /* An offscreen finish is not a window swap. */
-#if VIM_GLI_DISPATCH_COUNT == 968
+#if VIM_GLI_DISPATCH_COUNT == 975
+    if(d->pvg_drawable){VIMPresentPVGWindow(c,d);return;}
+#endif
+#if VIM_GLI_DISPATCH_COUNT == 764 || VIM_GLI_DISPATCH_COUNT == 968
     /* An empty flush must not publish an old private image either. A batch
      * which drew has already prepared its backing; never reseed it here. */
     if(!VIMPrepareOrdinaryDrawing(opaque))return;
@@ -1657,6 +2035,9 @@ static void VIMPresentDrawableKnown(GLIContext opaque,int known_framebuffer,GLin
     if(d->pixel_format){VIMPresentTypedPBuffer(c,d);return;}
     if(d->backing_render_active){VIMEndScopedDrawable(opaque);return;}
     if(d->gpu_family_root){VIMPublishGPUFamily(c,d);return;}
+#if VIM_GLI_DISPATCH_COUNT == 975
+    if(VIMPresentBitmapRAM(c,d))return;
+#endif
     int publish_back=0;
 #if VIM_GLI_DISPATCH_COUNT == 764
     if(d->accelerator_surface && d->unflipped && d->surface>2 && c->format->double_buffer) {
@@ -1816,7 +2197,16 @@ static void VIMPresentDrawableKnown(GLIContext opaque,int known_framebuffer,GLin
     VIMGLITrace("present lock=%d depth=%d stride=%d bits=%p bounds=%g,%g",e,depth,stride,pixels,bounds.size.width,bounds.size.height);
     if(e) { c->error=GL_INVALID_OPERATION;return; }
     d->locked=1;
-    if(pixels && depth==4 && stride>=d->width*4 && bounds.size.height>=d->height) {
+    int bounds_valid=bounds.size.height>=d->height;
+#if VIM_GLI_DISPATCH_COUNT == 975
+    // SLSLockWindowBits returns logical bounds even for a 2x bitmap window;
+    // its row stride and allocation are in pixels. Keep those units distinct.
+    if(d->bitmap_resolution>0) {
+        bounds_valid=bounds.size.width*d->bitmap_resolution>=d->width &&
+            bounds.size.height*d->bitmap_resolution>=d->height;
+    }
+#endif
+    if(pixels && depth==4 && stride>=d->width*4 && bounds_valid) {
         for(int y=0;y<d->height;++y)
             memcpy((char *)pixels+(size_t)y*stride,
                 d->readback+(size_t)(d->height-1-y)*d->width*4,(size_t)d->width*4);
@@ -1830,7 +2220,23 @@ static void VIMPresentDrawableKnown(GLIContext opaque,int known_framebuffer,GLin
 }
 // Debugger-only same-boot A/B, not an environment-polled runtime option.
 static volatile int vim_compound_flush=1;
-static void VIMGLIFlushMode(GLIContext ctx,int finish,int render_only)
+static void VIMPresentFlushedDrawable(GLIContext ctx,int known,GLint framebuffer,int swap,int render_only)
+{
+#if VIM_GLI_DISPATCH_COUNT == 975
+    struct VIMContext *c=(void *)ctx;
+    // Native Intel: a back-only double-buffered window's Flush/Finish submits
+    // work, but only Swap publishes. Prove the cheap case; once any context
+    // selected/exported front storage, retain our original conservative path.
+    // All GPU completion, imported-surface writeback and errors still run.
+    if(!swap && !render_only && c->drawable && c->drawable->pvg_drawable &&
+       c->format->double_buffer &&
+       !__atomic_load_n(&c->group->front_publication_required,__ATOMIC_ACQUIRE))return;
+#else
+    (void)swap;(void)render_only;
+#endif
+    VIMPresentDrawableKnown(ctx,known,framebuffer);
+}
+static void VIMGLIFlushMode(GLIContext ctx,int finish,int render_only,int swap)
 {
     struct VIMContext *c=(struct VIMContext *)ctx;
     if(!c)return;
@@ -1884,7 +2290,7 @@ static void VIMGLIFlushMode(GLIContext ctx,int finish,int render_only)
             pthread_mutex_unlock(&c->group->lock);
             VIMCheckBackendError(ctx,finish?"finish":"flush",0,0);
             VIMRestoreGLI(previous,ctx);
-            if(observed && publish_drawable)VIMPresentDrawableKnown(ctx,1,(GLint)draw_framebuffer);
+            if(observed && publish_drawable)VIMPresentFlushedDrawable(ctx,1,(GLint)draw_framebuffer,swap,render_only);
             return;
         }
         if(writes!=local)free(writes);
@@ -1894,7 +2300,7 @@ static void VIMGLIFlushMode(GLIContext ctx,int finish,int render_only)
     if(result<0){
         VIMRestoreGLI(previous,ctx);
         if(finish)VIMDispatch_finish(ctx);else VIMDispatch_flush(ctx);
-        if(publish_drawable)VIMPresentDrawableKnown(ctx,0,0);return;
+        if(publish_drawable)VIMPresentFlushedDrawable(ctx,0,0,swap,render_only);return;
     }
     if(!result){
         // The backend owns the one error; duplicating it here would make a
@@ -1906,15 +2312,15 @@ static void VIMGLIFlushMode(GLIContext ctx,int finish,int render_only)
     VIMFlushSurfacesForFramebuffer(ctx,1,(GLint)draw_framebuffer);
     VIMCheckBackendError(ctx,finish?"finish":"flush",0,0);
     VIMRestoreGLI(previous,ctx);
-    if(publish_drawable)VIMPresentDrawableKnown(ctx,1,(GLint)draw_framebuffer);
+    if(publish_drawable)VIMPresentFlushedDrawable(ctx,1,(GLint)draw_framebuffer,swap,render_only);
 }
-static void VIMGLIFlush(GLIContext ctx) { VIMGLIFlushMode(ctx,0,0); }
-static void VIMGLIFinish(GLIContext ctx) { VIMGLIFlushMode(ctx,1,0); }
-static void VIMGLIFlushRender(GLIContext ctx) { VIMGLIFlushMode(ctx,0,1); }
-static void VIMGLIFinishRender(GLIContext ctx) { VIMGLIFlushMode(ctx,1,1); }
+static void VIMGLIFlush(GLIContext ctx) { VIMGLIFlushMode(ctx,0,0,0); }
+static void VIMGLIFinish(GLIContext ctx) { VIMGLIFlushMode(ctx,1,0,0); }
+static void VIMGLIFlushRender(GLIContext ctx) { VIMGLIFlushMode(ctx,0,1,0); }
+static void VIMGLIFinishRender(GLIContext ctx) { VIMGLIFlushMode(ctx,1,1,0); }
 static void VIMGLISwap(GLIContext ctx)
 {
     struct VIMContext *c=(void *)ctx;
     if(c->format->double_buffer && VIMBindGLI(ctx)) VIMCopyDrawableBackToFront(c);
-    VIMGLIFinish(ctx);
+    VIMGLIFlushMode(ctx,1,0,1);
 }

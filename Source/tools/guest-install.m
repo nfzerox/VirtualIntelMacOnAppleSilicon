@@ -8,11 +8,15 @@
 #import <objc/runtime.h>
 #import <IOKit/IOKitLib.h>
 #include "guest-install-targets.h"
+#include "guest-opengl-selection.h"
 #include <unistd.h>
 #include <signal.h>
 #include <sys/file.h>
 #include <sys/sysctl.h>
 #include <dlfcn.h>
+#include <fcntl.h>
+#include <pwd.h>
+#include <sys/stat.h>
 #include "guest-hidpi-policy.h"
 
 static void Check(BOOL ok,NSString *message){if(!ok)@throw [NSException exceptionWithName:@"InstallRejected" reason:message userInfo:nil];}
@@ -25,7 +29,7 @@ static NSDictionary *LiveAdmissionWithPolicy(BOOL requireLibraryValidation) {
     Check(geteuid()==0,@"Guest installation requires root privileges");
     NSDictionary *version=[NSDictionary dictionaryWithContentsOfFile:@"/System/Library/CoreServices/SystemVersion.plist"];
     NSString *release=version[@"ProductVersion"],*build=version[@"ProductBuildVersion"];
-    Check([@[@"mojave",@"catalina",@"bigsur"] containsObject:VIMGuestForSystemVersion(release)?:@""],@"This installer must run inside a Mojave, Catalina or Big Sur guest, not on the host");
+    Check([VIMModernGuests() containsObject:VIMGuestForSystemVersion(release)?:@""],@"This installer must run inside a Mojave or later guest, not on the host");
     Check([KernelValue("kern.osversion") isEqual:build],@"The running kernel does not match the installed system; finish updating and restart first");
     // Values and API from vendored xnu-6153.141.1/bsd/sys/csr.h:
     // Require untrusted kexts (bit 0) and unrestricted filesystem (bit 1).
@@ -69,21 +73,22 @@ static NSDictionary *LiveAdmission(void) {return LiveAdmissionWithPolicy(YES);}
 #include "guest-shader-cache.h"
 #include "guest-progress-state.h"
 #include "guest-boot-policy.h"
-static NSArray<NSString *> *InstallTargets(NSString *guest) {
-    if([guest isEqual:@"bigsur"])return VIMBigSurInstallTargets();
-    return [guest isEqual:@"mojave"]?VIMMojaveInstallTargets():VIMCatalinaInstallTargets();
+static NSArray<NSString *> *InstallTargets(NSString *guest,BOOL passthroughOpenGL) {
+    Check(!passthroughOpenGL||[guest isEqual:@"mojave"],@"Optional PassthroughOpenGL targets require Mojave");
+    if([VIMAssistantGuests() containsObject:guest])return VIMBigSurInstallTargets();
+    NSArray *targets=[guest isEqual:@"mojave"]?VIMMojaveInstallTargets():VIMCatalinaInstallTargets();
+    return passthroughOpenGL?VIMTargetsWithPassthroughOpenGL(targets):targets;
 }
-static BOOL TransactionTargetsMatchPolicy(NSArray *actual,NSString *guest) {
-    NSArray *current=InstallTargets(guest);
+static BOOL TransactionTargetsMatchPolicy(NSArray *actual,NSString *guest,BOOL passthroughOpenGL) {
+    NSArray *current=InstallTargets(guest,passthroughOpenGL);
     if([actual isEqual:current])return YES;
-    // Continue to inspect/restore already saved Mojave graphics transactions.
-    // This exact prior policy predates the additive Aperture preference. New
-    // plans always include it; arbitrary target subsets remain forbidden.
+    // Older transactions included mutable app preferences. Retire exactly
+    // those two targets, not any graphics binary or boot-policy preference.
     if(![guest isEqual:@"mojave"])return NO;
-    NSMutableArray *previous=[current mutableCopy];
-    [previous removeObject:@"Library/Preferences/com.apple.Aperture.plist"];
-    [previous removeObject:@"Library/Preferences/com.apple.iPhoto.plist"];
-    return [actual isEqual:previous];
+    NSMutableArray *previous=[actual mutableCopy];
+    [previous removeObjectsInArray:@[@"Library/Preferences/com.apple.Aperture.plist",
+                                   @"Library/Preferences/com.apple.iPhoto.plist"]];
+    return [previous isEqual:current];
 }
 static NSDictionary *SnapshotLibraryOnlyInstallation(NSURL *root,NSURL *directory,NSString *build) {
     NSError *error=nil;
@@ -167,11 +172,11 @@ static NSDictionary *ApplyTransaction(NSURL *journal,BOOL rollback) {
     NSDictionary *state=transaction.state,*metadata=state[@"Metadata"],*preparation=metadata[@"Preparation"];
     NSURL *root=[NSURL fileURLWithPath:state[@"Root"]];
     NSString *guest=preparation[@"Guest"],*build=metadata[@"ProductBuildVersion"];
-    Check([@[@"mojave",@"catalina",@"bigsur"] containsObject:guest],@"Invalid transaction guest");
+    Check([VIMModernGuests() containsObject:guest?:@""],@"Invalid transaction guest");
     BOOL mojave=[guest isEqual:@"mojave"];
-    BOOL bigsur=[guest isEqual:@"bigsur"];
+    BOOL bigsur=[VIMAssistantGuests() containsObject:guest];
     NSArray *targets=[state[@"Entries"] valueForKey:@"RelativePath"];
-    Check(TransactionTargetsMatchPolicy(targets,guest),@"Transaction targets differ from compiled policy");
+    Check(TransactionTargetsMatchPolicy(targets,guest,[preparation[@"PassthroughOpenGL"] isEqual:@YES]),@"Transaction targets differ from compiled policy");
     NSDictionary *version=[NSDictionary dictionaryWithContentsOfURL:[root URLByAppendingPathComponent:@"System/Library/CoreServices/SystemVersion.plist"]];
     Check([version[@"ProductBuildVersion"] isEqual:build]&&[version[@"ProductVersion"] isEqual:preparation[@"ProductVersion"]],@"Cannot apply or restore a transaction from another OS build");
     NSURL *cacheDirectory=[NSURL fileURLWithPath:metadata[@"BootCacheDirectory"]];
@@ -233,7 +238,36 @@ static NSDictionary *ApplyTransaction(NSURL *journal,BOOL rollback) {
     } @finally {close(lock);}
 }
 #include "guest-install-verification.h"
+#include "guest-initial-preferences.h"
+#include "guest-app-layer-policy.h"
 int main(int argc,const char **argv){@autoreleasepool {
+    if(argc==2&&!strcmp(argv[1],"--remove-app-layer-overrides")) {
+        @try {
+            Check(geteuid()==0,@"App preference cleanup requires guest administrator access");
+            NSDictionary *version=[NSDictionary dictionaryWithContentsOfFile:@"/System/Library/CoreServices/SystemVersion.plist"];
+            Check([VIMGuestForSystemVersion(version[@"ProductVersion"]) isEqual:@"mojave"],@"App preference cleanup is only for Mojave guests");
+            NSMutableArray *users=[NSMutableArray new];struct passwd *user;
+            setpwent();while((user=getpwent()))
+                if(user->pw_uid>=501&&user->pw_name&&user->pw_dir&&!strncmp(user->pw_dir,"/Users/",7))
+                    [users addObject:@(user->pw_name)];
+            endpwent();
+            NSDictionary *result=RemoveMojaveAppLayerOverrides(users);
+            NSData *data=[NSJSONSerialization dataWithJSONObject:result options:0 error:nil];
+            fwrite(data.bytes,1,data.length,stdout);fputc('\n',stdout);
+            return [result[@"Failures"] unsignedIntegerValue]?65:0;
+        }@catch(NSException *exception){fprintf(stderr,"%s\n",exception.reason.UTF8String);return 65;}
+    }
+    if(argc==2&&!strcmp(argv[1],"--prepare-host-desktop")) {
+        @try {
+            NSDictionary *admission=LiveAdmission();
+            NSInteger changed=PrepareHostInstalledUserPreferences(admission);
+            if(changed<0){fputs("The initial desktop services are not ready yet.\n",stderr);return 75;}
+            NSMutableDictionary *result=[VerifyLivePVG(admission) mutableCopy];
+            result[@"InitialUserPreferencesPrepared"]=@YES;result[@"InitialUserPreferencesChanged"]=@(changed!=0);
+            NSData *data=[NSJSONSerialization dataWithJSONObject:result options:0 error:NULL];
+            fwrite(data.bytes,1,data.length,stdout);fputc('\n',stdout);return 0;
+        } @catch(NSException *exception){fprintf(stderr,"%s\n",exception.reason.UTF8String);return 65;}
+    }
     if(argc==2&&!strcmp(argv[1],"--configure-display-policy")) {
         @try {
             LiveAdmission();BOOL changed=NO;
@@ -279,6 +313,15 @@ int main(int argc,const char **argv){@autoreleasepool {
         @try {NSData *data=[NSJSONSerialization dataWithJSONObject:LiveAdmission() options:NSJSONWritingPrettyPrinted error:NULL];fwrite(data.bytes,1,data.length,stdout);fputc('\n',stdout);return 0;}
         @catch(NSException *exception){fprintf(stderr,"%s\n",exception.reason.UTF8String);return 65;}
     }
+    if(argc==2&&!strcmp(argv[1],"--verify-pvg-device")) {
+        // A host-built system has no guest-side installation journal. Return
+        // the actual live GPU result without claiming a transaction or reboot.
+        @try {
+            NSDictionary *result=VerifyLivePVG(LiveAdmission());
+            NSData *data=[NSJSONSerialization dataWithJSONObject:result options:0 error:NULL];
+            fwrite(data.bytes,1,data.length,stdout);fputc('\n',stdout);return 0;
+        } @catch(NSException *exception){fprintf(stderr,"%s\n",exception.reason.UTF8String);return 65;}
+    }
     if((argc==3||(argc==5&&!strcmp(argv[3],"--progress")))&&(!strcmp(argv[1],"--apply")||!strcmp(argv[1],"--rollback"))) {
         id activity=[NSProcessInfo.processInfo beginActivityWithOptions:NSActivityUserInitiated|NSActivityIdleDisplaySleepDisabled reason:@"Installing virtual Mac graphics support"];
         @try {
@@ -307,11 +350,12 @@ int main(int argc,const char **argv){@autoreleasepool {
         Check([release isKindOfClass:NSString.class]&&[guest isKindOfClass:NSString.class],@"Invalid guest identity");
         BOOL mojave=[release isEqual:@"10.14"]||[release hasPrefix:@"10.14."];
         BOOL catalina=[release isEqual:@"10.15"]||[release hasPrefix:@"10.15."];
-        BOOL bigsur=[VIMGuestForSystemVersion(release) isEqual:@"bigsur"];
-        Check((mojave&&[guest isEqual:@"mojave"])||(catalina&&[guest isEqual:@"catalina"])||(bigsur&&[guest isEqual:@"bigsur"]),@"Unsupported backport target");
+        NSString *family=VIMGuestForSystemVersion(release);
+        BOOL bigsur=[VIMAssistantGuests() containsObject:family?:@""];
+        Check((mojave&&[guest isEqual:@"mojave"])||(catalina&&[guest isEqual:@"catalina"])||(bigsur&&[guest isEqual:family]),@"Unsupported backport target");
         for(NSString *marker in @[@"macOS Install Data",@"OS X Install Data"])
             Check(![NSFileManager.defaultManager fileExistsAtPath:[root URLByAppendingPathComponent:marker].path],@"Finish the macOS installation/update before preparing a driver transaction");
-        NSArray *targets=InstallTargets(guest);
+        NSArray *targets=InstallTargets(guest,[receipt[@"PassthroughOpenGL"] isEqual:@YES]);
         BOOL live=[root.path isEqual:@"/"];
         if(live) {
             Check(geteuid()==0,@"Guest planning requires root privileges");

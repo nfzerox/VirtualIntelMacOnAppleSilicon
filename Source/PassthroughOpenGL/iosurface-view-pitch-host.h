@@ -7,19 +7,24 @@
  * and rendering.
  * Every row after the first is then read and written at the wrong offset:
  * horizontal row corruption, sheared/repeated window images and trails.
- * Full-width imports are unaffected, as is a view whose own aligned pitch
- * happens to equal the surface's bytesPerRow.
+ * NVIDIA can instead use a different tile grid when rendering a tall view,
+ * while passing the short sampling test. Measure that independently below.
+ * Full-extent imports are unaffected. A linear view is also safe when its
+ * aligned pitch equals the surface's bytesPerRow; tiled views additionally
+ * depend on height, including the one-row Core Image lookup targets.
  *
  * Measure the behavior, including the driver's alignment, once per native
  * renderer with real draws instead of matching vendor strings. Then:
  *  - host allocations choose a capacity whose bytesPerRow equals the view
  *    pitch the driver assumes, so logical sizes stay exact (see callers);
- *  - any remaining incompatible view is imported at the surface's full width.
+ *  - remaining incompatible linear views use the surface's full width;
+ *    tiled views use its full width and height.
  *    Rectangle textures address texels, so [0,width) still names the same
  *    pixels; only the extra columns become addressable. That is preferable
  *    to every row being misaddressed.
  * A driver which misaddresses in a pattern other than one consistent
- * alignment gets exact-width allocations and full-width imports only.
+ * alignment (including NVIDIA tiled render-target views) gets exact-size
+ * allocations in both dimensions and full-extent imports only.
  * Renderers which honor bytesPerRow take exactly the previous native path,
  * as does any renderer whose measurement cannot complete.
  */
@@ -33,11 +38,12 @@
 #include <string.h>
 
 /* DGIOSurfaceViewPitch results: 0 honors bytesPerRow; DG_VIEW_PITCH_UNKNOWN
- * misaddresses views in an unrecognized pattern; otherwise the measured
+ * misaddresses views in an unrecognized/tiled pattern; otherwise the measured
  * power-of-two row alignment in bytes. */
 #define DG_VIEW_PITCH_UNKNOWN ((size_t)1)
 #define DG_VIEW_PITCH_RENDERERS 16u
 #define DG_VIEW_PITCH_PROBE_COLUMNS 2048u
+#define DG_VIEW_PITCH_PROBE_ROWS 128u
 #define DG_VIEW_PITCH_PROBE_ROW (DG_VIEW_PITCH_PROBE_COLUMNS*4u)
 struct DGViewPitchRenderer { GLint renderer;size_t pitch; };
 static pthread_mutex_t dg_view_pitch_lock=PTHREAD_MUTEX_INITIALIZER;
@@ -86,8 +92,51 @@ static size_t DGViewPitchRowOffset(CGLContextObj context,IOSurfaceRef surface,GL
     glDeleteTextures(1,&texture);
     return offset;
 }
+/* NVIDIA can sample a short view correctly yet address a tiled render target
+ * with the view's tile grid instead of the surface's. Two rows never exercise
+ * that layout. Draw two pixels across a tile-row boundary, then check their
+ * actual CPU-visible addresses. A full-width control must pass before a view
+ * failure is evidence of this behavior. -1 means the measurement failed. */
+static int DGViewPitchRenderMatches(CGLContextObj context,IOSurfaceRef surface,GLsizei columns)
+{
+    if(IOSurfaceLock(surface,0,NULL))return -1;
+    void *base=IOSurfaceGetBaseAddress(surface);
+    if(base)memset(base,0,IOSurfaceGetAllocSize(surface));
+    kern_return_t unlocked=IOSurfaceUnlock(surface,0,NULL);
+    if(!base || unlocked)return -1;
+    GLuint texture=0,framebuffer=0;int result=-1;
+    glGenTextures(1,&texture);glBindTexture(GL_TEXTURE_RECTANGLE_ARB,texture);
+    if(!CGLTexImageIOSurface2D(context,GL_TEXTURE_RECTANGLE_ARB,GL_RGBA8,columns,DG_VIEW_PITCH_PROBE_ROWS,
+        GL_BGRA,GL_UNSIGNED_INT_8_8_8_8_REV,surface,0)){
+        glGenFramebuffersEXT(1,&framebuffer);glBindFramebufferEXT(GL_FRAMEBUFFER_EXT,framebuffer);
+        glFramebufferTexture2DEXT(GL_FRAMEBUFFER_EXT,GL_COLOR_ATTACHMENT0_EXT,GL_TEXTURE_RECTANGLE_ARB,texture,0);
+        if(glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT)==GL_FRAMEBUFFER_COMPLETE_EXT){
+            glViewport(0,0,columns,DG_VIEW_PITCH_PROBE_ROWS);
+            glMatrixMode(GL_PROJECTION);glLoadIdentity();glOrtho(0,columns,0,DG_VIEW_PITCH_PROBE_ROWS,-1,1);
+            glMatrixMode(GL_MODELVIEW);glLoadIdentity();glDisable(GL_TEXTURE_RECTANGLE_ARB);
+            glColor4ub(17,34,51,255);glBegin(GL_QUADS);
+            for(int y=1;y<=33;y+=32){
+                glVertex2i(0,y);glVertex2i(1,y);glVertex2i(1,y+1);glVertex2i(0,y+1);
+            }
+            glEnd();glFinish();
+            if(!glGetError() && !IOSurfaceLock(surface,kIOSurfaceLockReadOnly,NULL)){
+                const uint32_t *pixels=IOSurfaceGetBaseAddress(surface);
+                if(pixels){
+                    size_t count=0;
+                    for(size_t i=0;i<IOSurfaceGetAllocSize(surface)/4;++i)count+=pixels[i]==0xff112233u;
+                    if(count==2)result=pixels[DG_VIEW_PITCH_PROBE_ROW/4]==0xff112233u &&
+                        pixels[33*DG_VIEW_PITCH_PROBE_ROW/4]==0xff112233u;
+                }
+                IOSurfaceUnlock(surface,kIOSurfaceLockReadOnly,NULL);
+            }
+        }
+    }
+    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT,0);glDeleteFramebuffersEXT(1,&framebuffer);glDeleteTextures(1,&texture);
+    return result;
+}
 /* Measure with a private context on the same renderer: 2048 columns (8192-byte
- * rows), 2 rows. Views of 1, 65 and 300 columns must read row 1 at byte 8192.
+ * rows), 128 rows for tiled rendering. Short sampling views of 1, 65 and 300
+ * columns must read row 1 at byte 8192.
  * An aligning driver reads round_up(columns*4,alignment); the 1-column view
  * yields the alignment and the other widths must agree with it. */
 static size_t DGViewPitchMeasure(GLint renderer)
@@ -98,7 +147,7 @@ static size_t DGViewPitchMeasure(GLint renderer)
     if(CGLChoosePixelFormat(attributes,&format,&count) || !format)return 0;
     CGLError created=CGLCreateContext(format,NULL,&context);CGLDestroyPixelFormat(format);
     if(created || !context)return 0;
-    int64_t values[]={DG_VIEW_PITCH_PROBE_COLUMNS,2,4,DG_VIEW_PITCH_PROBE_ROW,2*DG_VIEW_PITCH_PROBE_ROW,0x42475241};
+    int64_t values[]={DG_VIEW_PITCH_PROBE_COLUMNS,DG_VIEW_PITCH_PROBE_ROWS,4,DG_VIEW_PITCH_PROBE_ROW,DG_VIEW_PITCH_PROBE_ROWS*DG_VIEW_PITCH_PROBE_ROW,0x42475241};
     const CFStringRef keys[]={kIOSurfaceWidth,kIOSurfaceHeight,kIOSurfaceBytesPerElement,
         kIOSurfaceBytesPerRow,kIOSurfaceAllocSize,kIOSurfacePixelFormat};
     CFMutableDictionaryRef properties=CFDictionaryCreateMutable(NULL,0,&kCFTypeDictionaryKeyCallBacks,&kCFTypeDictionaryValueCallBacks);
@@ -113,7 +162,7 @@ static size_t DGViewPitchMeasure(GLint renderer)
     }
     if(surface && IOSurfaceGetBytesPerRow(surface)==DG_VIEW_PITCH_PROBE_ROW && !IOSurfaceLock(surface,0,NULL)){
         uint32_t *pixels=IOSurfaceGetBaseAddress(surface);
-        for(uint32_t i=0;i<2*DG_VIEW_PITCH_PROBE_COLUMNS;++i)pixels[i]=0xff000000u|i;
+        for(uint32_t i=0;i<DG_VIEW_PITCH_PROBE_ROWS*DG_VIEW_PITCH_PROBE_COLUMNS;++i)pixels[i]=0xff000000u|i;
         IOSurfaceUnlock(surface,0,NULL);
         CGLContextObj previous=CGLGetCurrentContext();
         if(!CGLSetCurrentContext(context)){
@@ -122,7 +171,7 @@ static size_t DGViewPitchMeasure(GLint renderer)
                 offsets[i]=DGViewPitchRowOffset(context,surface,widths[i]);
                 measured=measured && offsets[i];honored=honored && offsets[i]==DG_VIEW_PITCH_PROBE_ROW;
             }
-            glFinish();CGLSetCurrentContext(previous);
+            glFinish();
             // A failed measurement keeps the native path: no evidence of a
             // misaddressing driver is not a reason to change semantics.
             if(measured && !honored){
@@ -132,6 +181,11 @@ static size_t DGViewPitchMeasure(GLint renderer)
                     consistent=offsets[i]==DGViewPitchAlign((size_t)widths[i]*4,alignment);
                 pitch=consistent?alignment:DG_VIEW_PITCH_UNKNOWN;
             }
+            if(measured && honored && DGViewPitchRenderMatches(context,surface,DG_VIEW_PITCH_PROBE_COLUMNS)==1){
+                for(unsigned i=0;i<3;++i)
+                    if(DGViewPitchRenderMatches(context,surface,widths[i])==0){pitch=DG_VIEW_PITCH_UNKNOWN;break;}
+            }
+            CGLSetCurrentContext(previous);
         }
     }
     if(surface)CFRelease(surface);
@@ -155,16 +209,19 @@ static size_t DGIOSurfaceViewPitch(CGLContextObj ctx)
     dg_view_pitch_renderers[slot]=(struct DGViewPitchRenderer){renderer,pitch};
     pthread_mutex_unlock(&dg_view_pitch_lock);
     if(!pitch)fprintf(stderr,"PassthroughOpenGL renderer=0x%x IOSurface view pitch=surface\n",renderer);
-    else if(pitch==DG_VIEW_PITCH_UNKNOWN)fprintf(stderr,"PassthroughOpenGL renderer=0x%x IOSurface view pitch=unrecognized (full-width only)\n",renderer);
+    else if(pitch==DG_VIEW_PITCH_UNKNOWN)fprintf(stderr,"PassthroughOpenGL renderer=0x%x IOSurface view pitch=unrecognized/tiled (full-extent only)\n",renderer);
     else fprintf(stderr,"PassthroughOpenGL renderer=0x%x IOSurface view pitch=aligned to %zu bytes\n",renderer,pitch);
     return pitch;
 }
-/* A view of `width` columns is addressed correctly under `pitch`. */
-static int DGIOSurfaceViewPitchMatches(IOSurfaceRef surface,size_t width,size_t pitch)
+/* Linear pitch needs matching columns; a tiled layout needs both extents. */
+static int DGIOSurfaceViewPitchMatches(IOSurfaceRef surface,size_t width,size_t height,size_t pitch)
 {
-    if(width>=IOSurfaceGetWidth(surface) || !pitch)return 1;
+    if(!pitch)return 1;
+    if(pitch==DG_VIEW_PITCH_UNKNOWN)
+        return width>=IOSurfaceGetWidth(surface) && height>=IOSurfaceGetHeight(surface);
+    if(width>=IOSurfaceGetWidth(surface))return 1;
     size_t element=IOSurfaceGetBytesPerElement(surface),columns=IOSurfaceGetElementWidth(surface);
-    if(pitch==DG_VIEW_PITCH_UNKNOWN || !element || !columns)return 0;
+    if(!element || !columns)return 0;
     return DGViewPitchAlign((width+columns-1)/columns*element,pitch)==IOSurfaceGetBytesPerRow(surface);
 }
 /* Row bytes for a new surface whose views must match `pitch`. */
@@ -184,13 +241,17 @@ static size_t DGIOSurfaceViewCapacityWidth(size_t width,size_t preferred,size_t 
 static CGLError DGTexImageIOSurface2D(CGLContextObj ctx,GLenum target,GLenum internal,GLsizei width,GLsizei height,
     GLenum format,GLenum type,IOSurfaceRef surface,GLuint plane)
 {
-    if(surface && !plane && !IOSurfaceGetPlaneCount(surface) && width>0 &&
-       (size_t)width<IOSurfaceGetWidth(surface) && IOSurfaceGetWidth(surface)<=INT32_MAX &&
-       !DGIOSurfaceViewPitchMatches(surface,(size_t)width,DGIOSurfaceViewPitch(ctx))){
+    size_t pitch=0;
+    if(surface && !plane && !IOSurfaceGetPlaneCount(surface) && width>0 && height>0 &&
+       (size_t)width<=IOSurfaceGetWidth(surface) && (size_t)height<=IOSurfaceGetHeight(surface) &&
+       ((size_t)width<IOSurfaceGetWidth(surface) || (size_t)height<IOSurfaceGetHeight(surface)) &&
+       IOSurfaceGetWidth(surface)<=INT32_MAX && IOSurfaceGetHeight(surface)<=INT32_MAX &&
+       !DGIOSurfaceViewPitchMatches(surface,(size_t)width,(size_t)height,pitch=DGIOSurfaceViewPitch(ctx))){
         if(__atomic_fetch_add(&dg_view_pitch_widened,1,__ATOMIC_RELAXED)<8)
             fprintf(stderr,"PassthroughOpenGL widened IOSurface view %dx%d of %zux%zu row=%zu\n",width,height,
                 IOSurfaceGetWidth(surface),IOSurfaceGetHeight(surface),IOSurfaceGetBytesPerRow(surface));
         width=(GLsizei)IOSurfaceGetWidth(surface);
+        if(pitch==DG_VIEW_PITCH_UNKNOWN)height=(GLsizei)IOSurfaceGetHeight(surface);
     }
     return CGLTexImageIOSurface2D(ctx,target,internal,width,height,format,type,surface,plane);
 }

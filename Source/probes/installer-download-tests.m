@@ -1,14 +1,24 @@
 #import <Foundation/Foundation.h>
 #import "VIMDownload.h"
+#import "VIMCreationProgressLayout.h"
 int main(int argc,char **argv) { @autoreleasepool {
-    if(argc!=3)return 64;
+    if(argc<3||argc>5)return 64;
+    BOOL unknownLength=argc==5;
     [NSUserDefaults.standardUserDefaults setVolatileDomain:@{@"VIMDebugMode":@YES,@"VIMDownloadServer":@(argv[1])} forName:NSArgumentDomain];
-    NSURL *source=[NSURL URLWithString:@"https://swcdn.apple.com/content/downloads/vim-test/Payload.pkg"];
+    NSURL *source=[NSURL URLWithString:argc>=4?@(argv[3]):@"https://swcdn.apple.com/content/downloads/vim-test/Payload.pkg"];
     NSURL *directory=[NSURL fileURLWithPath:@(argv[2])];
-    __block BOOL finished=NO,requestedPause=NO;__block int result=1;
+    __block BOOL finished=NO,requestedPause=NO,sawHeaders=NO,sawByteProgress=NO;__block int result=1;
     __block VIMDownload *download=[[VIMDownload alloc] initWithSourceURL:source directory:directory error:NULL];
     __weak VIMDownload *firstDownload=download;
-    download.progress=^(int64_t received,int64_t total){if(received>=131072 && !requestedPause){requestedPause=YES;[firstDownload pause];}};
+    download.progress=^(int64_t received,int64_t total){
+        if(!sawHeaders){NSCAssert(received==0,@"Fresh downloads report accepted headers before bytes");sawHeaders=YES;}
+        if(unknownLength)NSCAssert(total==-1,@"Mock GET really omits the length");
+        if(received>0) {
+            double fraction=VIMCreationDownloadFraction(received,total,8*1024*1024);
+            NSCAssert(fraction>0&&fraction<=1,@"Known size keeps streaming downloads determinate");sawByteProgress=YES;
+        }
+        if(received>=131072 && !requestedPause){requestedPause=YES;[firstDownload pause];}
+    };
     [download startWithCompletion:^(NSURL *file,NSError *error,BOOL paused){
         if(error || !paused) { NSLog(@"Pause failed: %@",error);finished=YES;return; }
         // Discard the transfer instance: resume relies on persisted bytes/state,
@@ -22,7 +32,7 @@ int main(int argc,char **argv) { @autoreleasepool {
             if(!valid) { NSLog(@"Downloaded bytes mismatch");finished=YES;return; }
             download=[[VIMDownload alloc] initWithSourceURL:source directory:directory error:NULL];
             [download startWithCompletion:^(NSURL *cached,NSError *error,BOOL paused){
-                result=cached && !error && !paused?0:1;finished=YES;
+                result=cached && !error && !paused && sawHeaders && sawByteProgress?0:1;finished=YES;
             }];
         }];
     }];

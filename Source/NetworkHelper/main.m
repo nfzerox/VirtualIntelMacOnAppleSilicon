@@ -2,6 +2,7 @@
 // changes or executable uploads. QEMU and the GUI never acquire root privileges.
 #import "VIMNetworkProtocol.h"
 #import "VIMNetworkTrust.h"
+#import "../compat/VIMHelperXPC.h"
 #import <Security/Security.h>
 #import <vmnet/vmnet.h>
 #include <sys/socket.h>
@@ -90,25 +91,22 @@ static NSUInteger activeNetworks;
 }}
 @end
 
-@interface VIMNetworkService : NSObject <NSXPCListenerDelegate,VIMNetworkHelperProtocol>
+@interface VIMNetworkService : NSObject <VIMHelperService,VIMNetworkHelperProtocol>
 @property VIMNetworkWorker *worker;
 @property BOOL starting;
 @property BOOL invalidated;
 @end
 @implementation VIMNetworkService
-- (BOOL)listener:(NSXPCListener *)listener shouldAcceptNewConnection:(NSXPCConnection *)connection {
-    if(connection.effectiveUserIdentifier==0)return NO;
-    if(@available(macOS 13.0,*))[connection setCodeSigningRequirement:VIM_NETWORK_CLIENT_REQUIREMENT];else return NO;
-    SecCodeRef code=NULL;SecRequirementRef requirement=NULL;
-    NSDictionary *attributes=@{(__bridge NSString *)kSecGuestAttributePid:@(connection.processIdentifier)};
-    OSStatus status=SecCodeCopyGuestWithAttributes(NULL,(__bridge CFDictionaryRef)attributes,0,&code);
-    if(!status)status=SecRequirementCreateWithString((__bridge CFStringRef)VIM_NETWORK_CLIENT_REQUIREMENT,0,&requirement);
-    if(!status)status=SecCodeCheckValidity(code,0,requirement);
-    if(code)CFRelease(code);if(requirement)CFRelease(requirement);if(status)return NO;
-    VIMNetworkService *client=[VIMNetworkService new];connection.exportedObject=client;
-    connection.exportedInterface=[NSXPCInterface interfaceWithProtocol:@protocol(VIMNetworkHelperProtocol)];
-    connection.invalidationHandler=^{@synchronized(client){client.invalidated=YES;[client.worker cancel];}};
-    [connection resume];return YES;
+- (void)connectionInvalidated {@synchronized(self){self.invalidated=YES;[self.worker cancel];}}
+- (void)handleMessage:(xpc_object_t)message {
+    const char *operation=xpc_dictionary_get_string(message,"operation");
+    NSDictionary *payload=VIMHelperPayload(message);
+    if(!operation||!payload){VIMHelperReply(message,nil,nil,VIMNetworkError(@"The network request is invalid."));return;}
+    if(!strcmp(operation,"status"))[self statusWithReply:^(NSDictionary *result){VIMHelperReply(message,result,nil,nil);}];
+    else if(!strcmp(operation,"start-network")&&[payload[@"Mode"] isKindOfClass:NSString.class]&&[payload[@"Bridge"] isKindOfClass:NSString.class])
+        [self startMode:payload[@"Mode"] bridge:payload[@"Bridge"] reply:^(NSFileHandle *socket,NSDictionary *result,NSError *error){VIMHelperReply(message,result,socket,error);}];
+    else if(!strcmp(operation,"stop-network"))[self stopWithReply:^{VIMHelperReply(message,nil,nil,nil);}];
+    else VIMHelperReply(message,nil,nil,VIMNetworkError(@"The network request is invalid."));
 }
 - (void)statusWithReply:(void (^)(NSDictionary *))reply {reply(@{@"Protocol":@(VIM_NETWORK_PROTOCOL),@"SourceHash":VIM_NETWORK_SOURCE_HASH});}
 - (void)startMode:(NSString *)mode bridge:(NSString *)bridge reply:(void (^)(NSFileHandle *,NSDictionary *,NSError *))reply {
@@ -160,6 +158,6 @@ static NSUInteger activeNetworks;
 @end
 int main(void){@autoreleasepool {
     if(geteuid()!=0)return 77;signal(SIGPIPE,SIG_IGN);budgetLock=[NSObject new];
-    NSXPCListener *listener=[[NSXPCListener alloc] initWithMachServiceName:VIM_NETWORK_SERVICE];
-    VIMNetworkService *service=[VIMNetworkService new];listener.delegate=service;[listener resume];[[NSRunLoop currentRunLoop] run];
+    __attribute__((objc_precise_lifetime)) xpc_connection_t listener=VIMHelperCreateListener(VIM_NETWORK_SERVICE,VIM_NETWORK_CLIENT_REQUIREMENT,^{return [VIMNetworkService new];});
+    [[NSRunLoop currentRunLoop] run];(void)listener;
 }return 0;}

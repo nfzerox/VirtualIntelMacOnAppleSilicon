@@ -619,7 +619,7 @@ static inline bool tcg_op_buf_full(void)
 /* user-mode: mmap_lock must be held for tcg_malloc_internal. */
 void *tcg_malloc_internal(TCGContext *s, int size);
 void tcg_pool_reset(TCGContext *s);
-TranslationBlock *tcg_tb_alloc(TCGContext *s);
+TranslationBlock *tcg_tb_alloc(TCGContext *s, size_t extra);
 extern uintptr_t tcg_tb_alloc_align;
 
 void tcg_region_reset_all(void);

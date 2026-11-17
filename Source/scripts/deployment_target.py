@@ -11,6 +11,8 @@ check_weak_libsystem_imports() refuses binaries that still weak-import libc
 functions, catching anything the header pass cannot see.
 """
 import re
+import os
+from contextlib import contextmanager
 from functools import lru_cache
 import subprocess
 import tempfile
@@ -23,7 +25,15 @@ HEADERS = ('unistd.h', 'stdlib.h', 'string.h', 'stdio.h', 'fcntl.h', 'poll.h', '
 # Weak imports known to exist on every supported host: Apple's runtime
 # availability helper, the stack probe present since macOS 10.15, and libusb's
 # optional dispatch_once_f fast path (SDK dispatch/once.h: macOS 10.6).
-ALLOWED_WEAK = {'__availability_version_check', '___chkstk_darwin', '_dispatch_once_f'}
+# Swift's macOS 11 back-deployment archives weak-reference the libdispatch
+# object/voucher ABI. Both exports predate Big Sur (also present in our 10.14
+# SDK's libdispatch.tbd); os/object.h declares os_release as macOS 10.10+.
+# Swift back-deployment code can also weak-reference the public unfair-lock
+# trio. os/lock.h declares these macOS 10.12+, and the genuine Big Sur SDK's
+# libsystem_platform.tbd exports all three on both supported architectures.
+ALLOWED_WEAK = {'__availability_version_check', '___chkstk_darwin', '_dispatch_once_f',
+                '_os_release', '_voucher_adopt', '_os_unfair_lock_lock',
+                '_os_unfair_lock_trylock', '_os_unfair_lock_unlock'}
 
 
 def _flags(arch, minimum):
@@ -68,6 +78,21 @@ def undefine_unavailable(config_header, prefix, arch, minimum='11.0'):
                           f'#undef {macro} /* {name}: newer than macOS {minimum} */', text, flags=re.M)
         path.write_text(text)
     return removed
+
+
+@contextmanager
+def preserve_unchanged_config_timestamp(config_header):
+    """Avoid rebuilding every consumer when configure plus SDK filtering is a no-op.
+
+    Configure can put too-new functions back before undefine_unavailable removes
+    them again. Compare the final bytes, not just the two individual writes.
+    Real header/command/source changes remain visible to Ninja as usual.
+    """
+    path = Path(config_header)
+    previous = (path.read_bytes(), path.stat().st_mtime_ns) if path.is_file() else None
+    yield
+    if previous is not None and path.is_file() and path.read_bytes() == previous[0]:
+        os.utime(path, ns=(path.stat().st_atime_ns, previous[1]))
 
 
 def _weak_libsystem_imports(binary, arch, *, historical_guest=False):

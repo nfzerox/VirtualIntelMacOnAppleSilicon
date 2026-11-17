@@ -112,6 +112,7 @@ static void CheckUpdateRepairs(NSURL *root) {
         [@{@"FormatVersion":@1,@"Guest":guest,@"PreviousTransactionID":identity,
            @"PreviousBuild":@"old-build",@"VolumeUUID":@"same-volume"} writeToURL:display atomically:YES];
         NSCAssert(machine.requiresInstallerDisplay,@"Software display persists even after updater clears NVRAM");
+        NSCAssert(machine.hasPendingGuestUpdate,@"Update keeps the installation activity after updater clears NVRAM");
         NSString *fresh=NSUUID.UUID.UUIDString;
         NSMutableDictionary *repaired=[prior mutableCopy];repaired[@"Phase"]=@"awaiting-reboot";repaired[@"TransactionID"]=fresh;
         repaired[@"Preparation"]=@{@"TransactionID":fresh,@"GuestReport":live};
@@ -119,8 +120,15 @@ static void CheckUpdateRepairs(NSURL *root) {
             @"ProductBuildVersion":@"new-build",@"VolumeUUID":@"same-volume"};
         [repaired removeObjectForKey:@"PostBootVerification"];[repaired writeToURL:journal atomically:YES];
         NSCAssert(!machine.requiresInstallerDisplay,@"Fresh completed repair returns to PVG for postboot verification");
+        NSCAssert(machine.hasPendingGuestUpdate,@"Published graphics still await new-boot verification");
+        repaired[@"Phase"]=@"graphics-verified";
+        repaired[@"PostBootVerification"]=@{@"TransactionID":fresh,@"VerifiedAfterReboot":@YES,@"MetalCommandVerified":@YES,
+            @"ProductBuildVersion":@"new-build",@"VolumeUUID":@"same-volume",@"BootSessionUUID":@"new-boot"};
+        [repaired writeToURL:journal atomically:YES];
+        NSCAssert(!machine.hasPendingGuestUpdate,@"Verified new-build recovery releases the update activity");
         repaired[@"Phase"]=@"publishing";[repaired writeToURL:journal atomically:YES];
         NSCAssert(machine.requiresInstallerDisplay,@"Interrupted publication never enables PVG");
+        NSCAssert(machine.hasPendingGuestUpdate,@"Interrupted publication does not release update activity");
     }
     puts("PASS: minor-update repair claims for Mojave/Catalina/Big Sur, evidence guards, old-journal preservation, relaunch deduplication");
 }
@@ -147,11 +155,96 @@ static void CheckNativeBigSurDisplay(NSURL *root) {
     NSCAssert([machine.configuration[@"InstallState"] isEqual:@"installing"]&&machine.configuration[@"InstallerMedia"],@"Native handoff retains installation and media");
     puts("PASS: native Big Sur display handoff before account setup, no fabricated graphics completion or installer cleanup");
 }
-int main(void) {@autoreleasepool {
+static void CheckHostAssemblyGraphics(NSURL *root) {
+    NSURL *URL=Fixture(root,@"Host Assembly"),*configuration=[URL URLByAppendingPathComponent:@"Machine.plist"];
+    NSMutableDictionary *settings=[[NSDictionary dictionaryWithContentsOfURL:configuration] mutableCopy];
+    settings[@"InstallState"]=@"installed";[settings writeToURL:configuration atomically:YES];
+    NSString *volume=NSUUID.UUID.UUIDString,*boot=NSUUID.UUID.UUIDString,*build=@"18G103";
+    [@{@"FormatVersion":@1,@"VolumeUUID":volume,@"Filesystem":@"APFS"}
+        writeToURL:[URL URLByAppendingPathComponent:@"State/InstallationTarget.plist"] atomically:YES];
+    [@{@"FormatVersion":@1,@"Guest":@"mojave",@"VolumeUUID":volume,@"ProductBuildVersion":build,@"Phase":@"awaiting-first-boot"}
+        writeToURL:[URL URLByAppendingPathComponent:@"State/HostAssembly.plist"] atomically:YES];
+    VIMMachine *machine=[VIMMachine loadURL:URL error:nil];NSCAssert(machine,@"Host fixture loads");
+    NSDictionary *live=@{@"Guest":@"mojave",@"InstalledSystemCandidate":@YES,@"LiveRoot":@YES,@"KernelMatchesSystem":@YES,
+        @"DesktopRunning":@YES,@"ProductBuildVersion":build,@"VolumeUUID":volume,@"BootSessionUUID":boot};
+    NSDictionary *proof=@{@"MetalCommandVerified":@YES,@"ProductBuildVersion":build,@"VolumeUUID":volume,@"BootSessionUUID":boot};
+    NSMutableDictionary *next=[live mutableCopy];next[@"ProductBuildVersion"]=@"18G9323";next[@"BootSessionUUID"]=NSUUID.UUID.UUIDString;next[@"DesktopRunning"]=@NO;
+    NSCAssert([machine hostAssemblyNeedsGraphicsVerificationWithGuestReport:live]&&!machine.hasPublishedGuestGraphics,@"Unverified build is eligible to check, not yet evidence");
+    NSCAssert(machine.hasPendingHostAssemblyVerification,@"Host assembly keeps its first-boot installation activity");
+    NSCAssert(![machine canRepairUpdatedSystemWithGuestReport:next error:nil],@"An assembly receipt alone cannot authorize update repair");
+    for(NSString *key in @[@"MetalCommandVerified",@"ProductBuildVersion",@"VolumeUUID",@"BootSessionUUID"]){
+        NSMutableDictionary *wrong=[proof mutableCopy];wrong[key]=@"wrong";
+        NSCAssert(![machine recordHostAssemblyGraphicsVerification:wrong guestReport:live error:nil],@"Unmatched %@ proof rejected",key);
+    }
+    NSCAssert([machine recordHostAssemblyGraphicsVerification:proof guestReport:live error:nil]&&machine.hasPublishedGuestGraphics,@"Live Metal proof accepted");
+    NSCAssert(![machine hostAssemblyNeedsGraphicsVerificationWithGuestReport:live],@"Recorded proof does not poll again");
+    NSCAssert(!machine.hasPendingHostAssemblyVerification,@"Verified host assembly releases first-boot activity");
+    NSURL *journal=[URL URLByAppendingPathComponent:@"State/GuestInstallation.plist"];
+    NSCAssert(![NSFileManager.defaultManager fileExistsAtPath:journal.path],@"No fabricated guest installation transaction");
+    NSCAssert(![machine canRepairUpdatedSystemWithGuestReport:live error:nil],@"Same build is not an update");
+    NSCAssert([machine claimAutomaticUpdateRepairWithGuestReport:next error:nil],@"Verified same-volume new build can repair before login");
+    NSCAssert([machine claimAutomaticUpdateRepairWithGuestReport:next error:nil],@"An untouched preflight claim can recover once without guest journals");
+    NSCAssert(![machine claimAutomaticUpdateRepairWithGuestReport:next error:nil],@"A recovered preflight claim is not repeated again");
+    [@{@"Phase":@"dispatching"} writeToURL:journal atomically:YES];
+    NSCAssert(![machine canRepairUpdatedSystemWithGuestReport:next error:nil],@"An uncertain guest transaction cannot fall back to older host evidence");
+    puts("PASS: host-assembled PVG evidence, boot/build/volume matching, and once-per-build update repair");
+}
+static void CheckOpenGLHostAssemblyActivity(NSURL *root) {
+    for(NSString *guest in @[@"tiger",@"leopard",@"snowleopard",@"lion",@"mountainlion",@"mavericks",
+                            @"yosemite",@"elcapitan",@"sierra",@"highsierra"]) {
+        NSURL *URL=Fixture(root,@"First Desktop"),*configuration=[URL URLByAppendingPathComponent:@"Machine.plist"];
+        NSMutableDictionary *config=[[NSDictionary dictionaryWithContentsOfURL:configuration] mutableCopy];
+        config[@"Guest"]=guest;config[@"InstallState"]=@"installed";[config writeToURL:configuration atomically:YES];
+        VIMMachine *machine=[VIMMachine loadURL:URL error:nil];NSCAssert(machine,@"OpenGL fixture loads");
+        NSCAssert(!machine.hasPendingHostAssemblyVerification&&!machine.hasPendingGuestUpdate,@"Ordinary %@ session needs no installation activity",guest);
+        [@{@"FormatVersion":@1,@"Guest":guest,@"Phase":@"awaiting-first-boot"}
+            writeToURL:[URL URLByAppendingPathComponent:@"State/HostAssembly.plist"] atomically:YES];
+        NSCAssert(machine.hasPendingHostAssemblyVerification,@"%@ first desktop is pending",guest);
+        [@{@"Phase":@"graphics-verified",@"Guest":guest,@"MachineIdentifier":config[@"Identifier"]}
+            writeToURL:[URL URLByAppendingPathComponent:@"State/LegacyGuestInstallation.plist"] atomically:YES];
+        NSCAssert(!machine.hasPendingHostAssemblyVerification,@"%@ pixel-verification completion releases activity",guest);
+    }
+    puts("PASS: Tiger through High Sierra host-assembly activity ends with OpenGL graphics verification");
+}
+static void CheckHostStagedBigSurGraphics(NSURL *root) {
+    NSURL *URL=Fixture(root,@"Host Big Sur First Boot");
+    NSURL *configURL=[URL URLByAppendingPathComponent:@"Machine.plist"];
+    NSMutableDictionary *config=[[NSDictionary dictionaryWithContentsOfURL:configURL] mutableCopy];
+    config[@"Guest"]=@"bigsur";config[@"InstallState"]=@"installed";
+    [config writeToURL:configURL atomically:YES];
+    NSString *volume=NSUUID.UUID.UUIDString;
+    [@{@"FormatVersion":@1,@"VolumeUUID":volume,@"Filesystem":@"APFS"}
+        writeToURL:[URL URLByAppendingPathComponent:@"State/InstallationTarget.plist"] atomically:YES];
+    NSURL *assemblyURL=[URL URLByAppendingPathComponent:@"State/HostAssembly.plist"];
+    NSDictionary *valid=@{@"FormatVersion":@1,@"Guest":@"bigsur",@"VolumeUUID":volume,
+        @"ProductBuildVersion":@"20G1443",@"Phase":@"awaiting-first-boot",
+        @"MachineIdentifier":config[@"Identifier"],@"BootSnapshotUUID":NSUUID.UUID.UUIDString,
+        @"BigSurGraphicsStaged":@YES};
+    VIMMachine *machine=[VIMMachine loadURL:URL error:nil];NSCAssert(machine,@"Host Big Sur fixture loads");
+    [valid writeToURL:assemblyURL atomically:YES];
+    NSCAssert(machine.hasHostStagedAssistantGraphics&&!machine.hasPublishedGuestGraphics,
+        @"First boot enables registration without inventing Metal readback");
+    for(NSString *key in @[@"Guest",@"VolumeUUID",@"Phase",@"MachineIdentifier",@"BootSnapshotUUID",@"BigSurGraphicsStaged"]) {
+        NSMutableDictionary *incorrect=[valid mutableCopy];incorrect[key]=@"not verified";
+        [incorrect writeToURL:assemblyURL atomically:YES];
+        NSCAssert(!machine.hasHostStagedAssistantGraphics,@"Incorrect %@ cannot enable first-boot EFI admission",key);
+    }
+    puts("PASS: host-built Big Sur EFI admission is separate from live graphics verification");
+}
+int main(int argc,const char **argv) {@autoreleasepool {
     id previousKeep=[NSUserDefaults.standardUserDefaults objectForKey:@"VIMKeepInstallers"];
     [NSUserDefaults.standardUserDefaults setBool:NO forKey:@"VIMKeepInstallers"];
     NSFileManager *fm=NSFileManager.defaultManager;NSURL *root=[[fm.temporaryDirectory URLByAppendingPathComponent:[@"vim-model-" stringByAppendingString:NSUUID.UUID.UUIDString]] URLByResolvingSymlinksInPath];
     [fm createDirectoryAtURL:root withIntermediateDirectories:NO attributes:nil error:nil];
+    CheckHostAssemblyGraphics(root);
+    CheckOpenGLHostAssemblyActivity(root);
+    CheckHostStagedBigSurGraphics(root);
+    if(argc==2&&!strcmp(argv[1],"--host-assembly-only")){
+        [fm removeItemAtURL:root error:nil];
+        if(previousKeep)[NSUserDefaults.standardUserDefaults setObject:previousKeep forKey:@"VIMKeepInstallers"];
+        else [NSUserDefaults.standardUserDefaults removeObjectForKey:@"VIMKeepInstallers"];
+        return 0;
+    }
     CheckUpdateRepairs(root);
     CheckModernSetupProfiles(root);
     CheckNativeBigSurDisplay(root);
@@ -236,7 +329,8 @@ int main(void) {@autoreleasepool {
     NSURL *cachedMedia=[attempt URLByAppendingPathComponent:@"Media/Installer.iso"];
     [fm createDirectoryAtURL:cachedMedia.URLByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];
     [@"fixture" writeToURL:cachedMedia atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    NSMutableDictionary *cacheReceipt=[@{@"FormatVersion":@1,@"Guest":@"mojave",@"Stage":@"media-created",@"Media":@"Installer.iso",@"Size":@7} mutableCopy];
+    NSMutableDictionary *cacheReceipt=[@{@"FormatVersion":@1,@"Guest":@"mojave",@"Stage":@"media-created",
+        @"Media":@"Installer.iso",@"Size":@7,@"SerialRecoveryVersion":@2} mutableCopy];
     NSURL *cacheRecord=[cachedMedia.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"Media.plist"];
     [cacheReceipt writeToURL:cacheRecord atomically:YES];
     NSDictionary *retainedMedia=[VIMInstallerAssembly retainedInstallerForGuest:@"mojave" library:root];

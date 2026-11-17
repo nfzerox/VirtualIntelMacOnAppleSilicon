@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <CommonCrypto/CommonDigest.h>
 #include "guest-support-media.h"
+#include "guest-opengl-selection.h"
 
 static void Check(BOOL condition,NSString *message) {
     if(!condition)@throw [NSException exceptionWithName:@"InvalidImage" reason:message userInfo:nil];
@@ -61,6 +62,24 @@ static NSData *Thin(NSData *data) {
     Check(LE32(slice,0)==MH_MAGIC_64&&LE32(slice,4)==CPU_TYPE_X86_64,@"Invalid x86_64 image");
     return slice;
 }
+// Moves every chained-fixup import of one dependency ordinal to another, in
+// place. Formats 1 and 2 keep an 8-bit ordinal in the low byte, format 3 a
+// 16-bit one; special (negative) ordinals are never touched.
+static unsigned RebindChainedImports(NSMutableData *image,uint32_t offset,uint32_t size,unsigned from,unsigned to) {
+    Check(from>0&&to>0&&from!=to&&to<=0xF0&&Fits(offset,28,image.length)&&size>=28&&Fits(offset,size,image.length),@"Invalid renderer fixups");
+    uint32_t importsOffset=LE32(image,offset+8),importsCount=LE32(image,offset+16),format=LE32(image,offset+20);
+    NSUInteger stride=format==1?4:format==2?8:format==3?16:0;
+    Check(stride&&importsOffset<=size&&importsCount<=(size-importsOffset)/stride,@"Unsupported renderer import format");
+    uint8_t *imports=(uint8_t *)image.mutableBytes+offset+importsOffset;unsigned moved=0;
+    for(uint32_t i=0;i<importsCount;i++) {
+        uint8_t *entry=imports+i*stride;
+        if(format==3) {
+            uint16_t value=OSReadLittleInt16(entry,0);
+            if(value==from){OSWriteLittleInt16(entry,0,(uint16_t)to);moved++;}
+        } else if(entry[0]==from){entry[0]=(uint8_t)to;moved++;}
+    }
+    return moved;
+}
 static NSData *PrepareBigSurBundle(NSData *input,BOOL metalPlugin) {
     // The native Big Sur GPU plugin is already a loose bundle. Copy its Intel
     // slice into /Library/GPUBundles and change only these two dependencies;
@@ -72,11 +91,23 @@ static NSData *PrepareBigSurBundle(NSData *input,BOOL metalPlugin) {
     Check(end>=cursor&&end<=output.length,@"Invalid renderer command bounds");
     NSString *helper=metalPlugin?@"@loader_path/PVGBigSurMetalCompat.dylib":@"@loader_path/PVGOpenGLMetal.dylib";
     NSData *name=[helper dataUsingEncoding:NSUTF8StringEncoding];
-    unsigned metal=0,surface=0,prepared=0;
+    unsigned metal=0,surface=0,prepared=0,ordinal=0,metalOrdinal=0,surfaceOrdinal=0;
+    // Chained-fixup images (every renderer dyld 15+ would refuse) keep their
+    // IOSurface dependency and move its imports to the adapter's ordinal below.
+    uint32_t fixups=0,fixupsSize=0;
+    for(NSUInteger i=0,scan=cursor;i<count&&Fits(scan,sizeof(struct load_command),end);i++) {
+        if(LE32(output,scan)==LC_DYLD_CHAINED_FIXUPS&&LE32(output,scan+4)>=sizeof(struct linkedit_data_command))
+            {fixups=LE32(output,scan+8);fixupsSize=LE32(output,scan+12);}
+        if(LE32(output,scan+4)<sizeof(struct load_command))break;
+        scan+=LE32(output,scan+4);
+    }
+    BOOL rebindSurface=!metalPlugin&&fixups!=0;
     for(NSUInteger i=0;i<count;i++) {
         Check(Fits(cursor,sizeof(struct load_command),end),@"Truncated renderer load command");
         uint32_t command=LE32(output,cursor),length=LE32(output,cursor+4);
         Check(length>=sizeof(struct load_command)&&Fits(cursor,length,end),@"Invalid renderer load command");
+        BOOL dependency=command==LC_LOAD_DYLIB||command==LC_LOAD_WEAK_DYLIB||command==LC_REEXPORT_DYLIB||command==LC_LOAD_UPWARD_DYLIB;
+        if(dependency)ordinal++;
         if(command==LC_LOAD_DYLIB) {
             Check(length>=sizeof(struct dylib_command),@"Short renderer dependency");
             NSUInteger offset=LE32(output,cursor+8);
@@ -89,7 +120,14 @@ static NSData *PrepareBigSurBundle(NSData *input,BOOL metalPlugin) {
             BOOL isMetal=[old isEqual:@"/System/Library/Frameworks/Metal.framework/Versions/A/Metal"];
             BOOL isSurface=[old isEqual:@"/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface"];
             metal+=isMetal;surface+=isSurface;prepared+=[old isEqual:helper];
-            if(isMetal||isSurface) {
+            if(isMetal||[old isEqual:helper])metalOrdinal=ordinal;
+            if(isSurface)surfaceOrdinal=ordinal;
+            // The Metal adapter overrides nothing of IOSurface: redirect only
+            // Metal there, as macOS 15 and later refuse two load commands of
+            // the same dylib. The OpenGL renderer's adapter also stands in
+            // for IOSurface symbols: with chained fixups its IOSurface imports
+            // are bound to the adapter instead; older images keep both commands.
+            if(isMetal||(isSurface&&!metalPlugin&&!rebindSurface)) {
                 Check(name.length+1<=length-offset,@"Renderer dependency has insufficient capacity");
                 memset((uint8_t *)output.mutableBytes+cursor+offset,0,length-offset);
                 memcpy((uint8_t *)output.mutableBytes+cursor+offset,name.bytes,name.length);
@@ -97,7 +135,11 @@ static NSData *PrepareBigSurBundle(NSData *input,BOOL metalPlugin) {
         }
         cursor+=length;
     }
-    Check(cursor==end&&((metal==1&&surface==1&&prepared==0)||(metal==0&&surface==0&&prepared==2)),@"Unexpected or partially prepared renderer dependencies");
+    Check(cursor==end&&((metal==1&&surface==1&&prepared==0)||
+        ((metalPlugin||rebindSurface)?(metal==0&&surface==1&&prepared==1):(metal==0&&surface==0&&prepared==2))),@"Unexpected or partially prepared renderer dependencies");
+    // An original renderer must have IOSurface imports to move; a prepared one has none left.
+    if(rebindSurface)Check((RebindChainedImports(output,fixups,fixupsSize,surfaceOrdinal,metalOrdinal)>0)==(prepared==0),
+        @"Unexpected renderer IOSurface imports");
     return output;
 }
 static NSData *Replace(NSData *original,NSData *replacement,BOOL allowNative32) {
@@ -249,6 +291,15 @@ static void StageOpenGL(NSString *guest,NSString *staged,NSArray<NSString *> *ba
         if(![fm fileExistsAtPath:original])continue;
         Check(Inside(original.stringByResolvingSymlinksInPath,guest),@"Native image escapes framework");
         NSData *source=ReadImage(original),*output=nil;
+        if([relative isEqual:VIMGLEngineRelativePath]&&VIMIsPassthroughOpenGLEngine(source)) {
+            // A previous optional install is not Apple's native i386 engine.
+            // Reconstruct the ordinary renderer first, so switching back or
+            // reapplying after an update never splices our old slice into it.
+            NSString *saved=[guest stringByAppendingPathComponent:VIMOriginalGLEngineRelativePath];
+            Check(Inside(saved.stringByResolvingSymlinksInPath,guest),@"Original GL engine escapes framework");
+            source=ReadImage(saved);
+            Check(!VIMIsPassthroughOpenGLEngine(source),@"The retained original GL engine is not native");
+        }
         if(![donors containsObject:relative])output=source;
         else {
             BOOL isEntry=[relative isEqual:@"Versions/A/OpenGL"];
@@ -288,7 +339,7 @@ static NSData *CompactLinkedit(NSData *original) {
     memcpy(&h,image.bytes,sizeof(h));Check(Fits(sizeof(h),h.sizeofcmds,image.length),@"Invalid load commands");
     struct symtab_command symbols={0};struct linkedit_data_command signature={0};
     struct segment_command_64 linkedit={0};NSUInteger symbolCount=0,linkCount=0,signatureCount=0,signatureCommand=0,linkCommand=0;
-    NSMutableArray *ranges=[NSMutableArray array];NSUInteger p=sizeof(h),end=p+h.sizeofcmds;
+    NSMutableArray *ranges=[NSMutableArray array];NSUInteger p=sizeof(h),end=p+h.sizeofcmds;BOOL normalizedDyldPadding=NO;
     void (^range)(uint64_t,uint64_t)=^(uint64_t offset,uint64_t size){if(size){Check(Fits(offset,size,image.length),@"LINKEDIT range outside image");[ranges addObject:@[@(offset),@(size)]];}};
     for(uint32_t i=0;i<h.ncmds;i++) {
         struct load_command lc;Check(Fits(p,sizeof(lc),end),@"Truncated load command");memcpy(&lc,(const uint8_t *)image.bytes+p,sizeof(lc));
@@ -305,6 +356,27 @@ static NSData *CompactLinkedit(NSData *original) {
             range(s.indirectsymoff,(uint64_t)s.nindirectsyms*sizeof(uint32_t));range(s.extreloff,(uint64_t)s.nextrel*sizeof(struct relocation_info));range(s.locreloff,(uint64_t)s.nlocrel*sizeof(struct relocation_info));
         } else if(lc.cmd==LC_DYLD_INFO||lc.cmd==LC_DYLD_INFO_ONLY) {
             struct dyld_info_command s;Check(lc.cmdsize>=sizeof(s),@"Short dyld info command");memcpy(&s,(const uint8_t *)image.bytes+p,sizeof(s));
+            // cctools-927 codesign_allocate copies all five streams as one
+            // span, but computes its input size by summing their sizes. Earlier
+            // cache extractors leave zero alignment gaps outside those sizes;
+            // the allocator then writes LINKEDIT at the wrong offset. Include
+            // that padding in the preceding stream. DONE terminates the opcode
+            // streams, so trailing zeros do not change their meaning. Keep all
+            // payload bytes and offsets in place; no relocation reconstruction.
+            uint32_t offsets[]={s.rebase_off,s.bind_off,s.weak_bind_off,s.lazy_bind_off,s.export_off};
+            uint32_t *sizes[]={&s.rebase_size,&s.bind_size,&s.weak_bind_size,&s.lazy_bind_size,&s.export_size};
+            for(NSUInteger a=0;a<5;a++)if(*sizes[a]) {
+                Check(Fits(offsets[a],*sizes[a],image.length),@"Dyld stream outside image");
+                for(NSUInteger b=a+1;b<5;b++)if(*sizes[b]) {
+                    uint64_t after=(uint64_t)offsets[a]+*sizes[a];
+                    Check(offsets[b]>=after&&offsets[b]<=image.length,@"Overlapping dyld streams");
+                    const uint8_t *bytes=image.bytes;
+                    for(uint64_t gap=after;gap<offsets[b];gap++)Check(bytes[gap]==0,@"Nonzero data between dyld streams");
+                    uint32_t padded=offsets[b]-offsets[a];
+                    if(*sizes[a]!=padded){*sizes[a]=padded;normalizedDyldPadding=YES;}break;
+                }
+            }
+            memcpy((uint8_t *)image.mutableBytes+p,&s,sizeof(s));
             range(s.rebase_off,s.rebase_size);range(s.bind_off,s.bind_size);range(s.weak_bind_off,s.weak_bind_size);range(s.lazy_bind_off,s.lazy_bind_size);range(s.export_off,s.export_size);
         } else if(lc.cmd==LC_CODE_SIGNATURE||lc.cmd==LC_SEGMENT_SPLIT_INFO||lc.cmd==LC_FUNCTION_STARTS||lc.cmd==LC_DATA_IN_CODE||
                   lc.cmd==LC_DYLIB_CODE_SIGN_DRS||lc.cmd==LC_LINKER_OPTIMIZATION_HINT||lc.cmd==LC_DYLD_EXPORTS_TRIE||lc.cmd==LC_DYLD_CHAINED_FIXUPS) {
@@ -332,7 +404,7 @@ static NSData *CompactLinkedit(NSData *original) {
     const uint8_t *bytes=image.bytes;
     for(uint64_t i=stringEnd;i<oldBoundary;i++)Check(bytes[i]==0,@"Nonzero data in obsolete signature padding");
     uint64_t length=boundary+(signatureCount?signature.datasize:0);
-    if(length==image.length)return original;
+    if(length==image.length&&!normalizedDyldPadding)return original;
     Check(length>=linkedit.fileoff&&length<=NSUIntegerMax,@"Invalid compacted image size");
     if(signatureCount){uint8_t *mutable=image.mutableBytes;Check(boundary<=UINT32_MAX,@"Signature offset exceeds Mach-O limits");memmove(mutable+boundary,mutable+oldBoundary,signature.datasize);signature.dataoff=(uint32_t)boundary;memcpy(mutable+signatureCommand,&signature,sizeof(signature));}
     linkedit.filesize=length-linkedit.fileoff;linkedit.vmsize=(linkedit.filesize+4095)&~4095ULL;

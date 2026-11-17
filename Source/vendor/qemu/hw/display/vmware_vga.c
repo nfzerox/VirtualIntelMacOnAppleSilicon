@@ -86,13 +86,13 @@ struct vmsvga_state_s {
     int invalidated;
     /* Event scanout after a mode change: VRAM still holds the previous
      * mode's layout until the guest repaints. Show the previous image,
-     * apply new-mode UPDATEs, and copy VRAM in full only at the deadline. */
+     * and apply completed new-mode UPDATEs. A timer can initialize an empty
+     * console, but must never replace a retained image with unpublished VRAM. */
     bool mode_switch_pending;
     int64_t mode_switch_deadline;
     int mode_switch_old_pitch;
     int scanout_pitch; /* VRAM pitch of the mode currently on the surface */
-    int mode_switch_old_width;
-    int mode_switch_old_height;
+    DisplaySurface *mode_switch_image;
     int enable;
     int config;
     struct {
@@ -137,6 +137,7 @@ static uint32_t vmsvga_framebuffer_pitch(struct vmsvga_state_s *s)
     return s->pitchlock ? s->pitchlock : s->new_width * s->new_depth / 8;
 }
 
+static bool vmsvga_check_size(struct vmsvga_state_s *s);
 #include "vmware_passthrough_opengl.inc"
 
 #define TYPE_VMWARE_SVGA "vmware-svga"
@@ -441,15 +442,84 @@ static inline bool vmsvga_verify_rect(DisplaySurface *surface,
  * was read from VRAM at the old pitch. While sampled VRAM rows still equal
  * that image at the old pitch, the guest has not repainted in the new
  * layout, and any copy (even of a guest-reported rectangle) would shear.
+ * Compare eight rows of the retained original, not the rescaled display image.
  * Row 0 is skipped: it has the same address in both layouts.
  */
-static bool vmsvga_vram_holds_old_mode(struct vmsvga_state_s *s,
-                                       DisplaySurface *surface)
+static void vmsvga_release_old_mode(struct vmsvga_state_s *s)
 {
-    int bytes = MIN(s->mode_switch_old_width, surface_width(surface)) * 4;
-    int rows = MIN(s->mode_switch_old_height, surface_height(surface));
+    g_clear_pointer(&s->mode_switch_image, qemu_free_displaysurface);
+    s->mode_switch_old_pitch = 0;
+}
 
-    if (!s->mode_switch_old_pitch || bytes <= 0 || rows <= 64) {
+static void vmsvga_snapshot_old_mode(struct vmsvga_state_s *s,
+                                    DisplaySurface *surface, int pitch)
+{
+    vmsvga_release_old_mode(s);
+    s->mode_switch_old_pitch = pitch;
+    if (surface_is_allocated(surface)) {
+        /* Completed software scanout is already owned: retaining its Pixman
+         * image needs no second pixel copy or VRAM alias. */
+        s->mode_switch_image = qemu_create_displaysurface_pixman(surface->image);
+    } else {
+        /* The first firmware/VBE image may alias writable guest VRAM. Freeze
+         * it once, before changing layouts, rather than retaining that alias. */
+        s->mode_switch_image = qemu_create_displaysurface(surface_width(surface),
+                                                        surface_height(surface));
+        for (int y = 0; y < surface_height(surface); y++) {
+            memcpy(surface_data(s->mode_switch_image) +
+                       y * surface_stride(s->mode_switch_image),
+                   surface_data(surface) + y * surface_stride(surface),
+                   surface_width(surface) * 4);
+        }
+    }
+}
+
+/* Preserve the completed boot picture at its apparent size and center, not
+ * one quarter of a Retina frame. Only mode changes resample; steady-state
+ * UPDATEs and the direct GPU scanout retain their existing paths. */
+static void vmsvga_fit_old_mode(DisplaySurface *source, DisplaySurface *target)
+{
+    int sw = surface_width(source), sh = surface_height(source);
+    int tw = surface_width(target), th = surface_height(target);
+    int width = tw, height = (int)((int64_t)sh * tw / sw);
+    if (height > th) {
+        height = th;
+        width = (int)((int64_t)sw * th / sh);
+    }
+    width = MAX(width, 1);
+    height = MAX(height, 1);
+    /* A separate wrapper leaves the old surface's Pixman transform/filter
+     * untouched; its completed pixels stay alive until console publication. */
+    pixman_image_t *image = pixman_image_create_bits(surface_format(source),
+        sw, sh, surface_data(source), surface_stride(source));
+    if (!image) {
+        return;
+    }
+    pixman_transform_t transform;
+    pixman_transform_init_scale(&transform,
+        pixman_double_to_fixed((double)sw / width),
+        pixman_double_to_fixed((double)sh / height));
+    pixman_image_set_transform(image, &transform);
+    pixman_image_set_filter(image, PIXMAN_FILTER_NEAREST, NULL, 0);
+    pixman_image_set_repeat(image, PIXMAN_REPEAT_PAD);
+    pixman_color_t black = { 0, 0, 0, 0xffff };
+    pixman_rectangle16_t bounds = { 0, 0, tw, th };
+    pixman_image_fill_rectangles(PIXMAN_OP_SRC, target->image, &black, 1, &bounds);
+    pixman_image_composite32(PIXMAN_OP_SRC, image, NULL, target->image,
+        0, 0, 0, 0, (tw - width) / 2, (th - height) / 2, width, height);
+    pixman_image_unref(image);
+}
+
+static bool vmsvga_vram_holds_old_mode(struct vmsvga_state_s *s)
+{
+    DisplaySurface *surface = s->mode_switch_image;
+
+    if (!surface || !s->mode_switch_old_pitch) {
+        return false;
+    }
+    int bytes = surface_width(surface) * 4;
+    int rows = surface_height(surface);
+    if (rows <= 64) {
         return false;
     }
     for (int k = 0; k < 8; k++) {
@@ -460,8 +530,7 @@ static bool vmsvga_vram_holds_old_mode(struct vmsvga_state_s *s,
             continue;
         }
         if (memcmp(s->vga.vram_ptr + offset,
-                   surface_data(surface) + y * surface_stride(surface),
-                   bytes)) {
+                   surface_data(surface) + y * surface_stride(surface), bytes)) {
             return false;
         }
     }
@@ -498,7 +567,7 @@ static inline void vmsvga_update_rect(struct vmsvga_state_s *s,
     src = s->vga.vram_ptr + surface_bytes_per_pixel(surface) * x + src_bypl * y;
     dst = surface_data(surface) + start;
 
-    if (s->mode_switch_pending && vmsvga_vram_holds_old_mode(s, surface)) {
+    if (s->mode_switch_pending && vmsvga_vram_holds_old_mode(s)) {
         return;
     }
     for (line = h; line > 0; line--, src += src_bypl, dst += bypl) {
@@ -507,6 +576,7 @@ static inline void vmsvga_update_rect(struct vmsvga_state_s *s,
     if (x == 0 && y == 0 && w == surface_width(surface) &&
         h == surface_height(surface)) {
         s->mode_switch_pending = false;
+        vmsvga_release_old_mode(s);
     }
     qemu_console_update(s->vga.con, x, y, w, h);
 }
@@ -1073,6 +1143,11 @@ static uint32_t vmsvga_value_read(void *opaque, uint32_t address)
     case SVGA_REG_FB_OFFSET:
         ret = 0x0;
         break;
+    case VIM_GL_BOOT_FRAMEBUFFER_REGISTER:
+        if (s->passthrough_opengl_bridge && s->legacy_event_scanout && s->enable && s->config)
+            vmsvga_check_size(s);
+        ret = s->passthrough_opengl_bridge && vmsvga_boot_framebuffer(s) ? VIM_GL_BOOT_FRAMEBUFFER_MAGIC : 0;
+        break;
 
     case SVGA_REG_VRAM_SIZE:
         ret = s->vga.vram_size; /* No physical VRAM besides the framebuffer */
@@ -1457,26 +1532,21 @@ static inline bool vmsvga_check_size(struct vmsvga_state_s *s)
              * overwrite before the asynchronous app listener copies it.
              * GPU-primary scanout still bypasses this software fallback. */
             DisplaySurface *previous = qemu_console_surface(s->vga.con);
-            s->mode_switch_old_pitch = 0;
             if (previous && !surface_is_placeholder(previous) &&
-                surface_bits_per_pixel(previous) == 32) {
-                /* With an unchanged pitch, old rows cannot shear. */
-                s->mode_switch_old_pitch =
-                    s->scanout_pitch != stride ? s->scanout_pitch : 0;
-                s->mode_switch_old_width = surface_width(previous);
-                s->mode_switch_old_height = surface_height(previous);
+                surface_bits_per_pixel(previous) == 32 &&
+                (!s->mode_switch_pending || !s->mode_switch_image)) {
+                /* The first SVGA mode follows the firmware's ordinary VGA
+                 * surface, before scanout_pitch has ever been recorded. */
+                int old_pitch = s->scanout_pitch ? s->scanout_pitch :
+                                surface_stride(previous);
+                /* Height-only changes also need a centered retained image,
+                 * even though reusing the old pitch would not shear rows. */
+                vmsvga_snapshot_old_mode(s, previous, old_pitch);
             }
             surface = qemu_create_displaysurface(s->new_width, s->new_height);
             /* Seed with the image already on screen, not old-layout VRAM. */
-            if (previous && !surface_is_placeholder(previous) &&
-                surface_bits_per_pixel(previous) == 32) {
-                int w = MIN(surface_width(previous), s->new_width);
-                int h = MIN(surface_height(previous), s->new_height);
-                for (int line = 0; line < h; line++) {
-                    memcpy(surface_data(surface) + line * surface_stride(surface),
-                           surface_data(previous) + line * surface_stride(previous),
-                           w * 4);
-                }
+            if (s->mode_switch_image) {
+                vmsvga_fit_old_mode(s->mode_switch_image, surface);
             }
             s->mode_switch_pending = true;
             /* Snow Leopard repaints about 1.0-1.2 s after a mode change. */
@@ -1500,6 +1570,9 @@ static bool vmsvga_update_display(void *opaque)
 
     if (!s->enable || !s->config) {
         /* in standard vga mode */
+        s->mode_switch_pending = false;
+        vmsvga_release_old_mode(s);
+        s->scanout_pitch = 0;
         return s->vga.hw_ops->gfx_update(&s->vga);
     }
 
@@ -1527,13 +1600,13 @@ static bool vmsvga_update_display(void *opaque)
         } else {
             qemu_console_update_full(s->vga.con);
         }
-    } else if (s->mode_switch_pending &&
+    } else if (s->mode_switch_pending && !s->mode_switch_image &&
                qemu_clock_get_ms(QEMU_CLOCK_REALTIME) >= s->mode_switch_deadline) {
-        /* The guest has had time to repaint in the new layout. Also covers
-         * guests which draw VRAM without ever sending UPDATE. */
+        /* Preserve raw-VRAM initialization only when no completed old image
+         * exists. A changed byte in an old-pitch boot console (e.g. a spinner)
+         * is not a completed new-pitch frame. Keep the fitted image until
+         * UPDATE publishes one, rather than expose stripes after three seconds. */
         DisplaySurface *surface = qemu_console_surface(s->vga.con);
-        s->mode_switch_pending = false;
-        s->mode_switch_old_pitch = 0;
         vmsvga_update_rect(s, 0, 0, surface_width(surface), surface_height(surface));
     }
 
@@ -1547,6 +1620,7 @@ static void vmsvga_reset(DeviceState *dev)
 
     vmsvga_passthrough_opengl_reset(s);
     s->mode_switch_pending = false;
+    vmsvga_release_old_mode(s);
     s->scanout_pitch = 0;
 
     s->legacy_panel_generation = s->legacy_panel_ack = 0;
@@ -1596,6 +1670,7 @@ static int vmsvga_post_load(void *opaque, int version_id)
 
     s->invalidated = 1;
     s->mode_switch_pending = false;
+    vmsvga_release_old_mode(s);
     s->scanout_pitch = 0;
     if (s->config) {
         s->fifo = (uint32_t *) s->fifo_ptr;
@@ -1837,6 +1912,7 @@ static void pci_vmsvga_exit(PCIDevice *dev)
      * their QOM owner and reject this epoch when they reach the main loop.
      * Never cancel a GPU use and call that a completed backing release. */
     s->legacy_panel_irq_enabled = false;
+    vmsvga_release_old_mode(s);
     vmsvga_passthrough_opengl_reset(s);
     if (s->passthrough_opengl_bridge) {
         pci_set_irq(dev, 0);

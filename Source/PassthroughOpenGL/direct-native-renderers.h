@@ -13,4 +13,5 @@ extern int DGQueryNativeRenderer(struct DGNativeRendererInfo *);
 extern int DGSelectNativeRenderer(unsigned,struct DGNativeRendererInfo *);
 extern int DGQueryRendererDetails(int32_t *,int32_t *,struct DGNativeRendererInfo *);
 extern int DGQueryRendererDetailsWithGL4(int32_t *,int32_t *,struct DGNativeRendererInfo *,int *);
+extern int DGSupportsAccumulation(void);
 #endif

@@ -23,5 +23,3 @@
 /System/Library/Extensions/AppleMetalOpenGLRenderer.bundle
 /System/Library/Frameworks/OpenGL.framework
 /Library/Extensions/VoodooHDA.kext
-/Library/Preferences/com.apple.Aperture.plist
-/Library/Preferences/com.apple.iPhoto.plist

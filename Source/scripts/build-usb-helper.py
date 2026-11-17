@@ -82,7 +82,8 @@ def build(source, app, identity, dependencies=None, kind='usb'):
         for name in ('libusb-1.0.a', 'libusbredirhost.a', 'libusbredirparser.a'):
             if not (deps/arch/'lib'/name).is_file():
                 raise RuntimeError('Build universal dependencies (including usbredir) before packaging.')
-    inputs = [folder/'main.m', folder/f'VIM{kind.title()}Protocol.h', Path(__file__).resolve()] if kind == 'network' else [folder/'main.m', folder/'VIMUSBProtocol.h', folder/'VIMUSBDevicePolicy.h', folder/'VIMUSBPolicyProbe.h', Path(__file__).resolve()]
+    inputs = [folder/'main.m', folder/f'VIM{kind.title()}Protocol.h', Path(__file__).resolve()] if kind == 'network' else [folder/'main.m', folder/'VIMUSBProtocol.h', folder/'VIMUSBDevicePolicy.h', folder/'VIMUSBPolicyProbe.h', folder/'VIMUSBPluginProbe.h', Path(__file__).resolve()]
+    inputs.append(source/'compat/VIMHelperXPC.h')
     digest = hashlib.sha256()
     for path in inputs:
         digest.update(path.read_bytes())
@@ -147,7 +148,7 @@ def build(source, app, identity, dependencies=None, kind='usb'):
     notices = app/'Contents/Resources/Licenses'
     notices.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source/'vendor/usbredir/COPYING.LIB', notices/'usbredir-LGPL-2.1.txt')
-    result = {'Protocol': 1, 'SourceHash': source_hash, 'SigningRequirement': helper_requirement, 'Version': version}
+    result = {'Protocol': 2, 'SourceHash': source_hash, 'SigningRequirement': helper_requirement, 'Version': version}
     receipt_path = app/'Contents/Resources/Runtime/Packaging.plist'
     if receipt_path.is_file():
         receipt = plistlib.loads(receipt_path.read_bytes())

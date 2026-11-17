@@ -126,6 +126,7 @@ static void applesmc_io_cmd_write(void *opaque, hwaddr addr, uint64_t val,
     smc_debug("CMD received: 0x%02x\n", (uint8_t)val);
     switch (val) {
     case APPLESMC_READ_CMD:
+    case APPLESMC_GET_KEY_BY_INDEX_CMD:
         /* did last command run through OK? */
         if (status == APPLESMC_ST_CMD_DONE || status == APPLESMC_ST_NEW_CMD) {
             s->cmd = val;
@@ -162,6 +163,7 @@ static void applesmc_io_data_write(void *opaque, hwaddr addr, uint64_t val,
 {
     AppleSMCState *s = opaque;
     const struct AppleSMCData *d;
+    uint32_t index;
 
     smc_debug("DATA received: 0x%02x\n", (uint8_t)val);
     switch (s->cmd) {
@@ -189,6 +191,34 @@ static void applesmc_io_data_write(void *opaque, hwaddr addr, uint64_t val,
         }
         s->read_pos++;
         break;
+    case APPLESMC_GET_KEY_BY_INDEX_CMD:
+        /* a big-endian index of 4 bytes, with no length byte after it */
+        if ((s->status & 0x0f) == APPLESMC_ST_CMD_DONE || s->read_pos == 4) {
+            break;
+        }
+        s->key[s->read_pos++] = val;
+        s->status = APPLESMC_ST_ACK;
+        if (s->read_pos < 4) {
+            break;
+        }
+        /* the keys in the list's order but OSK0 and OSK1, found by name only */
+        index = ldl_be_p(s->key);
+        QLIST_FOREACH(d, &s->data_def, node) {
+            if (memcmp(d->key, "OSK", 3) && index-- == 0) {
+                break;
+            }
+        }
+        if (d != NULL) {
+            memcpy(s->data, d->key, 4);
+            s->data_len = 4;
+            s->data_pos = 0;
+            s->status = APPLESMC_ST_ACK | APPLESMC_ST_DATA_READY;
+            s->status_1e = APPLESMC_ST_CMD_DONE;
+        } else {
+            s->status = APPLESMC_ST_CMD_DONE;
+            s->status_1e = APPLESMC_ST_1E_BAD_INDEX;
+        }
+        break;
     default:
         s->status = APPLESMC_ST_CMD_DONE;
         s->status_1e = APPLESMC_ST_1E_STILL_BAD_CMD;
@@ -208,6 +238,7 @@ static uint64_t applesmc_io_data_read(void *opaque, hwaddr addr, unsigned size)
 
     switch (s->cmd) {
     case APPLESMC_READ_CMD:
+    case APPLESMC_GET_KEY_BY_INDEX_CMD:
         if (!(s->status & APPLESMC_ST_DATA_READY)) {
             break;
         }
@@ -330,6 +361,7 @@ static void applesmc_isa_realize(DeviceState *dev, Error **errp)
     }
 
     QLIST_INIT(&s->data_def);
+    /* each goes at the head: GET_KEY_BY_INDEX lists MSSD, MSSP, NATJ, REV */
     applesmc_add_key(s, "REV ", 6, "\x01\x13\x0f\x00\x00\x03");
     applesmc_add_key(s, "OSK0", 32, s->osk);
     applesmc_add_key(s, "OSK1", 32, s->osk + 32);

@@ -35,6 +35,12 @@ with tempfile.TemporaryDirectory(prefix='vim-status-test-') as directory:
         'IOKitPersonalities':{'AppleParavirtGPUControl':{'IOPCIMatch':'0xEEEE106B'}}}))
     before_setup=check('11.7.10','bigsur',False)
     assert before_setup['NativePVGAvailable'] is True and before_setup['SetupComplete'] is False
+    for version, guest in [('12.7.6','monterey'),('13.7.8','ventura'),('14.8.9','sonoma'),
+                           ('15.8.2','sequoia'),('26.1','tahoe')]:
+        assert check(version,guest,False)['NativePVGAvailable'] is True
+    (native/'MacOS/AppleParavirtGPU').unlink()
+    assert check('13.7.8','ventura',False)['NativePVGAvailable'] is False
+    (native/'MacOS/AppleParavirtGPU').touch()
     assert check('10.15.7','catalina',False)['NativePVGAvailable'] is False
     setup.touch()
     for version, guest in [('10.14.1','mojave'),('10.14.99','mojave'),

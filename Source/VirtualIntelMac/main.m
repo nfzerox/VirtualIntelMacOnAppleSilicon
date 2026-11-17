@@ -1,3 +1,4 @@
+#import "VIMGuestFamilies.h"
 #import <Cocoa/Cocoa.h>
 #import "VIMMachine.h"
 #import "VIMLibraryLocation.h"
@@ -5,6 +6,8 @@
 #import "VIMAutomaticSetup.h"
 #include <unistd.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <sys/file.h>
 
 int main(int argc, const char * argv[]) {
     @autoreleasepool {
@@ -106,8 +109,10 @@ int main(int argc, const char * argv[]) {
                 options[args[i]]=args[i+1];
             }
             BOOL legacy=options[@"--create-recovery-media"]!=nil;
-            if(!options[@"--job"]||(legacy&&(![@[@"tiger",@"leopard",@"snowleopard",@"lion",@"mountainlion",@"mavericks",@"yosemite",@"elcapitan",@"sierra",@"highsierra",@"mojave",@"catalina"] containsObject:options[@"--guest"]]||options[@"--create-bigsur-media"]))) {
-                fprintf(stderr,"Required: --create-bigsur-media installer.app --job new-directory OR --create-recovery-media installer --guest tiger|leopard|snowleopard|lion|mountainlion|mavericks|yosemite|elcapitan|sierra|highsierra|mojave|catalina --job new-directory\n");return 64;
+            NSString *assistantGuest=legacy?nil:options[@"--guest"]?:@"bigsur";
+            if(!options[@"--job"]||(legacy&&([VIMSupportedGuests() containsObject:options[@"--guest"]?:@""]==NO||VIMIsAssistantGuest(options[@"--guest"])||options[@"--create-bigsur-media"]))||
+               (!legacy&&!VIMIsAssistantGuest(assistantGuest))) {
+                fprintf(stderr,"Required: --create-bigsur-media installer.app [--guest bigsur|monterey|ventura|sonoma|sequoia|tahoe] --job new-directory OR --create-recovery-media installer --guest tiger…catalina --job new-directory\n");return 64;
             }
             __block NSURL *result=nil;__block NSError *error=nil;
             dispatch_semaphore_t done=dispatch_semaphore_create(0);
@@ -115,7 +120,7 @@ int main(int argc, const char * argv[]) {
                 VIMInstallerAssembly *worker=[VIMInstallerAssembly new];
                 if(options[@"--opengl-support"])worker.openGLSupportDirectory=[NSURL fileURLWithPath:options[@"--opengl-support"]];
                 if(legacy)result=[worker createRecoveryMediaFromInstaller:[NSURL fileURLWithPath:options[@"--create-recovery-media"]] guest:options[@"--guest"] jobDirectory:[NSURL fileURLWithPath:options[@"--job"]] error:&error];
-                else result=[worker createBigSurMediaFromInstaller:[NSURL fileURLWithPath:options[@"--create-bigsur-media"]] jobDirectory:[NSURL fileURLWithPath:options[@"--job"]] error:&error];
+                else result=[worker createAssistantMediaFromInstaller:[NSURL fileURLWithPath:options[@"--create-bigsur-media"]] guest:assistantGuest jobDirectory:[NSURL fileURLWithPath:options[@"--job"]] error:&error];
                 dispatch_semaphore_signal(done);
             });
             dispatch_semaphore_wait(done,DISPATCH_TIME_FOREVER);
@@ -174,6 +179,68 @@ int main(int argc, const char * argv[]) {
                 bootMedia:[NSURL fileURLWithPath:options[@"--boot-media"]] qemuImage:[NSURL fileURLWithPath:options[@"--qemu-img"]] error:&error];
             if (!machine) { fprintf(stderr, "%s\n", error.localizedDescription.UTF8String); return 1; }
             puts(machine.URL.path.UTF8String); return 0;
+        }
+        if([args containsObject:@"--publish-host-install"]||[args containsObject:@"--recover-host-install"]) {
+            NSMutableDictionary *options=[NSMutableDictionary dictionary];
+            BOOL recovering=[args containsObject:@"--recover-host-install"];
+            NSString *operation=recovering?@"--recover-host-install":@"--publish-host-install";
+            NSArray *keys=@[operation,@"--library",@"--guest",@"--name",@"--cores",@"--memory-mib"];
+            for(NSUInteger i=1;i<args.count;i+=2) {
+                if(i+1>=args.count||![keys containsObject:args[i]]||options[args[i]])return 64;
+                options[args[i]]=args[i+1];
+            }
+            if(options.count!=keys.count) {
+                fputs("Use --publish-host-install/--recover-host-install JOB --library LIBRARY --guest GUEST --name NAME --cores N --memory-mib N.\n",stderr);return 64;
+            }
+            NSInteger cores=0,memory=0;
+            NSScanner *coreInput=[NSScanner scannerWithString:options[@"--cores"]];
+            NSScanner *memoryInput=[NSScanner scannerWithString:options[@"--memory-mib"]];
+            if(![coreInput scanInteger:&cores]||!coreInput.isAtEnd||cores<1||
+               ![memoryInput scanInteger:&memory]||!memoryInput.isAtEnd||memory<1024)return 64;
+            NSError *error=nil;
+            NSURL *job=[NSURL fileURLWithPath:options[operation]],*library=[NSURL fileURLWithPath:options[@"--library"]];
+            VIMMachine *machine=recovering?[VIMMachine recoverHostInstallJob:job library:library guest:options[@"--guest"]
+                name:options[@"--name"] cores:(NSUInteger)cores memoryMiB:(NSUInteger)memory error:&error]:
+                [VIMMachine publishHostInstallJob:job library:library guest:options[@"--guest"]
+                name:options[@"--name"] cores:(NSUInteger)cores memoryMiB:(NSUInteger)memory error:&error];
+            if(!machine){if(error)fprintf(stderr,"%s\n",error.localizedDescription.UTF8String);return recovering&&!error?2:1;}
+            puts(machine.URL.path.UTF8String);return 0;
+        }
+        if(args.count==3&&([args[1] isEqual:@"--test-recover-host-install"]||[args[1] isEqual:@"--test-clean-host-install"])) {
+            NSError *error=nil;
+            NSURL *job=[NSURL fileURLWithPath:args[2] isDirectory:YES];
+            BOOL clean=[args[1] isEqual:@"--test-clean-host-install"];
+            int owner=clean?open([job URLByAppendingPathComponent:@".Worker.lock"].fileSystemRepresentation,
+                                 O_CREAT|O_RDWR|O_NOFOLLOW|O_CLOEXEC,0600):-1;
+            if(clean&&(owner<0||flock(owner,LOCK_EX|LOCK_NB))){if(owner>=0)close(owner);return 1;}
+            BOOL success=clean?[VIMInstallerAssembly cleanHostInstallAttemptsInDirectory:job error:&error]:
+                               [VIMInstallerAssembly recoverHostInstallInDirectory:job error:&error];
+            if(owner>=0)close(owner);
+            if(!success) {
+                fprintf(stderr,"%s\n",error.localizedDescription.UTF8String);return 1;
+            }
+            return 0;
+        }
+        if(args.count==5&&[args[1] isEqual:@"--test-host-install-worker"]) {
+            // Exercise exactly the app's worker protocol with a disposable
+            // directory and a bounded credential from the test harness.
+            uint8_t buffer[512];size_t length=fread(buffer,1,sizeof(buffer),stdin);
+            if(length>=sizeof(buffer)||ferror(stdin))return 64;
+            NSString *password=[[NSString alloc] initWithBytes:buffer length:length encoding:NSUTF8StringEncoding];
+            memset_s(buffer,sizeof(buffer),0,sizeof(buffer));
+            NSDictionary *request=[NSDictionary dictionaryWithContentsOfFile:args[4]];
+            if(!password||!request||(!length&&![request[@"CreateAccount"] isEqual:@NO]))return 64;
+            VIMInstallerAssembly *worker=[VIMInstallerAssembly new];
+            if([args[3] isEqual:@"cancel"])
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW,500*NSEC_PER_MSEC),dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{worker.cancelled=YES;});
+            else if(![args[3] isEqual:@"complete"])return 64;
+            NSError *error=nil;
+            if(![worker runHostInstallWorker:[NSURL fileURLWithPath:args[2]]
+                attempt:[NSURL fileURLWithPath:NSFileManager.defaultManager.currentDirectoryPath isDirectory:YES]
+                request:request password:password error:&error]) {
+                fprintf(stderr,"%s\n",error.localizedDescription.UTF8String);return 1;
+            }
+            return 0;
         }
     }
     return NSApplicationMain(argc, argv);

@@ -1,0 +1,27 @@
+#!/bin/zsh
+# Source-only dependency; builds ARM code on either Intel or ARM builders.
+# No app/UI modules and no downloads. Test images are opt-in.
+set -euo pipefail
+source_root=${0:A:h:h}
+output=${1:-"$source_root/Build/HybridEngine"}
+mode=${2:---library-only}
+[[ "$mode" == --library-only || "$mode" == --with-tests ]] || {
+    print -u2 'usage: build-hybrid-engine [OUTPUT_DIRECTORY] [--library-only|--with-tests]'; exit 64
+}
+mkdir -p "$output"
+package="$output/Package"
+mkdir -p "$package"
+# Copy source, never another package location's Swift/Clang caches. Their PCM
+# files contain absolute module-cache paths and fail after relocation. Keep
+# this output's own .build so ordinary incremental builds still work. Remove
+# deleted source files too, rather than silently compiling stale experiments.
+/usr/bin/rsync -a --delete --exclude=/.build --exclude=/.git \
+    "$source_root/HybridHypervisor/" "$package/"
+export VIM_QEMU_SOURCE="$source_root/vendor/qemu"
+if [[ "$mode" == --with-tests ]]; then
+    zsh "$package/build.sh" release
+else
+    zsh "$package/build.sh" release --library-only
+fi
+/usr/bin/lipo "$package/.build/release/libEngine.a" -verify_arch arm64
+print -r -- "$package"

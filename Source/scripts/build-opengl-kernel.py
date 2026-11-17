@@ -53,7 +53,9 @@ def main():
     p.add_argument('--binutils',type=Path,help='Explicit assembler/linker directory for the period GCC driver')
     p.add_argument('--output',type=Path,required=True)
     p.add_argument('--audio-only',action='store_true',help='Build the vendored VoodooHDA against the same explicit period SDK')
+    p.add_argument('--accelerator-only',action='store_true',help='Build only VMsvga2Accel for a graphics-only firmware iteration')
     a=p.parse_args()
+    if a.audio_only and a.accelerator_only:p.error('Choose audio or the graphics accelerator, not both')
     a.sdk=a.sdk.resolve();a.cc=a.cc.resolve();a.output=a.output.resolve()
     if a.output.exists():p.error('Use a new output directory')
     settings=plistlib.loads((a.sdk/'SDKSettings.plist').read_bytes())
@@ -118,7 +120,7 @@ def main():
     def run(command):
         print(shlex.join(map(str,command)),flush=True)
         subprocess.run(list(map(str,command)),check=True)
-    for name in (('VoodooHDA',) if a.audio_only else ('VMsvga2','VMsvga2Accel')):
+    for name in (('VoodooHDA',) if a.audio_only else ('VMsvga2Accel',) if a.accelerator_only else ('VMsvga2','VMsvga2Accel')):
         target=next(item for item in objects.values() if item.get('isa')=='PBXNativeTarget' and item['name']==name)
         configs=objects[target['buildConfigurationList']]['buildConfigurations']
         configuration='Release' if a.audio_only else 'ReleaseLeo' if relocatable else 'ReleaseSnowLeo'

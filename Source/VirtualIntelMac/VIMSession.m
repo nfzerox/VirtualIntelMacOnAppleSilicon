@@ -1,13 +1,20 @@
 #import "VIMLocalization.h"
+#import "VIMGuestFamilies.h"
 #import "VIMSession.h"
 #import "VIMSymbolImages.h"
+#import "VIMToolbarAppearance.h"
+#import "VIMDeviceToolbarControl.h"
 #import "AppDelegate.h"
 #import "VIMMachine.h"
 #import "VIMMetalView.h"
 #import "VIMDisplayConnection.h"
 #import "VIMQMPConnection.h"
 #import "VIMGuestAgent.h"
+#import "VIMCPUBackend.h"
+#import "VIMGuestProductImage.h"
 #import "VIMGuestPreparation.h"
+#import "VIMDiagnosticSession.h"
+#import "VIMMojaveOpenGLSelection.h"
 #import "VIMSMBService.h"
 #import "VIMHostUSB.h"
 #import "VIMUSBClient.h"
@@ -17,6 +24,7 @@
 #import "VIMGuestBootPolicy.h"
 #import "VIMGuestProgress.h"
 #import "VIMHostSupport.h"
+#import "VIMOpenGLRestartEvidence.h"
 #import "VIMMachineSettings.h"
 #import "VIMDiskMaintenance.h"
 #import "VIMPlayButton.h"
@@ -27,6 +35,7 @@
 #import "VIMNetworkClient.h"
 #import "VIMClipboardBridge.h"
 #import "VIMWindowGeometry.h"
+#import "../compat/VIMForceTermination.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <QuartzCore/QuartzCore.h>
 #import <AVFoundation/AVFoundation.h>
@@ -46,6 +55,7 @@
 #import "VIMImageSlots.h"
 #import "VIMLegacyTabletPolicy.h"
 #import "VIMFirmwareBoot.h"
+#import "VIMKeyboardLayout.h"
 
 static NSMutableDictionary<NSString *,VIMSession *> *sessions;
 static NSMutableDictionary<NSString *,NSUUID *> *pendingRosettaStarts;
@@ -144,7 +154,7 @@ static NSString *VIMMultiMachineDiagnosticDirectory(NSArray<NSString *> *argumen
         self.playButton.imageScaling=NSImageScaleProportionallyDown;
         self.playButton.toolTip=VIMLocalized(@"session.start-this-mac", @"Start this Mac");self.playButton.accessibilityLabel=[NSString stringWithFormat:VIMLocalized(@"ui.start", @"Start %@"),name];self.playButton.keyEquivalent=@"\r";
         [self addSubview:self.playButton];
-        NSImage *product=[NSImage imageNamed:[guest stringByAppendingString:@"ProductIcon"]];
+        NSImage *product=VIMGuestProductImage(guest);
         if(!product&&![@[@"tiger",@"leopard",@"snowleopard"] containsObject:guest])
             product=[NSImage imageNamed:[guest stringByAppendingString:@"Roundel"]];
         self.mark=[NSImageView imageViewWithImage:product?:NSApp.applicationIconImage];
@@ -224,6 +234,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
 @property BOOL legacyTabletGuest;
 @property BOOL legacyTabletObserved;
 @property NSUInteger tabletTrim;
+@property NSUInteger automaticTabletTrim;
 @property BOOL legacyTabletObservationPending;
 @property NSUInteger legacyTabletObservationAttempts;
 @property VIMGuestProgress *guestProgress;
@@ -245,12 +256,17 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
 @property(weak) NSWindow *diagnosticAboutWindow;
 @property(nonatomic) BOOL preparationRequested;
 @property(nonatomic) BOOL installationRequested;
+@property BOOL mojaveOpenGLSelectionChecked;
 @property BOOL automaticInstallation;
 @property BOOL relaunchForGraphics;
 @property BOOL relaunchForGuestReboot;
 @property NSArray<NSDate *> *recentGuestReboots;
 @property NSTimer *handoffTimer;
 @property NSString *reconciledBoot;
+@property NSString *hostAssemblyCheckedBoot;
+@property NSString *hostAssemblyRetryBoot;
+@property NSUInteger hostAssemblyTransportFailures;
+@property NSTimeInterval hostAssemblyRetryAfter;
 @property(nonatomic) NSDictionary *completionGuestReport;
 @property(nonatomic) NSUInteger reconciliationAttempts;
 @property(nonatomic) BOOL repairRequested;
@@ -266,6 +282,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
 @property NSTimer *resizeTimer;
 @property NSSize lastRequestedSize;
 @property BOOL resizeArmed;
+@property BOOL hostAssemblyDisplayBootstrap;
 @property NSString *displaySizedBoot;
 @property NSString *displaySelectedBoot;
 @property NSDate *displaySelectionRetryAfter;
@@ -287,6 +304,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
 @property BOOL clipboardSharingEnabled;
 @property BOOL bootPolicyPending;
 @property NSString *bootPolicyCheckedBoot;
+@property NSString *mojaveAppPolicyBoot;
 @property NSString *clipboardFailure;
 @property NSString *clipboardConfiguredBoot;
 @property NSDate *clipboardRetryAfter;
@@ -336,7 +354,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         [self.machine.configuration[@"InstallState"] isEqual:@"patching"]||
         [self.machine.configuration[@"InstallState"] isEqual:@"host-populated"];
     BOOL halted=[@[@"paused",@"suspended",@"shutdown",@"io-error",@"guest-panicked",@"internal-error",@"watchdog"] containsObject:self.lastRunState?:@""];
-    BOOL active=self.task.running&&!halted&&(self.preparing||self.preparationRequested||self.installationRequested||(setup&&!self.completionGuestReport));
+    BOOL active=self.task.running&&!halted&&(self.preparing||self.preparationRequested||self.installationRequested||
+        (setup&&!self.completionGuestReport)||self.machine.hasPendingHostAssemblyVerification||self.machine.hasPendingGuestUpdate);
     if(active&&!self.sleepActivity)self.sleepActivity=[VIMInstallationActivity beginWithReason:VIMLocalized(@"session.installing-macos-in-a-virtual-mac", @"Installing macOS in a virtual Mac")];
     else if(!active)self.sleepActivity=nil;
 }
@@ -369,6 +388,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         backing:NSBackingStoreBuffered defer:NO];
     self.window.releasedWhenClosed=NO;self.window.delegate=self;self.window.windowController=self;self.window.title=self.machine.name;
     self.window.tabbingMode=NSWindowTabbingModeDisallowed;
+    // AppKit expands the frame when adding its first toolbar. Install chrome
+    // before restoring the saved outer frame, or each new boot grows it again.
+    if(created)[self installWindowControls:NO];
     [self.window setFrameAutosaveName:[@"Guest-" stringByAppendingString:(self.machine.configuration[@"Identifier"]?:self.machine.name)]];
     self.window.minSize=NSMakeSize(640,440);self.window.acceptsMouseMovedEvents=YES;
     if(created) {
@@ -397,7 +419,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     while(self.window.titlebarAccessoryViewControllers.count)[self.window removeTitlebarAccessoryViewControllerAtIndex:0];
     NSToolbar *toolbar=[[NSToolbar alloc] initWithIdentifier:running?@"GuestRunning":@"GuestStopped"];
     toolbar.delegate=self;toolbar.displayMode=NSToolbarDisplayModeIconOnly;toolbar.allowsUserCustomization=NO;
-    self.window.toolbar=toolbar;self.window.toolbarStyle=NSWindowToolbarStyleUnifiedCompact;
+    self.window.toolbar=toolbar;VIMApplyToolbarAppearance(self.window);
 }
 - (BOOL)deviceToolbarExpanded {
     NSString *key=[@"VIMExpandedToolbar-" stringByAppendingString:SessionKey(self.machine)];
@@ -410,6 +432,17 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
 }
 - (NSArray<NSToolbarItemIdentifier> *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar {return [self toolbarDefaultItemIdentifiers:toolbar];}
 - (NSToolbarItem *)toolbar:(NSToolbar *)toolbar itemForItemIdentifier:(NSToolbarItemIdentifier)identifier willBeInsertedIntoToolbar:(BOOL)insert {
+    NSToolbarItem *item=[self deviceToolbar:toolbar itemForIdentifier:identifier inserted:insert];
+    if(@available(macOS 26.0,*))return item;
+    // AppKit15 and earlier otherwise size standalone items differently from
+    // the same symbols in an expanded item group (notably the Configure gear).
+    if(item.image) {
+        if([identifier isEqual:@"GuestSettings"]||[identifier isEqual:@"GuestExpand"])
+            item.view=VIMToolbarButton(item.image,item.label,item.target,item.action);
+    }
+    return item;
+}
+- (NSToolbarItem *)deviceToolbar:(NSToolbar *)toolbar itemForIdentifier:(NSToolbarItemIdentifier)identifier inserted:(BOOL)insert {
     if([identifier isEqual:@"GuestDevices"]) {
         NSToolbarItemGroup *group=[[NSToolbarItemGroup alloc] initWithItemIdentifier:identifier];
         group.label=VIMLocalized(@"menu.devices", @"Devices");group.controlRepresentation=NSToolbarItemGroupControlRepresentationExpanded;group.bordered=YES;
@@ -417,18 +450,20 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         NSMutableArray *items=[NSMutableArray new];
         // SDL device selection is currently next-start only. Keep it in Sound
         // settings, not among controls that imply a live device change.
-        for(NSString *child in @[@"GuestApps",@"GuestCPU",@"GuestMouse",@"GuestUSB",@"GuestOptical",@"GuestNetwork",@"GuestSharing",@"GuestControls"])
+        for(NSString *child in @[@"GuestApps",@"GuestCPU",@"GuestUSB",@"GuestOptical",@"GuestNetwork",@"GuestSharing",@"GuestControls"])
             [items addObject:[self toolbar:toolbar itemForItemIdentifier:child willBeInsertedIntoToolbar:NO]];
-        group.subitems=items;return group;
-    }
-    if([identifier isEqual:@"GuestMouse"]) {
-        BOOL relative=self.displayView.relativeMouseMode;
-        NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];
-        item.label=relative?VIMLocalized(@"session.relative-mouse", @"Relative Mouse"):VIMLocalized(@"session.tablet-mouse", @"Tablet Mouse");
-        item.toolTip=relative?VIMLocalized(@"session.using-a-relative-mouse-for-games-with-their-own-cursor", @"Using a relative mouse, for games with their own cursor or aim. Click to switch back to the tablet pointer for normal use."):
-            VIMLocalized(@"session.using-the-absolute-tablet-pointer-for-normal-use-click-to", @"Using the absolute tablet pointer, for normal use. Click to switch to a relative mouse for games (⌘⇧M).");
-        item.image=[NSImage imageWithSystemSymbolName:relative?@"computermouse.fill":@"computermouse" accessibilityDescription:item.label];
-        item.target=self;item.action=@selector(toggleRelativeMouse:);return item;
+        group.subitems=items;
+        if(@available(macOS 26.0,*))return group;
+        group.view=[[VIMDeviceToolbarControl alloc] initWithItems:items];
+        NSMenuItem *overflow=[[NSMenuItem alloc] initWithTitle:@"Devices" action:nil keyEquivalent:@""];
+        overflow.submenu=[NSMenu new];
+        for(NSToolbarItem *child in items) {
+            NSMenuItem *entry=[[NSMenuItem alloc] initWithTitle:child.label action:child.action keyEquivalent:@""];
+            entry.target=child.target;entry.image=child.image;
+            if([child isKindOfClass:NSMenuToolbarItem.class])entry.submenu=((NSMenuToolbarItem *)child).menu;
+            [overflow.submenu addItem:entry];
+        }
+        group.menuFormRepresentation=overflow;return group;
     }
     if([identifier isEqual:@"GuestExpand"]) {
         BOOL expanded=[self deviceToolbarExpanded];
@@ -451,7 +486,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     if([identifier isEqual:@"GuestUSB"]) {
         NSMenuToolbarItem *item=[[NSMenuToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"USB";item.toolTip=VIMLocalized(@"session.connect-usb-devices-to-this-mac", @"Connect USB devices to this Mac");
         item.showsIndicator=NO;
-        item.image=[NSImage imageWithSystemSymbolName:@"cable.connector" accessibilityDescription:nil];
+        item.image=VIMSystemSymbolImage(@"cable.connector",@"USB");
         item.menu=WithToolbarMenuTitle([self deviceMenuForKind:@"USB"],@"USB");return item;
     }
     if([identifier isEqual:@"GuestControls"]) {
@@ -462,14 +497,6 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         NSArray *titles=@[VIMLocalized(@"menu.shut-down", @"Shut Down"),VIMLocalized(@"menu.reset", @"Reset…"),VIMLocalized(@"session.force-stop", @"Force Stop…")];
         NSArray *actions=@[NSStringFromSelector(@selector(shutdown:)),NSStringFromSelector(@selector(resetMachine:)),NSStringFromSelector(@selector(forceStop:))];
         for(NSUInteger i=0;i<titles.count;i++){NSMenuItem *item=[[NSMenuItem alloc] initWithTitle:titles[i] action:NSSelectorFromString(actions[i]) keyEquivalent:@""];item.target=self;[menu addItem:item];}
-        [menu addItem:NSMenuItem.separatorItem];
-        NSMenuItem *relativeMouse=[[NSMenuItem alloc] initWithTitle:VIMLocalized(@"session.relative-mouse-for-games", @"Relative Mouse (for Games)") action:@selector(toggleRelativeMouse:) keyEquivalent:@"m"];
-        relativeMouse.keyEquivalentModifierMask=NSEventModifierFlagCommand|NSEventModifierFlagShift;
-        // The cursor is intentionally hidden while this is on (see
-        // -effectiveCursor) since it can no longer show where a click will
-        // actually land. A menu click alone isn't reliable then - this must
-        // stay reachable by key equivalent, not just by clicking the menu.
-        relativeMouse.target=self;relativeMouse.state=self.displayView.relativeMouseMode?NSControlStateValueOn:NSControlStateValueOff;[menu addItem:relativeMouse];
         menu.delegate=self;controls.menu=menu;return controls;
     }
     NSToolbarItem *gear=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];gear.label=VIMLocalized(@"ui.configure.label", @"Configure");gear.toolTip=VIMLocalized(@"session.configure-this-mac", @"Configure this Mac");
@@ -482,6 +509,23 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     self.window.contentView=content;
     self.window.minSize=NSMakeSize(440,320);self.window.maxSize=NSMakeSize(100000,100000);
     [self.window makeFirstResponder:content.playButton];
+}
++ (NSDictionary *)inspectToolbarForMachine:(VIMMachine *)machine {
+    VIMSession *session=sessions[SessionKey(machine)];
+    [session.window displayIfNeeded];
+    VIMDeviceToolbarControl *control=nil;
+    for(NSToolbarItem *item in session.window.toolbar.items)
+        if([item.view isKindOfClass:VIMDeviceToolbarControl.class])control=(id)item.view;
+    if(!control)return @{@"NativeToolbar":@YES,@"Style":@(session.window.toolbarStyle)};
+    NSUInteger menus=0;NSMutableArray *symbols=[NSMutableArray new];
+    for(NSToolbarItem *item in control.items) {
+        if([item isKindOfClass:NSMenuToolbarItem.class]&&((NSMenuToolbarItem *)item).menu)menus++;
+        if(item.image)[symbols addObject:@{@"Item":item.itemIdentifier,@"Size":NSStringFromSize(item.image.size),@"Alignment":NSStringFromRect(item.image.alignmentRect)}];
+    }
+    BOOL images=VIMSystemSymbolImage(@"cable.connector",nil)&&VIMSystemSymbolImage(@"power.circle",nil);
+    return @{@"NativeToolbar":@NO,@"MenusWired":@(menus),@"SymbolFallbacks":@(images),@"Symbols":symbols,
+        @"Style":@(session.window.toolbarStyle),@"ControlSize":NSStringFromSize(control.bounds.size),
+        @"IntrinsicSize":NSStringFromSize(control.intrinsicContentSize),@"GuestRunning":@(session.task.running)};
 }
 + (BOOL)openMachine:(VIMMachine *)machine error:(NSError **)error {
     return [self requestMachine:machine operation:VIMBootStart error:error];
@@ -509,10 +553,13 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
 }
 + (BOOL)requestMachine:(VIMMachine *)machine operation:(VIMBootOperation)operation error:(NSError **)error {
     NSAssert(NSThread.isMainThread,@"Session UI is main-thread owned");
-#if defined(__arm64__)
     // These guests use the native host PassthroughOpenGL executor, not the
     // Intel PVG helper. Their TCG CPU does not require Rosetta to be installed.
-    if(machine.preMetalGuest)return [self performBootOperation:operation machine:machine error:error];
+    if(!VIMGuestRequiresPVGHostSupport(machine.guest))
+        return [self performBootOperation:operation machine:machine error:error];
+    NSString *notice=VIMHostUpdateNoticeForGuest(NSProcessInfo.processInfo.operatingSystemVersion,machine.guest);
+    if(notice){VIMPresentHostUpdateRequiredAlert(notice,sessions[SessionKey(machine)].window?:NSApp.mainWindow);return YES;}
+#if defined(__arm64__)
     NSString *key=SessionKey(machine);
     // Focusing an already running VM is not a new boot. Every actual start,
     // including installer VGA and automatic restarts, must pass a fresh probe.
@@ -522,12 +569,12 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     if(pendingRosettaStarts[key])return YES;
     if(!pendingRosettaStarts)pendingRosettaStarts=[NSMutableDictionary new];
     NSUUID *request=NSUUID.UUID;pendingRosettaStarts[key]=request;
-    VIMCheckRosettaForBoot(^(BOOL missing,NSError *failure){
+    VIMCheckRosettaForPVG(^(BOOL missing,NSError *failure){
         if(![pendingRosettaStarts[key] isEqual:request])return; // quit/stop cancelled it
         [pendingRosettaStarts removeObjectForKey:key];
         NSWindow *window=sessions[key].window?:NSApp.mainWindow;
         if(failure){VIMPresentError(failure,window);return;}
-        if(missing){VIMPresentRosettaRequiredAlert(window);return;}
+        if(missing){VIMPresentRosettaRequiredAlert(window,NO);return;}
         // No disk lock, network helper, QEMU process or install transaction is
         // touched until actual Intel execution succeeds. Never retry after an
         // alert: the user starts again after completing Apple's installation.
@@ -542,8 +589,6 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     NSAssert(NSThread.isMainThread,@"Session UI is main-thread owned");
     if(![machine applyPendingChanges:error])return NO;
     machine=[VIMMachine loadURL:machine.URL error:error];if(!machine)return NO;
-    NSString *notice=VIMHostUpdateNotice(NSProcessInfo.processInfo.operatingSystemVersion);
-    if(notice){if(error)*error=VIMSessionError(notice);return NO;}
     if(!sessions)sessions=[NSMutableDictionary dictionary];
     NSString *key=SessionKey(machine);
     VIMSession *existing=sessions[key];
@@ -659,7 +704,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     [self.guestAgent connectWithCompletion:^(NSError *error){if(error){finish(error);return;}[self.guestAgent openHostConnection:URL completion:finish];}];
 }
 + (BOOL)prepareMachineAfterHostCheck:(VIMMachine *)machine error:(NSError **)error {
-    if(![@[@"mojave",@"catalina",@"bigsur"] containsObject:machine.guest]) {
+    if(!VIMIsModernGuest(machine.guest)) {
         if(error)*error=VIMSessionError(VIMLocalized(@"session.guest-preparation-supports-mojave-catalina-and-big-sur", @"Guest preparation supports Mojave, Catalina and Big Sur."));return NO;
     }
     if(![self openMachineAfterHostCheck:machine error:error])return NO;
@@ -667,7 +712,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     if(session.preparing||session.preparationRequested){if(error)*error=VIMSessionError(VIMLocalized(@"session.guest-preparation-is-already-active", @"Guest preparation is already active."));return NO;}
     session.preparationRequested=YES;[session refreshGuestStatus];return YES;
 }
-+ (void)stopAll { [pendingRosettaStarts removeAllObjects];for(VIMSession *session in sessions.allValues){if(session.networkStarting){[session cleanUp];[session showStoppedScreen];}if(session.task.running){session.forceResetRequested=NO;session.relaunchForGraphics=NO;session.relaunchForGuestReboot=NO;session.shutdownRequested=YES;[session.task terminate];}} }
++ (void)stopAll { [pendingRosettaStarts removeAllObjects];for(VIMSession *session in sessions.allValues){if(session.networkStarting){[session cleanUp];[session showStoppedScreen];}if(session.task.running){session.forceResetRequested=NO;session.relaunchForGraphics=NO;session.relaunchForGuestReboot=NO;session.shutdownRequested=YES;VIMForceTerminateTask(session.task);}} }
 + (NSArray<NSString *> *)runningMachineNames {
     NSMutableArray *names=[NSMutableArray array];for(VIMSession *session in sessions.allValues)if(session.task.running)[names addObject:session.machine.name];return names;
 }
@@ -694,8 +739,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     return YES;
 }
 + (BOOL)repairMachineAfterHostCheck:(VIMMachine *)machine error:(NSError **)error {
-    if(![@[@"mojave",@"catalina",@"bigsur"] containsObject:machine.guest]) {
-        if(error)*error=VIMSessionError(VIMLocalized(@"session.repair-supports-mojave-catalina-and-big-sur", @"Repair supports Mojave, Catalina and Big Sur."));return NO;
+    if(!VIMIsModernGuest(machine.guest)) {
+        if(error)*error=VIMSessionError(VIMLocalized(@"vimsession.repair-supports-macos-mojave-and-later", @"Repair supports macOS Mojave and later."));return NO;
     }
     if(![self openMachineAfterHostCheck:machine error:error])return NO;
     VIMSession *session=sessions[SessionKey(machine)];
@@ -751,6 +796,27 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         bios=[runtime stringByAppendingPathComponent:@"pc-bios"];
         llvm=[runtime stringByAppendingPathComponent:@"Donor/libLLVM.dylib"];
     }
+    NSString *developmentQEMU=nil,*developmentError=nil;
+    if(!VIMDevelopmentQEMUForMachine(NSProcessInfo.processInfo.arguments,self.machine.URL,
+                                    &developmentQEMU,&developmentError)) {
+        if(error)*error=VIMSessionError(developmentError);
+        [self cleanUp];return NO;
+    }
+    if(developmentQEMU)qemu=developmentQEMU;
+    // Mojave's optional GL command transport never replaces PVG's display
+    // device. The development argument may override only its QEMU executable.
+    NSArray *headlessArguments=NSProcessInfo.processInfo.arguments;
+    NSUInteger headlessIndex=[headlessArguments indexOfObject:@"--development-headless-opengl-qemu"];
+    BOOL headlessOpenGL=[self.machine.guest isEqual:@"mojave"]&&!installerDisplay&&self.machine.passthroughOpenGLEnabled;
+    if(headlessIndex!=NSNotFound) {
+        NSString *candidate=headlessIndex+1<headlessArguments.count?headlessArguments[headlessIndex+1]:nil;
+        if(![self.machine.guest isEqual:@"mojave"]||installerDisplay||!candidate.isAbsolutePath||
+           ![NSFileManager.defaultManager isExecutableFileAtPath:candidate]) {
+            if(error)*error=VIMSessionError(@"Headless OpenGL development requires an installed Mojave guest and an absolute QEMU executable path.");
+            [self cleanUp];return NO;
+        }
+        qemu=candidate;
+    }
     // macOS 27 removed the Intel guest protocol from system PVG. Earlier
     // systems load their system Intel slice normally (in the helper on ARM).
     BOOL extractedDonor=appleSilicon && NSProcessInfo.processInfo.operatingSystemVersion.majorVersion>=27;
@@ -785,6 +851,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     [self ensureWindow];self.window.title=self.machine.name;self.window.contentView=[NSView new];
     NSView *content=self.window.contentView;
     self.displayView=[[VIMMetalView alloc] initWithFrame:NSZeroRect];self.displayView.translatesAutoresizingMaskIntoConstraints=NO;
+    NSString *keyboardLayout=VIMHostKeyboardLayout();
+    self.displayView.appleISOKeyboard=[keyboardLayout isEqual:@"iso"];
     // Apply this to the new view, not the view from the previous launch.
     // VGA draws its cursor into the frame and cannot receive PVG power messages.
     self.displayView.softwareCursor=installerDisplay&&!openGLDirectDisplay;
@@ -805,16 +873,10 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     self.closedSetupNoticeHeading=nil;
     if(self.previewSetupNotice)[self showSetupNoticeAutomatic:YES automaticLogin:YES restarting:NO];
     [self installWindowControls:YES];
-    if(installerDisplay) {
-        // The unaccelerated framebuffer remains 1280x800. Fit its window in
-        // logical points on smaller hosts without changing that guest mode.
-        NSScreen *screen=self.window.screen?:NSScreen.mainScreen;
-        CGFloat chrome=NSHeight(self.window.frame)-NSHeight(content.frame);
-        CGFloat fit=MIN(1.,MIN((NSWidth(screen.visibleFrame)-48)/1280.,
-                              (NSHeight(screen.visibleFrame)-chrome-48)/800.));
-        [self.window setContentSize:NSMakeSize(floor(1280*fit),floor(800*fit))];
-        [self.window center];
-    }
+    // ensureWindow restored the last frame or chose a screen-fitted default.
+    // Keep it even during installer/first-boot display handoff. Its fixed
+    // 1280x800 framebuffer is scaled by the view, not a reason to overwrite
+    // the user's saved window size/position on every unaccelerated launch.
     self.stateLabel=[NSTextField wrappingLabelWithString:@""];self.stateLabel.textColor=NSColor.whiteColor;self.stateLabel.alignment=NSTextAlignmentCenter;
     self.stateAction=[NSButton buttonWithTitle:VIMLocalized(@"library.start", @"Start") target:self action:@selector(startAgain:)];
     self.statePanel=[NSStackView stackViewWithViews:@[self.stateLabel,self.stateAction]];self.statePanel.orientation=NSUserInterfaceLayoutOrientationVertical;self.statePanel.spacing=16;self.statePanel.hidden=YES;
@@ -830,6 +892,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     // while the guest remains paused. No arbitrary first-peer authentication.
     NSString *rendererPID=NSProcessInfo.processInfo.environment[@"VIM_OPENGL_RENDERER_PID"];
     NSString *inprocessLibrary=NSProcessInfo.processInfo.environment[@"VIM_PASSTHROUGH_OPENGL_INPROCESS_LIBRARY"];
+    if(headlessOpenGL&&!inprocessLibrary.length)
+        inprocessLibrary=[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"Runtime/bin/libVIMPassthroughOpenGLHost.dylib"];
     if(openGLDirectDisplay && !inprocessLibrary && !rendererPID.length) {
         NSString *bundled=[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"Runtime/bin/libVIMPassthroughOpenGLHost.dylib"];
         if([NSFileManager.defaultManager isReadableFileAtPath:bundled])inprocessLibrary=bundled;
@@ -852,8 +916,17 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     self.displayMode=installerDisplay?@"scaled":VIMDisplayMode(self.machine.configuration);self.retinaEnabled=![self.displayMode isEqual:@"scaled"];
     [content layoutSubtreeIfNeeded];
     CGFloat initialScale=[self.displayMode isEqual:@"retina"]?2:(self.retinaEnabled?self.window.backingScaleFactor:1);
-    NSSize initialPixels=VIMRequestedGuestPixelSize(self.displayView.bounds.size,initialScale,
-        self.machine.preMetalGuest,[self.displayMode isEqual:@"retina"],NO);
+    NSSize initialPixels=VIMRequestedGuestPixelSizeWithin(self.displayView.bounds.size,initialScale,
+        self.machine.preMetalGuest,[self.displayMode isEqual:@"retina"],NO,self.machine.guestDisplayMaxWidth);
+    // A fresh Big Sur WindowServer can compose correctly while the first
+    // high-resolution PVG scanout remains black on Apple silicon. Starting
+    // with a distinct boot mode makes the verified console selection a real
+    // mode change, so the display channel receives a new scanout. Keep the
+    // user's requested mode and graphics backend throughout.
+    self.hostAssemblyDisplayBootstrap=appleSilicon&&!installerDisplay&&[self.machine.guest isEqual:@"bigsur"]&&
+        self.machine.hasHostStagedAssistantGraphics;
+    if(self.hostAssemblyDisplayBootstrap)
+        initialPixels=NSEqualSizes(initialPixels,NSMakeSize(1280,800))?NSMakeSize(1024,768):NSMakeSize(1280,800);
     // Queue before connection: both in-process PVG and the Rosetta helper
     // receive the window size as soon as their private display channel opens.
     if(!installerDisplay)[self.displayConnection requestWidth:initialPixels.width height:initialPixels.height
@@ -873,7 +946,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             session.displayView.displaySleeping=YES;session.displayView.displaySleeping=NO;
         } else if([kind isEqual:@"SUSPEND"]||[kind isEqual:@"SHUTDOWN"]) {
             if([kind isEqual:@"SHUTDOWN"]&&[@[@"guest-reset",@"host-qmp-system-reset"] containsObject:event[@"data"][@"reason"]?:@""]&&
-               !session.shutdownRequested&&!session.closeAfterShutdown)session.relaunchForGuestReboot=YES;
+               !session.shutdownRequested&&!session.closeAfterShutdown&&
+               ![NSProcessInfo.processInfo.arguments containsObject:@"--trace-boot-exceptions"])session.relaunchForGuestReboot=YES;
             session.displayView.displaySleeping=YES;session.statePanel.hidden=YES;
             if([kind isEqual:@"SUSPEND"]){session.lastRunState=@"suspended";session.status.stringValue=VIMLocalized(@"session.sleeping", @"Sleeping");}
         } else if([kind isEqual:@"WAKEUP"]) {
@@ -907,6 +981,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     self.openGLDesktopMonitoring=NO;self.openGLSetupMediaAttached=NO;
     self.openGLLargeResizeReady=NO;
     self.mavericksSMBCheckedBoot=nil;
+    self.mojaveOpenGLSelectionChecked=NO;
     self.guestAgent.preMetalGuest=self.machine.preMetalGuest;
     self.guestAgent.tigerGuest=[self.machine.guest isEqual:@"tiger"];
     if(self.machine.preMetalGuest)self.guestAgent.processPollInterval=1;
@@ -961,7 +1036,11 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     NSString *firmwareEFI=[commonFirmware stringByAppendingPathComponent:@"EFI.img"];
     if(![NSFileManager.defaultManager fileExistsAtPath:firmwareEFI])
         firmwareEFI=[firmwareRoot stringByAppendingPathComponent:@"EFI.img"];
-    BOOL preparedGL=[self.machine.guest isEqual:@"bigsur"]&&self.machine.hasPublishedGuestGraphics;
+    // A host-built assistant root needs the OpenGL registration at its very
+    // first boot, before VerifyLivePVG can attest the staged drivers.
+    BOOL preparedGL=VIMIsAssistantGuest(self.machine.guest)&&
+        (self.machine.hasPublishedGuestGraphics||self.machine.hasHostStagedAssistantGraphics)&&
+        ![NSUserDefaults.standardUserDefaults boolForKey:@"VIMDevelopmentDisableGuestOpenGL"];
     BOOL signatureOnly=[VIMGuestBootPolicy readyAtURL:[self.machine.URL URLByAppendingPathComponent:@"State/BootPolicy.plist"]
         guest:self.machine.guest identifier:config[@"Identifier"]];
     NSString *bootPolicy=[NSString stringWithFormat:@"name=opt/org.virtualintelmac/boot-policy,string=VIM1%c%c00",
@@ -1000,28 +1079,28 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     if([config[@"SSHEnabled"] boolValue])[network appendFormat:@",hostfwd=tcp:127.0.0.1:%ld-:22",[config[@"SSHPort"] integerValue]];
     if([config[@"FileSharingEnabled"] boolValue])[network appendFormat:@",hostfwd=tcp:127.0.0.1:%ld-:445",[config[@"FileSharingPort"] integerValue]];
     if(![VIMNetworkMode(config) isEqual:@"shared"])network=[NSMutableString stringWithString:@"socket,id=net0,fd=0"];
-    NSString *cpu=@"Penryn,vendor=GenuineIntel,+sse4.2,+popcnt,+aes,+pclmulqdq,+pcid";
+    NSString *cpu=VIMEmulatedCPUModel(self.machine.guest,appleSilicon);
     // Use one virtual timestamp rate on ARM. At the default 1 GHz, early
     // XNU releases can wrap their nanotime multiplier or have no matching
     // commpage routine. This is not an instruction-speed limit. Intel HVF
     // keeps its hardware counter.
-    if(appleSilicon)
-        cpu=[cpu stringByAppendingString:@",tsc-frequency=1200000000"];
     // Mavericks rejects newer Intel models in cpuid_set_info before drivers
     // start (verified "Unsupported CPU" on the Ice Lake HVF host). Keep the
     // same supported Penryn identity as its TCG path; HVF still executes guest
     // instructions natively. Do not change supported production guests.
     if(!appleSilicon&&!self.machine.preMetalGuest)cpu=mojave?@"host,model=94":@"host";
-    // Explicit research comparison only: Mavericks knows Haswell, unlike
-    // this host's newer CPUID model. Preserve the normal guest and TCG paths.
+    // Explicit, nonpersistent research comparison. Mavericks knows Haswell;
+    // on ARM this also qualifies VEX hand-offs without changing shipping CPUs.
     NSUInteger openGLCPUOption=[launchArguments indexOfObject:@"--opengl-cpu-model"];
     if(openGLCPUOption!=NSNotFound) {
         NSString *model=openGLCPUOption+1<launchArguments.count?launchArguments[openGLCPUOption+1]:@"";
-        if(appleSilicon||!self.machine.openGLResearchGuest||![@[@"penryn",@"haswell"] containsObject:model]) {
-            if(error)*error=VIMSessionError(@"--opengl-cpu-model requires an Intel-host research Mac and penryn or haswell. The Mac was not started.");
+        if(!self.machine.openGLResearchGuest||![@[@"penryn",@"haswell"] containsObject:model]) {
+            if(error)*error=VIMSessionError(@"--opengl-cpu-model requires a research Mac and penryn or haswell. The Mac was not started.");
             [self cleanUp];return NO;
         }
         if([model isEqual:@"haswell"])cpu=@"Haswell,vendor=GenuineIntel,+pcid,-hle,-rtm";
+        if(appleSilicon&&[model isEqual:@"haswell"])
+            cpu=[cpu stringByAppendingString:@",stepping=4,-tsc-deadline,-invpcid,tsc-frequency=1200000000,vmware-cpuid-freq=off"];
         [self.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] Research CPU comparison: %@\n",model] dataUsingEncoding:NSUTF8StringEncoding]];
     }
     NSString *sataDisk=@"ide-hd,bus=ide.1,drive=macos,bootindex=2,rotation_rate=1";
@@ -1030,7 +1109,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     // indefinitely for its root volume. The same installed disk boots over
     // native NVMe. Keep the controller stable across later update boots;
     // leave Intel, earlier systems and ongoing installations on SATA.
-    BOOL installedBigSur=appleSilicon&&[self.machine.guest isEqual:@"bigsur"]&&
+    BOOL installedBigSur=appleSilicon&&VIMIsAssistantGuest(self.machine.guest)&&
         [@[@"installed",@"imported-prepared"] containsObject:config[@"InstallState"]?:@""];
     NSString *systemDiskDevice=installedBigSur?nvmeDisk:sataDisk;
     NSUInteger diskOption=[launchArguments indexOfObject:@"--system-disk-interface"];
@@ -1055,6 +1134,17 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     // Explicit development isolation: keep the production devices, memory and
     // display path while enabling TCG's guest watchpoints on an Intel builder.
     BOOL developmentTCG=[NSProcessInfo.processInfo.arguments containsObject:@"--development-tcg"];
+    NSMutableDictionary *cpuConfiguration=[config mutableCopy];
+    NSUInteger backendOption=[launchArguments indexOfObject:@"--cpu-backend"];
+    if(backendOption!=NSNotFound) {
+        NSString *value=backendOption+1<launchArguments.count?launchArguments[backendOption+1]:@"";
+        if(![@[@"hybrid",@"tcg"] containsObject:value]) {
+            if(error)*error=VIMSessionError(@"--cpu-backend requires hybrid or tcg.");
+            [self cleanUp];return NO;
+        }
+        cpuConfiguration[@"CPUBackend"]=value;
+    }
+    BOOL emulation=developmentTCG||VIMCPUUsesEmulation(cpuConfiguration,appleSilicon);
     BOOL earlyAppleXHCI=[@[@"lion",@"mountainlion",@"mavericks",@"yosemite"] containsObject:self.machine.guest];
     NSString *xhciDevice=@"qemu-xhci,id=xhci,bus=pcie.0,addr=0x7";
     // El Capitan binds the 64-bit BAR, but its MSI-X path delays physical
@@ -1063,7 +1153,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         xhciDevice=[xhciDevice stringByAppendingString:@",msi=on,msix=off,conditional-intr-mapping=on"];
     // Only the early AppleUSBXHCI stack needs a low BAR and bulk-ring help.
     if(earlyAppleXHCI)xhciDevice=[xhciDevice stringByAppendingString:@",x-bar-32bit=on,x-bulk-event-data=on"];
-    NSMutableArray *baseArguments=[NSMutableArray arrayWithArray:@[@"-name",VIMOptionPath(self.machine.name),@"-L",bios,@"-machine",@"q35,i8042=off",@"-accel",(appleSilicon||developmentTCG)?@"tcg,thread=multi":@"hvf",
+    NSMutableArray *baseArguments=[NSMutableArray arrayWithArray:@[@"-name",VIMOptionPath(self.machine.name),@"-L",bios,@"-machine",@"q35,i8042=off",@"-accel",(appleSilicon||emulation)?@"tcg,thread=multi":@"hvf",
         // v1 does not implement reliable S3/S4 resume. Do not advertise these
         // states to macOS in the first place; pmset sleep=0 remains a second
         // safeguard, rather than the sole defense against an idle timer.
@@ -1077,31 +1167,11 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         // Darwin9's EHCI uses legacy IRQ10. Keep it off VGA's PIRQ F,
         // whose PIC alias is deliberately disabled after _PIC(1). Slot5
         // routes EHCI INTD to PIRQ E instead; newer guests retain their map.
-        @"-device",[self.machine.guest isEqual:@"leopard"]?@"ich9-usb-ehci1,id=usb,bus=pcie.0,addr=0x5":@"ich9-usb-ehci1,id=usb",@"-device",@"usb-kbd,id=keyboard,bus=usb.0,port=1,apple-ansi=on",
-        // Second, independent controller: usb.0 (EHCI1) already allocates all
-        // 6 ports (keyboard, tablet, the primary image slot, three more for
-        // user-connected images). The GPU driver support disc needs its own
-        // hot-plugged usb-bot/scsi-hd pair (see VIMOpenGLSetup.m) and there is
-        // no free port left on usb.0 for it; pre-Metal guests have no xHCI
-        // driver to see a device on the USB3 passthrough bus either. A real
-        // ICH9 southbridge has two distinct EHCI controllers, so this mirrors
-        // actual hardware rather than inventing a fictitious duplicate.
-        @"-device",@"ich9-usb-ehci2,id=usb2",
+        @"-device",[self.machine.guest isEqual:@"leopard"]?@"ich9-usb-ehci1,id=usb,bus=pcie.0,addr=0x5":@"ich9-usb-ehci1,id=usb",@"-device",[NSString stringWithFormat:@"usb-kbd,id=keyboard,bus=usb.0,port=1,apple-layout=%@",keyboardLayout],
         // USB passthrough bus (USB 2 and 3). A fixed slot after the network
         // adapter's leaves existing device addresses and services unchanged.
         @"-device",xhciDevice,
         @"-device",@"usb-tablet,id=tablet,bus=usb.0,port=2",
-        // A second, relative-motion pointer alongside the absolute tablet.
-        // Many classic Mac games read the generic USB HID mouse class and
-        // treat whatever value arrives in its X/Y fields as a motion delta;
-        // fed the tablet's large absolute coordinates (0-32767) instead of
-        // small per-report deltas, that misreading looks like wildly
-        // oversensitive mouse movement. A true relative mouse alongside the
-        // tablet costs nothing for normal GUI use (both can be connected to
-        // a real Mac at once) and gives those games correct deltas. Port 1
-        // on usb2.0 stays reserved for the GPU driver disc's own hot-plugged
-        // usb-bot (see VIMOpenGLSetup.m); this is always present, port 2.
-        @"-device",@"usb-mouse,id=relative-mouse,bus=usb2.0,port=2",
         // Apple's Intel guest agent opens this exact VirtIO console name.
         // Keep its control endpoint inside the per-session private directory;
         // unlike network forwarding it is never exposed on a TCP interface.
@@ -1182,13 +1252,13 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         [baseArguments addObjectsFromArray:@[@"-audiodev",audio]];
         // Keep this in the original PCI-device order so existing network
         // service associations are not disturbed by the sound implementation.
-        // Big Sur ships AppleVirtIOSound (IOVirtIOPrimaryMatch 0x00191af4).
-        if([self.machine.guest isEqual:@"bigsur"])
+        // Big Sur and later ship AppleVirtIOSound (IOVirtIOPrimaryMatch 0x00191af4).
+        if(VIMIsAssistantGuest(self.machine.guest))
             [baseArguments addObjectsFromArray:@[@"-device",@"virtio-sound-pci,audiodev=audio0,x-apple-reconfigure=on"]];
         else [baseArguments addObjectsFromArray:@[@"-device",@"intel-hda,id=hda",@"-device",@"hda-duplex,bus=hda.0,audiodev=audio0"]];
         // Explicit development-only cold-codec trace through the normal app
         // launch. No QEMU debugger or additional control connection is needed.
-        if(![self.machine.guest isEqual:@"bigsur"]&&[NSProcessInfo.processInfo.arguments containsObject:@"--trace-hda-codec"])
+        if(!VIMIsAssistantGuest(self.machine.guest)&&[NSProcessInfo.processInfo.arguments containsObject:@"--trace-hda-codec"])
             [baseArguments addObjectsFromArray:@[@"-global",@"intel-hda.debug=2",@"-global",@"hda-duplex.debug=2"]];
     }
     if(!efiOverride&&[@[@"snowleopard",@"lion",@"mountainlion",@"mavericks",@"yosemite",
@@ -1230,7 +1300,10 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         // servicing that unrelated USB interrupt, leaving en0 inactive.
         // Reserve slot 6 / IRQ 22: no emulated-register or guest-driver patch,
         // link reset, or delayed boot-time reconnect is necessary.
-        @"-device",[@"e1000-82545em,id=ethernet,bus=pcie.0,addr=0x6,netdev=net0,mac=" stringByAppendingString:mac],
+        // Ventura removed AppleIntel8254XEthernet; macOS 13 and later drive
+        // VirtIO networking instead. Same slot, id (link control) and MAC.
+        @"-device",[NSString stringWithFormat:@"%@,id=ethernet,bus=pcie.0,addr=0x6,netdev=net0,mac=%@",
+            VIMNetworkDeviceModel(self.machine.guest,config),mac],
         @"-qmp",[NSString stringWithFormat:@"unix:%@,server=on,wait=off",qmp],
         @"-serial",self.machine.preMetalGuest?@"none":[NSString stringWithFormat:@"file:%@",[self.machine.URL.path stringByAppendingPathComponent:@"State/serial.log"]],
         @"-monitor",@"none",@"-action",@"reboot=shutdown"]];
@@ -1259,6 +1332,12 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         [mediaArguments addObjectsFromArray:@[@"-trace",@"enable=usb_msd_maxlun"]];
     if([NSProcessInfo.processInfo.arguments containsObject:@"--firmware-diagnostics"])
         [mediaArguments addObjectsFromArray:@[@"-debugcon",[@"file:" stringByAppendingString:[self.machine.URL.path stringByAppendingPathComponent:@"State/firmware.log"]],@"-global",@"isa-debugcon.iobase=0x402"]];
+    // Explicit, short boot diagnosis only; no logging cost in normal runs.
+    // Captures early traps/triple faults before the guest can write a panic.
+    // Stop on the first reset and retain a separate file for this process.
+    if([NSProcessInfo.processInfo.arguments containsObject:@"--trace-boot-exceptions"])
+        [mediaArguments addObjectsFromArray:@[@"-d",@"int,cpu_reset,guest_errors",@"-D",
+            [self.machine.URL.path stringByAppendingPathComponent:@"State/boot-exceptions-%d.log"]]];
     // Kernel debugging for the opt-in legacy harness, bound to loopback only.
     // Does not open a second QMP owner or expose debug access in normal VMs.
     NSInteger openGLGDB=[config[@"LegacyGDBPort"] integerValue];
@@ -1373,6 +1452,23 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         self.task.arguments=arguments;
     }
     NSMutableDictionary *environment=[NSProcessInfo.processInfo.environment mutableCopy];
+    // The VM preference, not a leftover research-shell variable, owns the
+    // backend. Keep optional experimental modes and diagnostic polling off.
+    for(NSString *key in environment.allKeys)
+        if([key hasPrefix:@"LC_HVDBT"]||[key hasPrefix:@"ENGINE_"]||
+           [key isEqual:@"VIM_HYBRID_WATCHDOG"])[environment removeObjectForKey:key];
+    [environment addEntriesFromDictionary:VIMHybridBaselineEnvironment()];
+    environment[@"LC_HVDBT"]=appleSilicon&&!emulation?@"1":@"0";
+    [self.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] CPU backend: %@\n",
+        emulation?@"Emulation (TCG)":appleSilicon?@"Hybrid Hypervisor (TCG fallback)":@"Native Hypervisor"] dataUsingEncoding:NSUTF8StringEncoding]];
+    if(headlessOpenGL) {
+        if(![NSFileManager.defaultManager isReadableFileAtPath:inprocessLibrary]) {
+            if(error)*error=VIMSessionError(VIMLocalized(@"vimsession.the-passthroughopengl-command-executor-is-missing", @"The PassthroughOpenGL command executor is missing."));
+            [self cleanUp];return NO;
+        }
+        self.task.arguments=[self.task.arguments arrayByAddingObjectsFromArray:@[@"-device",@"vim-gl-headless"]];
+        environment[@"VIM_PASSTHROUGH_OPENGL_INPROCESS_LIBRARY"]=inprocessLibrary;
+    }
     if(openGLInprocess) {
         environment[@"VIM_PASSTHROUGH_OPENGL_INPROCESS_LIBRARY"]=inprocessLibrary;
         if(!environment[@"VIM_PASSTHROUGH_OPENGL_INLINE"])environment[@"VIM_PASSTHROUGH_OPENGL_INLINE"]=@"1";
@@ -1445,6 +1541,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     if(!appleSilicon)for(NSString *key in environment.allKeys)
         if([key hasPrefix:@"PVG_TCG_"]||[key hasPrefix:@"PVG_SHADOW_"]||[key hasPrefix:@"PVG_OOP_"]||[key isEqual:@"PVG_HOST_AIR_LLVM"]||[key isEqual:@"PVG_PRESERVE_IOSURFACE"])
             [environment removeObjectForKey:key];
+    BOOL referenceTCG=VIMApplyTCGReferenceEnvironment(environment,appleSilicon,emulation,NSProcessInfo.processInfo.arguments);
     self.task.environment=environment;
     if(![self.machine prepareUpdaterDisplayForBoot:error]){[self cleanUp];return NO;}
     NSString *logPath=[self.machine.URL.path stringByAppendingPathComponent:@"State/session.log"];
@@ -1453,6 +1550,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     if(!self.log) { if(error)*error=VIMSessionError(VIMLocalized(@"session.could-not-open-the-vm-session-log", @"Could not open the VM session log."));[self cleanUp];return NO; }
     [self.log seekToEndOfFile];self.task.standardOutput=self.log;self.task.standardError=self.log;
     [self.log writeData:[@"\n[Virtual Intel Mac] Memory ordering: normal runtime barriers\n" dataUsingEncoding:NSUTF8StringEncoding]];
+    if(referenceTCG)[self.log writeData:[@"\n[Virtual Intel Mac] Development TCG control: optional CPU fast paths disabled; graphics unchanged.\n" dataUsingEncoding:NSUTF8StringEncoding]];
     [self.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] %@ runtime: %@\n",
         root.length?@"Development override":@"Bundled",qemu] dataUsingEncoding:NSUTF8StringEncoding]];
     self.task.terminationHandler=^(NSTask *task){dispatch_async(dispatch_get_main_queue(), ^{
@@ -1565,8 +1663,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         // the later bound-driver observation can still override it.
         session.legacyTabletGuest=VIMUsesLegacyTabletCalibration(session.machine.guest);
         session.legacyTabletObserved=NO;session.legacyTabletObservationAttempts=0;
-        session.tabletTrim=VIMInitialTabletTrim(session.machine.guest,classicInstaller);
-        if(!failure)session.displayView.relativeMouseModeObserver=^{[weakSelf installWindowControls:weakSelf.task.running];};
+        session.automaticTabletTrim=VIMInitialTabletTrim(session.machine.guest,classicInstaller);
+        session.tabletTrim=VIMConfiguredTabletTrim(session.machine.editableConfiguration,session.automaticTabletTrim);
+        session.displayView.releaseWithControlOption=![session.machine.editableConfiguration[@"InputReleaseShortcut"] isEqual:@"command-option"];
         if(!failure)session.displayView.inputHandler=^(NSArray *events){
             if([weakSelf.lastRunState isEqual:@"suspended"]) {
                 if(weakSelf.wakePending)return;
@@ -1639,6 +1738,11 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
                 session.diagnosticDirectory=VIMMultiMachineDiagnosticDirectory(args,session.machine);
             else if(selected&&debug!=NSNotFound&&debug+1<args.count&&[args[debug+1] isAbsolutePath])
                 session.diagnosticDirectory=args[debug+1];
+            if(session.diagnosticDirectory) {
+                NSDictionary *identity=@{@"Session":session.runtimeDirectory.lastPathComponent};
+                [[NSJSONSerialization dataWithJSONObject:identity options:0 error:nil]
+                    writeToFile:[session.diagnosticDirectory stringByAppendingPathComponent:@"Session.json"] atomically:YES];
+            }
         }
     }];
     return YES;
@@ -1669,23 +1773,29 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     NSData *data=[NSData dataWithContentsOfFile:request];
     NSDictionary *command=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]:nil;
     if(![command isKindOfClass:NSDictionary.class])return;
+    NSString *diagnosticSession=self.runtimeDirectory.lastPathComponent;
+    BOOL stale=!VIMDiagnosticRequestMatchesSession(command,diagnosticSession);
     // Framebuffer/emulator reports need no guest agent. Explicit process-only
     // inspection can also coexist with a provisioning child on the existing
     // multiplexed owner; it never stages files or changes that transaction.
     BOOL independent=[@[@"capture",@"inspect-hardware",@"guest-processes",@"guest-process-sample",@"installer-log",@"cursor-state",@"network-details",@"configuration",@"display-state",@"display-fingerprint",@"display-buffer-count",@"display-acquire-async",@"pointer-workload",@"key-workload",@"fullscreen",@"passthrough-opengl-release-bql",@"opengl-pirq-f-pic"] containsObject:command[@"Action"]?:@""];
-    if(!independent&&(self.guestPending||self.preparing||self.bootPolicyPending||self.clipboardPending))return;
+    if(!stale&&!independent&&(self.guestPending||self.preparing||self.bootPolicyPending||self.clipboardPending))return;
     NSString *consumed=[self.diagnosticDirectory stringByAppendingPathComponent:@"Running.json"];
     if(rename(request.fileSystemRepresentation,consumed.fileSystemRepresentation))return;
     self.diagnosticPending=YES;
     NSString *output=[self.diagnosticDirectory stringByAppendingPathComponent:@"Result.json"];
     void (^finish)(NSDictionary *)=^(NSDictionary *result){
-        [[NSJSONSerialization dataWithJSONObject:result options:NSJSONWritingPrettyPrinted error:nil] writeToFile:output atomically:YES];
+        NSMutableDictionary *reply=[result mutableCopy];
+        reply[@"Session"]=diagnosticSession?:@"";
+        if(command[@"RequestID"])reply[@"RequestID"]=command[@"RequestID"];
+        [[NSJSONSerialization dataWithJSONObject:reply options:NSJSONWritingPrettyPrinted error:nil] writeToFile:output atomically:YES];
         unlink(consumed.fileSystemRepresentation);self.diagnosticPending=NO;
         // Resume provisioning deferred while this command owned the agent.
         // In particular, an explicit clipboard-on request must not wait for
         // the next minute-long status refresh after releasing that ownership.
         [self updateClipboardForBoot:self.usernameBoot];
     };
+    if(stale){finish(@{@"Error":@"This diagnostic belongs to another or unknown VM session. No command was sent. Retry deliberately against the current session."});return;}
     if([command[@"Action"] isEqual:@"capture"]){
         [self.displayView capturePNG:^(NSData *png){
             BOOL saved=[png writeToFile:[self.diagnosticDirectory stringByAppendingPathComponent:@"Frame.png"] atomically:YES];
@@ -2145,7 +2255,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         // The diagnostic CLI can stop observing without cancelling this task.
         [self.guestAgent runExecutable:path arguments:arguments standardInput:standardInput timeout:0 completion:^(NSDictionary *result,NSError *failure){
             if(failure){finish(@{@"Error":failure.localizedDescription});return;}
-            finish(@{@"ExitCode":result[@"exitcode"]?:@(-1),
+            finish(@{@"ExitCode":result[@"exitcode"]?:@(-1),@"Signal":result[@"signal"]?:@0,
                 @"Stdout":[[NSString alloc] initWithData:result[@"stdout"]?:NSData.data encoding:NSUTF8StringEncoding]?:@"",
                 @"Stderr":[[NSString alloc] initWithData:result[@"stderr"]?:NSData.data encoding:NSUTF8StringEncoding]?:@""});
         }];
@@ -2174,6 +2284,60 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         if(failure||![result[@"exitcode"] isEqual:@0])session.sleepDisabledBoot=nil;
     }];
 }
+- (BOOL)verifyHostAssemblyGraphicsWithReport:(NSDictionary *)report {
+    NSString *boot=report[@"BootSessionUUID"];
+    // Do not retire the download after an offscreen Metal test while the
+    // first desktop is still using its temporary boot display mode.
+    if(self.hostAssemblyDisplayBootstrap||[boot isEqual:self.hostAssemblyCheckedBoot]||
+       ![self.machine hostAssemblyNeedsGraphicsVerificationWithGuestReport:report])return NO;
+    if(![boot isEqual:self.hostAssemblyRetryBoot]) {
+        self.hostAssemblyRetryBoot=boot;self.hostAssemblyTransportFailures=0;self.hostAssemblyRetryAfter=0;
+    }
+    if(NSProcessInfo.processInfo.systemUptime<self.hostAssemblyRetryAfter)return NO;
+    self.preparing=YES;
+    NSString *runtime=self.runtimeDirectory;
+    NSURL *tool=[NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"Runtime/GuestTools/guest-install"];
+    __weak VIMSession *weakSelf=self;
+    void (^finish)(NSDictionary *,NSError *)=^(NSDictionary *result,NSError *failure){
+        VIMSession *session=weakSelf;
+        if(!session.task.running||![session.runtimeDirectory isEqual:runtime])return;
+        session.preparing=NO;
+        // A slow first login can temporarily interrupt the agent. Do not
+        // mistake a missing reply for a completed GPU test or retry a
+        // definitive driver failure. The normal status timer drives retries.
+        if(failure||[result[@"exitcode"] isEqual:@75]) {
+            session.hostAssemblyTransportFailures=MIN(4,session.hostAssemblyTransportFailures+1);
+            session.hostAssemblyRetryAfter=NSProcessInfo.processInfo.systemUptime+
+                (30U<<session.hostAssemblyTransportFailures);
+        } else session.hostAssemblyCheckedBoot=boot;
+        NSData *data=result[@"stdout"];
+        id evidence=[result[@"exitcode"] isEqual:@0]&&[data isKindOfClass:NSData.class]?
+            [NSJSONSerialization JSONObjectWithData:data options:0 error:nil]:nil;
+        NSError *saveError=nil;
+        BOOL verified=!failure&&[evidence isKindOfClass:NSDictionary.class]&&
+            [session.machine recordHostAssemblyGraphicsVerification:evidence guestReport:report error:&saveError];
+        NSString *diagnostic=[[NSString alloc] initWithData:result[@"stderr"]?:NSData.data encoding:NSUTF8StringEncoding];
+        NSString *message=verified?@"Host-assembled desktop verified on Apple PVG.":
+            (failure.localizedDescription?:saveError.localizedDescription?:(diagnostic.length?diagnostic:@"No matching PVG verification was returned."));
+        [session.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] Host assembly: %@\n",message] dataUsingEncoding:NSUTF8StringEncoding]];
+        [session refreshGuestStatus];
+    };
+    if(self.machine.hasHostStagedPVGVerifier) {
+        BOOL initial=self.machine.hasHostStagedInitialPreferences;
+        [self.guestAgent runExecutable:@"/Library/Application Support/Virtual Intel Mac/host-assembly-verify"
+            arguments:@[initial?@"--prepare-host-desktop":@"--verify-pvg-device"] timeout:0 completion:finish];
+        return YES;
+    }
+    [self.guestAgent stageFiles:@{@"guest-install":tool} progress:nil completion:^(NSDictionary *staged,NSError *error){
+        NSString *directory=staged[@"Directory"];
+        if(error||!directory.length){finish(nil,error);return;}
+        NSString *path=[directory stringByAppendingPathComponent:@"guest-install"];
+        [weakSelf.guestAgent runExecutable:@"/bin/sh" arguments:@[@"-c",
+            @"/bin/chmod 700 \"$1\" && \"$1\" --verify-pvg-device; result=$?; /bin/rm -f \"$1\"; /bin/rmdir \"${1%/*}\"; exit \"$result\"",
+            @"verify-host-assembly",path] timeout:120 completion:finish];
+    }];
+    return YES;
+}
 /*
  * The first installed boot after a classic installer still has the
  * installer attached (InstallState "installing"), so the session starts
@@ -2198,8 +2362,12 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     // Bounded per boot: the tablet binds early, and polling is every few seconds.
     if(++self.legacyTabletObservationAttempts>40){self.legacyTabletObserved=YES;completion();return;}
     __weak VIMSession *weakSelf=self;
-    [agent runExecutable:@"/usr/sbin/ioreg"
-        arguments:@[@"-r",@"-c",@"IOHIDEventDriver",@"-d",@"1",@"-l",@"-w",@"0"] timeout:0
+    // Leopard's original driver ignores the zero override; include its
+    // actually loaded version in the same one-shot observation.
+    BOOL leopard=[self.machine.guest isEqual:@"leopard"];
+    [agent runExecutable:leopard?@"/bin/sh":@"/usr/sbin/ioreg"
+        arguments:leopard?@[@"-c",@"/usr/sbin/ioreg -r -c IOHIDEventDriver -d 1 -l -w 0; /usr/sbin/kextstat -b com.apple.iokit.IOHIDFamily"]:
+            @[@"-r",@"-c",@"IOHIDEventDriver",@"-d",@"1",@"-l",@"-w",@"0"] timeout:0
         completion:^(NSDictionary *reply,NSError *ignored){
             VIMSession *live=weakSelf;if(!live||live.guestAgent!=agent||!live.task.running){completion();return;}
             if(!ignored&&[reply[@"exitcode"] isEqual:@0]){
@@ -2210,7 +2378,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
                 if([registry containsString:@"\"Product\" = \"QEMU USB Tablet\""]) {
                     live.legacyTabletObserved=YES;
                     NSNumber *trim=VIMObservedTabletTrim(registry);
-                    if(trim)live.tabletTrim=trim.unsignedIntegerValue;
+                    if(trim)live.automaticTabletTrim=trim.unsignedIntegerValue;
+                    live.tabletTrim=VIMConfiguredTabletTrim(live.machine.editableConfiguration,live.automaticTabletTrim);
                     [live.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] Tablet range removal: %@ (applied %lu%%)\n",
                         trim?:@"none",(unsigned long)live.tabletTrim] dataUsingEncoding:NSUTF8StringEncoding]];
                 }
@@ -2240,8 +2409,17 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         // Process-local development opt-in only: keep the real boot, drivers,
         // display and agent available while inspecting a cold native service.
         // Explicit --resume-setup enters the unchanged production coordinator.
-        if(self.developmentSetupDeferred){self.guestStatus.stringValue=VIMLocalized(@"session.automatic-setup-paused-for-diagnostics", @"Automatic setup paused for diagnostics");return;}
         [self observeLegacyTabletDuringSetup];
+        if(self.developmentSetupDeferred){
+            self.guestStatus.stringValue=VIMLocalized(@"session.automatic-setup-paused-for-diagnostics", @"Automatic setup paused for diagnostics");
+            // Deferring installation must not freeze the pre-agent pointer
+            // fallback. Stop this diagnostic-only retry once the driver binds.
+            if(self.legacyTabletGuest&&!self.legacyTabletObserved) {
+                [self.guestTimer invalidate];__weak VIMSession *weakSelf=self;
+                self.guestTimer=[NSTimer scheduledTimerWithTimeInterval:15 repeats:NO block:^(NSTimer *timer){[weakSelf refreshGuestStatus];}];
+            }
+            return;
+        }
         [self refreshOpenGLSetup];return;
     }
     if(!self.guestStatusTool.length) {
@@ -2434,7 +2612,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
                     }
                 }];
             };
-            if([outcome[@"Automatic"] boolValue])restart();
+            if(VIMGraphicsSetupRestartsAutomatically([outcome[@"Automatic"] boolValue],NSUserDefaults.standardUserDefaults))restart();
             else {
                 [session dismissSetupNotice];
                 NSAlert *alert=[NSAlert new];VIMSetAppAlertIcon(alert);
@@ -2616,6 +2794,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         NSError *saveError=nil;
         NSData *data=[NSPropertyListSerialization dataWithPropertyList:record format:NSPropertyListBinaryFormat_v1_0 options:0 error:&saveError];
         if(data)[data writeToURL:[self.machine.URL URLByAppendingPathComponent:@"State/GuestStatus.plist"] options:NSDataWritingAtomic error:&saveError];
+        // The guest can start an update without changing QEMU's run state.
+        // Reuse this existing cold status observation, not another poller.
+        [self updateInstallationActivity];
         message=saveError?saveError.localizedDescription:self.guestStatus.stringValue;
     }
     self.guestStatus.toolTip=message;
@@ -2627,9 +2808,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     if(!error&&!self.shutdownRequested&&!self.preparing&&!self.preparationRequested&&!self.relaunchForGraphics) {
         NSError *nativeError=nil;
         if([self.machine prepareNativeBigSurDisplayWithGuestReport:report error:&nativeError]) {
-            [self.log writeData:[@"\n[Virtual Intel Mac] Installed Big Sur has native PVG; switching Setup Assistant to accelerated graphics. Guest patches and installer cleanup remain pending.\n" dataUsingEncoding:NSUTF8StringEncoding]];
+            [self.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] Installed %@ has native PVG; switching Setup Assistant to accelerated graphics. Guest patches and installer cleanup remain pending.\n",VIMSystemTitleForGuest(self.machine.guest)] dataUsingEncoding:NSUTF8StringEncoding]];
             [self handoffToGraphics];
-            self.guestStatus.stringValue=VIMLocalized(@"session.starting-native-big-sur-graphics-for-setup-assistant", @"Starting native Big Sur graphics for Setup Assistant…");
+            self.guestStatus.stringValue=[NSString stringWithFormat:VIMLocalized(@"vimsession.starting-native-graphics-for-setup-assistant", @"Starting native %@ graphics for Setup Assistant…"),VIMSystemTitleForGuest(self.machine.guest)];
             return;
         }
         if(nativeError){self.guestStatus.stringValue=nativeError.localizedDescription;return;}
@@ -2703,11 +2884,31 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             }];
         return;
     }
+    if(!error&&boot.length&&![boot isEqual:self.mojaveAppPolicyBoot]&&
+       [self.machine.guest isEqual:@"mojave"]&&[report[@"Guest"] isEqual:@"mojave"]&&
+       [report[@"DesktopRunning"] isEqual:@YES]&&[report[@"LiveRoot"] isEqual:@YES]&&
+       [report[@"InstalledSystemCandidate"] isEqual:@YES]&&!self.preparing&&!self.preparationRequested) {
+        // Retire old per-app root-layer workarounds once per installed boot,
+        // for both OpenGL choices. This does not install drivers or caches.
+        self.mojaveAppPolicyBoot=boot;self.guestPending=YES;
+        NSString *runtime=self.runtimeDirectory;__weak VIMSession *weakSelf=self;
+        NSURL *tool=[NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"Runtime/GuestTools/guest-install"];
+        [self.guestAgent runTemporaryTool:tool arguments:@[@"--remove-app-layer-overrides"] completion:^(NSDictionary *result,NSError *failure){
+            VIMSession *session=weakSelf;
+            if(!session.task.running||![session.runtimeDirectory isEqual:runtime])return;
+            session.guestPending=NO;
+            NSString *message=failure.localizedDescription?:[[NSString alloc] initWithData:
+                result[[result[@"exitcode"] isEqual:@0]?@"stdout":@"stderr"]?:NSData.data encoding:NSUTF8StringEncoding];
+            [session.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] Mojave app preferences: %@\n",message?:@"No result returned."] dataUsingEncoding:NSUTF8StringEncoding]];
+            [session refreshGuestStatus];
+        }];return;
+    }
     if(!error&&boot.length&&[report[@"DesktopRunning"] isEqual:@YES]&&![boot isEqual:self.displaySizedBoot]) {
         // Guest preferences can restore a saved 1× mode after the initial
         // connection. Reassert the current window's backing size once at login.
         self.displaySizedBoot=boot;self.lastRequestedSize=NSZeroSize;[self scheduleResize];
     }
+    if(!error&&!self.repairRequested&&!self.preparationRequested&&[self verifyHostAssemblyGraphicsWithReport:report])return;
     if(!error)[self enforceGuestSleepPolicyForBoot:boot nativeIdleGuard:[report[@"IdleSleepGuardRegistered"] isEqual:@YES]];
     // Reserve initial graphics staging before ancillary display/clipboard
     // helpers can acquire the same agent's transfer owner. Big Sur already
@@ -2794,10 +2995,19 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
                 if(!session.task.running)return;
                 BOOL verified=!failure&&[result[@"VerifiedAfterReboot"] isEqual:@YES]&&
                     [result[@"BootSessionUUID"] isEqual:boot];
+                BOOL rolledBack=!failure&&[result[@"Phase"] isEqual:@"rolled-back"];
                 // Desktop availability can precede Metal readiness. Permit at
                 // most three read-only checks per boot, separated by the normal
                 // 60-second timer. Never repeat installation or relax hashes.
-                if(verified)session.reconciliationAttempts=3;
+                if(verified||rolledBack)session.reconciliationAttempts=3;
+                // A verification can lift the display limit (private window
+                // tiles); size the guest again now rather than at a resize.
+                if(verified) {
+                    CGFloat limit=session.machine.guestDisplayMaxWidth;
+                    [session.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] Display: widest guest display %@\n",
+                        limit?[NSString stringWithFormat:@"%.0f pixels",limit]:@"unlimited"] dataUsingEncoding:NSUTF8StringEncoding]];
+                    session.lastRequestedSize=NSZeroSize;[session scheduleResize];
+                }
                 if(verified&&session.machine.configuration[@"InstallerMedia"]) {
                     session.completionGuestReport=report;
                     // The owned backend remains open until shutdown/cleanup,
@@ -2806,7 +3016,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
                 }
                 NSString *message=failure.localizedDescription?:(verified?
                     VIMLocalized(@"session.graphics-verified-installer-cleanup-will-finish-when-this-mac-shuts", @"Graphics verified — installer cleanup will finish when this Mac shuts down"):
-                    ([result[@"Phase"] isEqual:@"awaiting-reboot"]?VIMLocalized(@"session.installation-status-recovered-restart-required-for-graphics-verification", @"Installation status recovered — restart required for graphics verification"):
+                    (rolledBack?VIMLocalized(@"vimsession.the-original-system-files-were-restored", @"The original system files were restored."):
+                     [result[@"Phase"] isEqual:@"awaiting-reboot"]?VIMLocalized(@"session.installation-status-recovered-restart-required-for-graphics-verification", @"Installation status recovered — restart required for graphics verification"):
                      [NSString stringWithFormat:VIMLocalized(@"session.installation-status", @"Installation status: %@"),result[@"Phase"]?:@"unknown"]));
                 session.guestStatus.stringValue=message;
                 [session.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] Reconciliation: %@\n",message] dataUsingEncoding:NSUTF8StringEncoding]];
@@ -2818,9 +3029,28 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
                     [session updateClipboardForBoot:boot];
                     [session restoreDisplaySelectionForBoot:boot];
                 }
-                session.guestTimer=[NSTimer scheduledTimerWithTimeInterval:60 repeats:NO block:^(NSTimer *timer){[weakSession refreshGuestStatus];}];
+                // Rollback cannot become GPU-ready by waiting. Re-enter the
+                // normal selection policy once; its per-boot attempt flag
+                // prevents a failed preparation from turning into a retry loop.
+                session.guestTimer=[NSTimer scheduledTimerWithTimeInterval:rolledBack?0:60 repeats:NO block:^(NSTimer *timer){[weakSession refreshGuestStatus];}];
             }];
         return;
+    }
+    if(!error&&!self.mojaveOpenGLSelectionChecked&&!self.preparationRequested&&!self.repairRequested&&
+       !self.shutdownRequested&&[self.machine.guest isEqual:@"mojave"]) {
+        NSURL *state=[self.machine.URL URLByAppendingPathComponent:@"State"];
+        VIMMojaveOpenGLDecision decision=VIMMojaveOpenGLSelection(self.machine.passthroughOpenGLEnabled,report,
+            [NSDictionary dictionaryWithContentsOfURL:installJournal],
+            [NSDictionary dictionaryWithContentsOfURL:[state URLByAppendingPathComponent:@"GuestPreparation.plist"]],
+            [NSDictionary dictionaryWithContentsOfURL:[state URLByAppendingPathComponent:@"HostAssembly.plist"]]);
+        if(decision!=VIMMojaveOpenGLWait)self.mojaveOpenGLSelectionChecked=YES;
+        if(decision==VIMMojaveOpenGLPrepare) {
+            // Migrate pre-selector installations once. Subsequent renderer
+            // changes only add/remove the PCI endpoint at the next launch.
+            self.repairRequested=YES;self.explicitRepair=YES;
+            [self.log writeData:[@"\n[Virtual Intel Mac] Installing Mojave boot-time OpenGL selection support.\n" dataUsingEncoding:NSUTF8StringEncoding]];
+            [self refreshGuestStatus];return;
+        }
     }
     if(self.preparationRequested&&!error&&([report[@"DesktopRunning"] isEqual:@YES]||self.verifiedUpdateRepair)&&[report[@"InstalledSystemCandidate"] isEqual:@YES]&&
        [report[@"Guest"] isEqual:self.machine.guest]) {
@@ -2846,7 +3076,12 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
                 if(install&&!failure) {
                     session.preparing=YES;session.guestStatus.stringValue=VIMLocalized(@"session.installing-graphics-support-do-not-shut-down-this-mac", @"Installing graphics support — do not shut down this Mac…");
                     session.window.subtitle=VIMLocalized(@"session.installing-graphics-drivers", @"Installing Graphics Drivers…");
-                    if(!session.verifiedUpdateRepair)
+                    // The visible guest setup app already owns progress on an
+                    // installed desktop. Keep the host notice for unattended/
+                    // headless setup, not as a second panel over that app.
+                    BOOL guestShowsProgress=[report[@"DesktopRunning"] isEqual:@YES]&&session.guestProgress!=nil;
+                    if(guestShowsProgress&&!session.previewSetupNotice)[session dismissSetupNotice];
+                    else if(!session.verifiedUpdateRepair)
                         [session showSetupNoticeAutomatic:NO automaticLogin:NO restarting:NO];
                     void (^applyPrepared)(NSError *)=^(NSError *archiveError){
                     if(archiveError) {
@@ -2917,12 +3152,12 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     if(!boot.length||[boot isEqual:self.displaySelectedBoot]||
        self.displayPolicyRestartRequired||
        self.displaySelectionRetryAfter.timeIntervalSinceNow>0||
-       !self.machine.hasPublishedGuestGraphics||!self.clipboardUID||
+       !(self.machine.hasPublishedGuestGraphics||self.hostAssemblyDisplayBootstrap)||!self.clipboardUID||
        self.preparing||self.preparationRequested||self.repairRequested||
        self.guestPending||self.clipboardPending||self.bootPolicyPending||
        self.displayModePending||self.shutdownRequested)return;
     NSString *runtime=self.runtimeDirectory;self.displaySelectedBoot=boot;
-    [self applyDisplayMode:self.displayMode completion:^(NSDictionary *observed,NSError *failure){
+    void (^selected)(NSDictionary *,NSError *)=^(NSDictionary *observed,NSError *failure){
         if(!self.task.running||![runtime isEqual:self.runtimeDirectory])return;
         if(failure) {
             self.displaySelectedBoot=nil;
@@ -2931,6 +3166,21 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             self.displaySelectionRetryAfter=[NSDate dateWithTimeIntervalSinceNow:60];
             [self.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] Initial display selection pending: %@\n",failure.localizedDescription] dataUsingEncoding:NSUTF8StringEncoding]];
         } else self.displaySelectionRetryAfter=nil;
+    };
+    [self applyDisplayMode:self.displayMode completion:^(NSDictionary *observed,NSError *failure){
+        if(!self.task.running||![runtime isEqual:self.runtimeDirectory])return;
+        // Big Sur's first login may need another WindowServer lifetime before
+        // its newly prepared native Retina policy exposes2x modes. Select the
+        // real available1x mode instead of indefinitely blocking the first
+        // desktop's graphics verification/download cleanup behind that policy.
+        // The normal selector verifies geometry and saves More Space, so the
+        // menu reflects the actual mode. A later explicit Retina choice stays
+        // available; no guest restart, driver reinstall or cache rebuild here.
+        if(failure&&self.hostAssemblyDisplayBootstrap&&self.displayPolicyRestartRequired&&
+           [self.displayMode isEqual:@"retina"]) {
+            [self.log writeData:[@"\n[Virtual Intel Mac] Initial Big Sur display: selecting available More Space mode until Retina modes are ready.\n" dataUsingEncoding:NSUTF8StringEncoding]];
+            [self applyDisplayMode:@"space" completion:selected];
+        } else selected(observed,failure);
     }];
 }
 - (void)refreshRunState {
@@ -2966,6 +3216,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     }];
 }
 - (void)offerGraphicsRestart {
+    if(VIMGraphicsSetupRestartsAutomatically(NO,NSUserDefaults.standardUserDefaults)){
+        [self handoffToGraphics];return;
+    }
     if(self.guestProgress) {
         self.preparing=YES;
         __weak VIMSession *weakSelf=self;
@@ -2988,6 +3241,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     [self offerHostGraphicsRestart];
 }
 - (void)offerHostGraphicsRestart {
+    if(VIMGraphicsSetupRestartsAutomatically(NO,NSUserDefaults.standardUserDefaults)){
+        [self handoffToGraphics];return;
+    }
     NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"session.restart-to-finish-graphics-setup", @"Restart to finish graphics setup?");
     alert.informativeText=VIMLocalized(@"session.graphics-support-has-been-installed-save-your-work-before-restarting", @"Graphics support has been installed. Save your work before restarting this virtual Mac. You can also shut down and open it again later.");
     [alert addButtonWithTitle:VIMLocalized(@"session.restart-now", @"Restart Now")];[alert addButtonWithTitle:VIMLocalized(@"ui.later", @"Later")];
@@ -3048,7 +3304,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     BOOL idle=self.task.running&&!self.preparing&&!self.preparationRequested&&!self.guestPending&&!self.relaunchForGraphics;
     BOOL recorded=[NSFileManager.defaultManager fileExistsAtPath:[self.machine.URL URLByAppendingPathComponent:@"State/GuestInstallation.plist"].path];
     if(item.action==@selector(checkGraphicsSetup:))return idle&&recorded;
-    if(item.action==@selector(finishGraphicsSetup:))return idle&&[@[@"mojave",@"catalina",@"bigsur"] containsObject:self.machine.guest];
+    if(item.action==@selector(finishGraphicsSetup:))return idle&&VIMIsModernGuest(self.machine.guest);
     return YES;
 }
 - (void)menuWillOpen:(NSMenu *)menu {
@@ -3309,13 +3565,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         self.forceResetRequested=YES;self.shutdownRequested=NO;self.closeAfterShutdown=NO;
         self.relaunchForGraphics=NO;[self.displayView releasePressedKeys];
         self.displayView.displaySleeping=YES;
-        NSTask *ownedTask=self.task;[ownedTask terminate];
-        // Independent of QMP, QGA and any guest OS service. A wedged BQL must
-        // not leave an explicitly requested force reset waiting forever.
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{
-            if(self.task==ownedTask&&ownedTask.running)
-                kill(ownedTask.processIdentifier,SIGKILL);
-        });
+        VIMForceTerminateTask(self.task);
     };
     if(VIMSkipsDevelopmentPowerConfirmation()){reset();return;}
     NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"session.reset-this-mac", @"Reset this Mac?");alert.informativeText=VIMLocalized(@"session.this-forcibly-restarts-the-virtual-mac-unsaved-work-will-be", @"This forcibly restarts the virtual Mac. Unsaved work will be lost, and an installation in progress may be interrupted.");
@@ -3338,6 +3588,13 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     session.displayView.nearestNeighborScaling=[session.displayScalingFilter isEqual:@"nearest"];
     [NSNotificationCenter.defaultCenter postNotificationName:@"VIMLibraryChanged" object:nil];
 }
++ (void)inputPreferencesChangedForMachine:(VIMMachine *)machine {
+    VIMSession *session=sessions[SessionKey(machine)];
+    if(!session)return;
+    [session.displayView releaseInputCapture];
+    session.tabletTrim=VIMConfiguredTabletTrim(machine.editableConfiguration,session.automaticTabletTrim);
+    session.displayView.releaseWithControlOption=![machine.editableConfiguration[@"InputReleaseShortcut"] isEqual:@"command-option"];
+}
 - (void)changeDisplayScalingFilter:(NSMenuItem *)sender {
     NSString *filter=sender.representedObject;
     if(![@[@"linear",@"nearest"] containsObject:filter])return;
@@ -3359,8 +3616,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         completion(nil,VIMSessionError(VIMLocalized(@"session.wait-until-macos-has-reached-the-desktop-and-setup-has", @"Wait until macOS has reached the desktop and setup has finished, then change the resolution again.")));return;
     }
     CGFloat factor=[mode isEqual:@"scaled"]?1:([mode isEqual:@"retina"]?2:self.window.backingScaleFactor);
-    NSSize requested=VIMRequestedGuestPixelSize(self.displayView.bounds.size,factor,self.machine.preMetalGuest,
-        [mode isEqual:@"retina"],self.openGLLargeResizeReady);
+    NSSize requested=VIMRequestedGuestPixelSizeWithin(self.displayView.bounds.size,factor,self.machine.preMetalGuest,
+        [mode isEqual:@"retina"],self.openGLLargeResizeReady,self.machine.guestDisplayMaxWidth);
     NSUInteger width=requested.width,height=requested.height;
     [self.resizeTimer invalidate];self.displayModePending=YES;self.guestPending=YES;
     void (^finished)(NSDictionary *,NSError *)=^(NSDictionary *observed,NSError *failure){
@@ -3371,6 +3628,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             self.displayMode=mode;self.retinaEnabled=![mode isEqual:@"scaled"];
             self.lastRequestedSize=NSMakeSize(width,height);
             self.observedDisplayMode=observed;
+            if(self.hostAssemblyDisplayBootstrap)
+                [self.log writeData:[@"\n[Virtual Intel Mac] Host-assembled Big Sur selected its desktop display mode.\n" dataUsingEncoding:NSUTF8StringEncoding]];
+            self.hostAssemblyDisplayBootstrap=NO;
             if(saveError)failure=saveError;
             [NSNotificationCenter.defaultCenter postNotificationName:@"VIMLibraryChanged" object:nil];
         } else {self.lastRequestedSize=NSZeroSize;[self scheduleResize];}
@@ -3595,7 +3855,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     panel.allowedContentTypes=@[[UTType typeWithFilenameExtension:@"iso"],[UTType typeWithFilenameExtension:@"cdr"],
         [UTType typeWithFilenameExtension:@"toast"],[UTType typeWithFilenameExtension:@"dmg"]];
     panel.allowsMultipleSelection=slot==NSNotFound;panel.prompt=@"Connect";
-    panel.message=VIMLocalized(@"session.choose-iso-cdr-toast-or-unencrypted-dmg-images-each-image", @"Choose ISO, CDR, Toast or unencrypted DMG images. Each image connects to its own read-only drive, without copying or conversion.");
+    panel.message=VIMLocalized(@"vimsession.choose-an-iso-cdr-toast-or-unencrypted-dmg-image", @"Choose an ISO, CDR, Toast, or unencrypted DMG image.");
     [panel beginSheetModalForWindow:window completionHandler:^(NSModalResponse response){
         if(response!=NSModalResponseOK)return;
         NSArray<NSURL *> *URLs=panel.URLs;
@@ -3881,7 +4141,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     if(!self.task.running)return;
     void (^stop)(void)=^{
         if(!self.task.running)return;
-        self.forceResetRequested=NO;self.relaunchForGraphics=NO;self.relaunchForGuestReboot=NO;self.shutdownRequested=YES;[self.task terminate];
+        self.forceResetRequested=NO;self.relaunchForGraphics=NO;self.relaunchForGuestReboot=NO;self.shutdownRequested=YES;VIMForceTerminateTask(self.task);
     };
     if(VIMSkipsDevelopmentPowerConfirmation()){stop();return;}
     NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"session.force-stop-this-mac", @"Force stop this Mac?");
@@ -3892,9 +4152,6 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         if(result==NSAlertSecondButtonReturn)stop();
     }];
 }
-- (void)toggleRelativeMouse:(id)sender {
-    self.displayView.relativeMouseMode=!self.displayView.relativeMouseMode;
-}
 - (void)cleanUp {
     self.previewSetupNotice=NO;
     [self dismissSetupNotice];
@@ -3902,7 +4159,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     self.pendingHostConnectionURL=nil;self.pendingHostConnectionCompletion=nil;
     if(waitingCompletion)waitingCompletion(VIMSessionError(VIMLocalized(@"session.the-virtual-mac-stopped-before-the-connection-could-open-start", @"The virtual Mac stopped before the connection could open. Start it and try again.")));
     [self.controlRetryTimer invalidate];self.controlRetryTimer=nil;
-    self.bootPolicyPending=NO;self.bootPolicyCheckedBoot=nil;
+    self.bootPolicyPending=NO;self.bootPolicyCheckedBoot=nil;self.mojaveAppPolicyBoot=nil;
     self.networkStarting=NO;[self.networkClient stop];self.networkClient=nil;self.guestIPAddresses=nil;
     [self.usbClient stop];self.usbClient=nil;self.usbOperationPending=NO;self.usbAttached=nil;
     [self.smbService stop];self.smbService=nil;
@@ -3910,11 +4167,12 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     [self.powerBridge stop];self.powerBridge=nil;self.powerConfiguredBoot=nil;self.powerRetryAfter=nil;
     self.sleepActivity=nil;
     self.displaySelectedBoot=nil;self.displaySelectionRetryAfter=nil;self.displayPolicyRestartRequired=NO;
+    self.hostAssemblyDisplayBootstrap=NO;
     [self.handoffTimer invalidate];self.handoffTimer=nil;
     [self.guestTimer invalidate];self.guestTimer=nil;[self.guestAgent close];
     [self.statusTimer invalidate];self.statusTimer=nil;
     [self.resizeTimer invalidate];self.resizeTimer=nil;
-    self.displayView.inputHandler=nil;self.displayView.relativeMouseModeObserver=nil;
+    self.displayView.inputHandler=nil;
     [self.displayConnection stop];[self.displayView discardFrameStorage];
     [self.control close];[self.log closeFile];self.log=nil;
     if(self.runtimeDirectory) {
@@ -3949,7 +4207,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     return options|NSApplicationPresentationAutoHideToolbar|NSApplicationPresentationAutoHideMenuBar;
 }
 - (void)scheduleResize {
-    if(!self.resizeArmed||self.displayModePending)return;
+    if(!self.resizeArmed||self.displayModePending||self.hostAssemblyDisplayBootstrap)return;
     [self.resizeTimer invalidate];
     __weak VIMSession *weakSelf=self;
     self.resizeTimer=[NSTimer scheduledTimerWithTimeInterval:0.15 repeats:NO block:^(NSTimer *timer){
@@ -3957,8 +4215,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         if(!session.task.running)return;
         BOOL retina=[session.displayMode isEqual:@"retina"];
         CGFloat factor=retina?2:(session.retinaEnabled?session.window.backingScaleFactor:1);
-        NSSize pixels=VIMRequestedGuestPixelSize(session.displayView.bounds.size,factor,
-            session.machine.preMetalGuest,retina,session.openGLLargeResizeReady);
+        NSSize pixels=VIMRequestedGuestPixelSizeWithin(session.displayView.bounds.size,factor,
+            session.machine.preMetalGuest,retina,session.openGLLargeResizeReady,session.machine.guestDisplayMaxWidth);
         if(NSEqualSizes(pixels,session.lastRequestedSize))return;
         session.lastRequestedSize=pixels;
         [session.displayConnection requestWidth:pixels.width height:pixels.height

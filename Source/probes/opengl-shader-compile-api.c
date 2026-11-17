@@ -31,7 +31,7 @@ int main(int argc,char **argv)
     const char *vertex="#version 400 core\nuniform double value;void main(){"
         "bool ok=roundEven(value)==-512.0&&roundEven(float(value))==-512.0;"
         "gl_Position=vec4(ok?0.0:4.0,0,0,1);}";
-    const char *fragment="#version 400 core\nout vec4 color;void main(){color=vec4(1,0,0,1);}";
+    const char *fragment="#version 400 core\nout vec4 color;\n#extension GL_ARB_gpu_shader_fp64 : enable\nvoid main(){color=vec4(1,0,0,1);}";
     GLuint fs=shader(GL_FRAGMENT_SHADER,fragment),vs=glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vs,1,&vertex,NULL);char before[4096]={0},after[4096]={0};
     GLint before_length=0,after_length=0,ok=0;GLsizei n=0,m=0;
@@ -62,7 +62,7 @@ int main(int argc,char **argv)
     glUseProgram(0);
     /* The single-call separable API receives the same adaptation, including
      * tokens split across source strings. It has no shader source object. */
-    const char *parts[]={"#version 410 core\nout gl_PerVertex {vec4 gl_Position;};uniform double value;void main(){gl_Position=vec4(rou",
+    const char *parts[]={"#version 410 core\nout gl_PerVertex {vec4 gl_Position;};\n#extension GL_ARB_gpu_shader_fp64 : enable\nuniform double value;void main(){gl_Position=vec4(rou",
         "ndEven(value)==-512.0?0.0:4.0,0,0,1);}"};GLenum error=GL_NO_ERROR;
     GLuint vp=create(GL_VERTEX_SHADER,2,parts,&error);
     CHECK(vp&&error==GL_NO_ERROR);glGetProgramiv(vp,GL_LINK_STATUS,&ok);CHECK(ok);

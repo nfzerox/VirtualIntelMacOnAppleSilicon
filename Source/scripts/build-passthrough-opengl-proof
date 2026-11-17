@@ -60,7 +60,7 @@ clang "${flags[@]}" -fobjc-arc -arch arm64 -arch x86_64 -mmacosx-version-min=11.
     -o "$build/metal-command-clock"
 # Explicit research capture only; normal executors contain no journal code.
 if [[ "${VIM_DISPLAY_JOURNAL:-0}" == 1 ]]; then flags+=(-DVIM_DISPLAY_JOURNAL=1); fi
-# Unqualified held-step latency candidate; never part of a normal research build.
+# Explicit research override for families other than qualified Leopard.
 if [[ "${VIM_GLI_CONNECTION_REUSE_EXPERIMENT:-0}" == 1 ]]; then flags+=(-DVIM_GLI_CONNECTION_REUSE_EXPERIMENT=1); fi
 guest=(-arch x86_64 -isysroot "$sdk" -mmacosx-version-min=10.9)
 clang "${flags[@]}" "${guest[@]}" -Wno-missing-braces -I "$build" -fvisibility=hidden -Wl,-exported_symbol,_main \
@@ -68,6 +68,8 @@ clang "${flags[@]}" "${guest[@]}" -Wno-missing-braces -I "$build" -fvisibility=h
     -o "$build/opengl-direct-boundary-cost"
 clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
     "$root/probes/opengl-direct-memory-stream.c" -o "$build/opengl-direct-memory-stream"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+    "$root/probes/opengl-headless-upload-policy.c" -o "$build/opengl-headless-upload-policy"
 clang "${flags[@]}" "${guest[@]}" -I "$build" \
     "$root/probes/opengl-direct-exchange-trap.c" -framework IOKit -framework CoreFoundation \
     -o "$build/opengl-direct-exchange-trap"
@@ -92,7 +94,7 @@ clang "${flags[@]}" "${guest[@]}" -I "$build" \
 clang "${flags[@]}" "${guest[@]}" "$root/PassthroughOpenGL/passthrough-opengl-relay.c" -o "$build/vim-passthrough-opengl-relay"
 # Universal host executor even when built on just one host architecture.
 host_flags=("${flags[@]}")
-# Aggregate-only, explicitly armed research timing; ordinary builds contain
+# Explicitly armed research timing; ordinary builds contain
 # neither its control endpoint nor per-command instrumentation.
 if [[ "${VIM_PASSTHROUGH_OPENGL_COMMAND_PROFILE:-0}" == 1 ]]; then host_flags+=(-DVIM_PASSTHROUGH_OPENGL_COMMAND_PROFILE=1); fi
 # Explicit ownership/rendering qualification, not yet a normal GLI path.
@@ -136,10 +138,12 @@ clang "${flags[@]}" -Wno-missing-braces -Wno-missing-field-initializers \
     -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
     "$root/probes/opengl-direct-command-profile-wire.c" -framework OpenGL -framework IOSurface \
     -framework CoreFoundation -lbsm -o "$build/opengl-direct-command-profile-wire"
+clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -I "$build" \
+    "$root/probes/opengl-command-profile-spans.c" -o "$build/opengl-command-profile-spans"
 # Explicit hidden wrappers are essential: native GL dlsym calls inside the
 # executor must not resolve back to the qualification executable's GL client.
-for probe in opengl-direct-inprocess opengl-direct-sync-publication opengl-direct-iosurface-float opengl-direct-common-state-wire opengl-direct-program-locations opengl-direct-shared-family-wire opengl-direct-iosurface-writes-wire opengl-direct-native-recovery-wire opengl-direct-client-profile opengl-direct-array-allocation opengl-compressed-draw-buffers; do
-    clang "${flags[@]}" -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+for probe in opengl-direct-inprocess opengl-direct-sync-publication opengl-direct-iosurface-float opengl-direct-common-state-wire opengl-direct-program-locations opengl-direct-shared-family-wire opengl-direct-iosurface-writes-wire opengl-direct-large-iosurface opengl-direct-native-recovery-wire opengl-direct-client-profile opengl-direct-array-allocation opengl-compressed-draw-buffers; do
+    clang "${flags[@]}" -Wno-missing-field-initializers -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
         -fvisibility=hidden -DVIM_PASSTHROUGH_OPENGL_INPROCESS_CLIENT=1 -I "$build" \
         "$root/probes/$probe.c" -framework IOKit -framework CoreFoundation \
         -Wl,-exported_symbol,_main -o "$build/$probe-inprocess"

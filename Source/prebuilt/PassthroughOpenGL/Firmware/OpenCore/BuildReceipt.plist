@@ -7,7 +7,7 @@
 	<key>Files</key>
 	<dict>
 		<key>OpenCore.efi</key>
-		<string>44a26204ad19a3a3144a89346f73f9a4112d20f1c9c2386f65e61a4b8b419e02</string>
+		<string>01ebfab2d22a19b120821a5106218da0eea83d154ca0f57935d3887013471005</string>
 		<key>OpenHfsPlus.efi</key>
 		<string>ade93555c4436d4ae8898ee37d8a3927a40f642070ef1559d7482e5083774492</string>
 	</dict>
@@ -35,7 +35,7 @@
 	<key>SourceFiles</key>
 	<dict>
 		<key>compat/PassthroughOpenGLBootPolicy.h</key>
-		<string>5fd4e4a8e7d756bd9827d62858937fdee17333604c26a0bc481ff9a4e793a47a</string>
+		<string>07d91a32f1a909bbcf1094847124cc2ababe21ac4d9f74878e1f1643f7388166</string>
 		<key>scripts/build-guest-firmware.py</key>
 		<string>ae9e9eac7311b113fc9880af3054ec9eeaecc996d7a426cfe586bdc6d6f83f64</string>
 		<key>scripts/build-opengl-opencore.py</key>
@@ -57,7 +57,7 @@
 		<key>vendor/patches/opencore-hfs-overflow-extents.patch</key>
 		<string>f3d8cc24d882d6534b1da3af8aa45a84814dda2ddd1089dae052463385ebe016</string>
 		<key>vendor/patches/opencore-installer-graphics-isolation.patch</key>
-		<string>381712a3b140c51a5acf50ff5ea6be8bb1b8a88fb9957cf03987dcbff0a0a467</string>
+		<string>c1a98031f7d65da797c06a9eb6cb3a1020bdc63095334d8814bb5584a8c528eb</string>
 		<key>vendor/patches/opencore-linkedit-file-bounds.patch</key>
 		<string>d30ae7f8c51c0a4db5515428b128ad54ced37f4af3c3cc603a517ab93d8e93ed</string>
 		<key>vendor/patches/opencore-memory-map-tail-count.patch</key>

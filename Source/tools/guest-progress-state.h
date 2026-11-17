@@ -52,6 +52,7 @@ static void VIMProgressUpdate(NSString *path,NSString *mode,double fraction,NSSt
         VIMProgressCheck([old[@"ConsoleUID"] isKindOfClass:NSNumber.class],@"Guest progress identity is missing.");
         NSMutableDictionary *state=[@{@"FormatVersion":@1,@"Mode":mode,@"Fraction":@(fraction),@"Message":message,
             @"Revision":NSUUID.UUID.UUIDString,@"ConsoleUID":old[@"ConsoleUID"]} mutableCopy];
+        if([old[@"DisplayLabels"] isKindOfClass:NSDictionary.class])state[@"DisplayLabels"]=old[@"DisplayLabels"];
         if([mode isEqual:@"restart"])state[@"Deadline"]=[NSDate dateWithTimeIntervalSinceNow:60];
         VIMProgressWrite(directory,@"State.plist",state,0644);
     } @finally {close(directory);}

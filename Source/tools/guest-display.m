@@ -13,7 +13,7 @@ int main(int argc,const char *argv[]) {@autoreleasepool {
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 101400
     if(argc==2&&!strcmp(argv[1],"--prepare-policy")) {
         NSString *version=[NSDictionary dictionaryWithContentsOfFile:@"/System/Library/CoreServices/SystemVersion.plist"][@"ProductVersion"];
-        if(geteuid()||![@[@"mojave",@"catalina",@"bigsur"] containsObject:VIMGuestForSystemVersion(version)?:@""])return 64;
+        if(geteuid()||![VIMModernGuests() containsObject:VIMGuestForSystemVersion(version)?:@""])return 64;
         BOOL changed=NO;
         if(!VIMPrepareNativeHiDPIPolicy(&changed)){fprintf(stderr,"The native Retina display policy could not be saved.\n");return 5;}
         printf("{\"Changed\":%s,\"RestartRequired\":%s}\n",changed?"true":"false",changed?"true":"false");return 0;

@@ -14,6 +14,8 @@
 #define VIM_GL_RAM_SCATTER_MAGIC 0x56475231u
 #define VIM_GL_FRAMEBUFFER_BLIT_CAPABILITIES_REGISTER 0x1005u
 #define VIM_GL_FRAMEBUFFER_BLIT_MAGIC 0x56474631u
+#define VIM_GL_BOOT_FRAMEBUFFER_REGISTER 0x1019u
+#define VIM_GL_BOOT_FRAMEBUFFER_MAGIC 0x56424631u
 #define VIM_GL_RAM_UPLOAD_CAPABILITIES_REGISTER 0x1006u
 #define VIM_GL_RAM_UPLOAD_MAGIC 0x56475531u
 #define VIM_GL_MASKED_SCATTER_CAPABILITIES_REGISTER 0x1011u
@@ -97,6 +99,9 @@ struct VIMGLScatterMemorySegment { uint64_t address;uint32_t bytes,kind; };
  * framebuffer. All entries are validated before ANY destination is written.
  * kind 0 = VRAM offset, 1 = prepared physical RAM. No stream/GL context. */
 struct VIMGLFramebufferSegment { uint64_t source;uint32_t destination,bytes,kind,reserved; };
+/* Action16: read completed boot-frame rows into prepared RAM/VRAM backing.
+ * Source is an offset at the negotiated GFB pitch, not a host pointer. */
+struct VIMGLBootFramebufferSegment { uint64_t destination;uint32_t source,bytes,kind,reserved; };
 /* Research query/control: 0=query, 1/2=blit off/on, 3/4=RAM upload off/on,
  * 5/6=negotiated bulk upload off/on, 7/8=negotiated doorbell off/on.
  * flags bit 0=blit enabled, 1=blit supported, 2=RAM upload enabled,

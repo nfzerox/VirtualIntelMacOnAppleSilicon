@@ -10,20 +10,37 @@ import tempfile
 
 source=Path(__file__).resolve().parents[1]
 tool=sys.argv[1]
-for guest,release,build,filename in [('mojave','10.14.6','18G9999','install-targets-mojave.txt'),('catalina','10.15.7','19H9999','install-targets.txt')]:
+for guest,release,build,filename,passthrough in [
+        ('mojave','10.14.6','18G9999','install-targets-mojave.txt',False),
+        ('mojave','10.14.6','18G9999','install-targets-mojave.txt',True),
+        ('catalina','10.15.7','19H9999','install-targets.txt',False)]:
     with tempfile.TemporaryDirectory(prefix='vim-install-plan-') as temporary:
         base=Path(temporary).resolve();root=base/'root';payload=base/'payload'
         root.mkdir();payload.mkdir()
+        if '--exercise-success' in sys.argv[2:]:
+            builder=base/'cache-builder'
+            builder.write_text('#!/usr/bin/env python3\nimport sys, plistlib\nfrom pathlib import Path\n'
+                'root=Path(sys.argv[-1])\n'
+                'version=plistlib.loads((root/"System/Library/CoreServices/SystemVersion.plist").read_bytes())\n'
+                'prefix="Library/Apple/" if version["ProductVersion"].startswith("10.15.") else ""\n'
+                'p=root/(prefix+"System/Library/PrelinkedKernels/prelinkedkernel")\n'
+                'p.parent.mkdir(parents=True,exist_ok=True)\n'
+                'p.write_bytes(b"fresh generated cache")\n')
+            builder.chmod(0o755)
+            os.environ['VIM_TEST_CACHE_BUILDER']=str(builder)
         version=root/'System/Library/CoreServices/SystemVersion.plist'
         version.parent.mkdir(parents=True)
         version.write_bytes(plistlib.dumps(dict(ProductVersion=release,ProductBuildVersion=build)))
         system_cache=root/'System/Library/PrelinkedKernels/prelinkedkernel'
         system_cache.parent.mkdir(parents=True);system_cache.write_bytes(b'original boot cache fixture')
         targets=(source/'support'/filename).read_text().splitlines()
+        if passthrough:
+            targets.append('/Library/Extensions/PassthroughOpenGLTransport.kext')
         for target in targets:
             path=payload/target[1:];path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(b'fixture replacement')
             path.chmod(0o666)
         receipt=dict(FormatVersion=1,Guest=guest,ProductVersion=release,ProductBuildVersion=build,Prepared=True,Installed=False,PayloadDirectory=str(payload))
+        if passthrough: receipt['PassthroughOpenGL']=True
         (payload/'.VirtualIntelMacPreparation.plist').write_bytes(plistlib.dumps(receipt))
         command=[tool,'--plan',str(root),str(payload),str(base/'journal.plist')]
         if '--reject-unsigned' in sys.argv[2:]:
@@ -37,6 +54,7 @@ for guest,release,build,filename in [('mojave','10.14.6','18G9999','install-targ
         assert result['TargetCount']==len(targets)
         assert all((payload/p[1:]).stat().st_mode&0o777==0o644 for p in targets)
         journal=plistlib.loads((base/'journal.plist').read_bytes())
+        assert journal['Metadata']['Preparation'].get('PassthroughOpenGL',False)==passthrough
         snapshot=journal['Metadata']['BootCaches']
         saved=Path(journal['Metadata']['BootCacheDirectory'])/'cache-0'
         assert saved.read_bytes()==system_cache.read_bytes()

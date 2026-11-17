@@ -1,7 +1,7 @@
-/* Darwin 10 has pthread TLS, but not dyld's Lion-era TLV machinery.
+/* Darwin 8--10 have pthread TLS, but not dyld's Lion-era TLV machinery.
  * Use real process-private pthread keys, never borrow Apple's reserved GL
- * TLS slot (which differs between releases). Only the Snow Leopard build
- * takes this path; later guests retain their existing compiler TLS.
+ * TLS slot (which differs between releases). Tiger through Snow Leopard
+ * take this path; later guests retain their existing compiler TLS.
  * The key is initialized once at library load, not on every GL call.
  * This storage owns only its slots; existing context binding code retains
  * responsibility for context lifetime and its thread-exit reference. */

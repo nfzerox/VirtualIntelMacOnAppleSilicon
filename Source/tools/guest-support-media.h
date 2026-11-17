@@ -1,5 +1,6 @@
 // Copy the identified read-only support disc into private staging.
 // No mounted code is executed and no system file is installed here.
+#include "guest-system-version.h"
 #include <sys/mount.h>
 
 static void VIMMediaCheck(BOOL ok, NSString *message) {
@@ -37,7 +38,7 @@ static NSData *VIMMediaReadMarker(int directory, NSString *name) {
 }
 static NSDictionary *VIMStageSupportMedia(NSString *guest,NSString *destination,
                                         NSString *volumes,BOOL requireReadOnly) {
-    VIMMediaCheck([@[@"mojave",@"catalina",@"bigsur"] containsObject:guest],@"Invalid support OS.");
+    VIMMediaCheck([VIMModernGuests() containsObject:guest],@"Invalid support OS.");
     int target=open(destination.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
     VIMMediaCheck(target>=0,@"Could not open private support staging.");
     int volume=-1;

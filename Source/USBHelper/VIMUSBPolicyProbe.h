@@ -5,6 +5,7 @@
 #include <bsm/libbsm.h>
 #include <errno.h>
 #include <stdlib.h>
+#import "VIMUSBPluginProbe.h"
 
 static BOOL VIMUSBProbeNumber(const char *text,unsigned long limit,uint32_t *value) {
     if(!text||!text[0]||text[0]=='-')return NO;
@@ -34,8 +35,7 @@ static int VIMUSBRunPolicyProbe(int argc,const char *argv[]) {
             for(io_registry_entry_t child;(child=IOIteratorNext(children));IOObjectRelease(child)) {
                 if(!IOObjectConformsTo(child,"IOUSBHostInterface")||[Property(child,CFSTR("bInterfaceClass")) unsignedIntValue]!=8)continue;
                 IOCFPlugInInterface **plugin=NULL;SInt32 score=0;
-                IOReturn result=IOCreatePlugInInterfaceForService(child,kIOUSBInterfaceUserClientTypeID,
-                    kIOCFPlugInInterfaceID,&plugin,&score);
+                IOReturn result=VIMUSBProbeStoragePlugin(child,&plugin,&score);
                 [interfaces addObject:@{@"Interface":Property(child,CFSTR("bInterfaceNumber"))?:@(-1),
                     @"IOReturn":@((uint32_t)result),@"PluginCreated":@(result==kIOReturnSuccess&&plugin!=NULL)}];
                 if(plugin)(*plugin)->Release(plugin);

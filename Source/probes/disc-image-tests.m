@@ -22,6 +22,16 @@ int main(int argc,char **argv) {
         NSString *pipe=[directory stringByAppendingPathComponent:@"Pipe.iso"];
         NSCAssert(mkfifo(pipe.fileSystemRepresentation,0600)==0&&!VIMValidateOpticalImage(pipe,NULL),@"special files refused without blocking");
         NSCAssert(!VIMValidateOpticalImage([directory stringByAppendingPathComponent:@"Missing.iso"],NULL),@"missing file refused");
+        NSError *locked=[NSError errorWithDomain:@"VirtualIntelMac.ImageCheck" code:1 userInfo:@{
+            NSLocalizedDescriptionKey:@"Failed to get shared \"write\" lock. Is another process using the image?"}];
+        NSError *friendly=VIMFriendlyDiscImageError(udif,locked);
+        NSCAssert([friendly.localizedRecoverySuggestion containsString:@"eject"]&&
+                  friendly.userInfo[NSUnderlyingErrorKey]==locked,@"mounted image suggests normal eject, preserving the actual cause");
+        NSError *busy=[NSError errorWithDomain:NSPOSIXErrorDomain code:EBUSY userInfo:nil];
+        NSCAssert([VIMFriendlyDiscImageError(udif,busy).localizedRecoverySuggestion containsString:@"eject"],@"busy image has actionable guidance");
+        NSError *unsupported=[NSError errorWithDomain:@"VirtualIntelMac.ImageCheck" code:1 userInfo:@{
+            NSLocalizedDescriptionKey:@"unsupported block compression"}];
+        NSCAssert([VIMFriendlyDiscImageError(udif,unsupported).localizedRecoverySuggestion containsString:@"compression"],@"block format is not mistaken for a lock");
         if(argc==2)NSCAssert([VIMOpticalImageFormat(@(argv[1]),NULL) isEqual:@"dmg"],@"Real Mac disk image uses its direct driver");
         [files removeItemAtPath:directory error:nil];
         puts("PASS optical container checks, unchanged originals and nonblocking special-file rejection");

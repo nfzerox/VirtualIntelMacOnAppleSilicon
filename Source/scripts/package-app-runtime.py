@@ -5,6 +5,7 @@ Does not download, rebuild QEMU, edit the input app, or alter guest disks.
 Ad-hoc signing is development-only; stock-host qualification is a separate gate.
 """
 import argparse
+import fnmatch
 import hashlib
 import os
 from pathlib import Path
@@ -17,6 +18,37 @@ import sys
 import tarfile
 import tempfile
 import build_freshness as freshness
+from build_launch_policy import apply_launch_minimum, BINARY_MINIMUM, LAUNCH_MINIMUM
+
+
+def stage_dependency_licenses(source, runtime):
+    """Keep linked static libraries' notices alongside QEMU and the helper.
+
+    Read the same checked-in source archive used by the dependency builder,
+    not a builder's unpacked cache or a separately downloaded license copy.
+    """
+    notices = {
+        'glib/COPYING': 'GLib-LGPL-2.1.txt',
+        'glib/subprojects/libffi-3.5.2/LICENSE': 'libffi-LICENSE.txt',
+        # COPYING is only a pointer; retain the actual upstream LICENCE text.
+        'glib/subprojects/pcre2-10.46/LICENCE*': 'PCRE2-LICENCE.txt',
+        'glib/subprojects/proxy-libintl-0.5/COPYING': 'proxy-libintl-COPYING.txt',
+        'pixman/COPYING': 'pixman-COPYING.txt',
+        'slirp/LICENSE': 'libslirp-LICENSE.txt',
+        'sdl/LICENSE.txt': 'SDL2-LICENSE.txt',
+        'sdl/src/hidapi/LICENSE-bsd.txt': 'SDL2-hidapi-BSD-LICENSE.txt',
+        'sdl/src/video/yuv2rgb/LICENSE': 'SDL2-yuv2rgb-LICENSE.txt',
+        'libusb/COPYING': 'libusb-LGPL-2.1.txt',
+    }
+    destination = runtime/'Licenses'
+    destination.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(source/'vendor/qemu-dependency-sources.tar.gz') as archive:
+        for pattern, name in notices.items():
+            members = fnmatch.filter(archive.getnames(), pattern)
+            if len(members) != 1:
+                raise RuntimeError(f'Missing or ambiguous dependency notice: {pattern}')
+            with archive.extractfile(members[0]) as original:
+                (destination/name).write_bytes(original.read())
 
 
 def extract_host_inputs(source, destination, archive_name='apple-silicon-host-inputs.tar.gz', manifest_name='apple-silicon-SHA256SUMS'):
@@ -45,6 +77,15 @@ def extract_host_inputs(source, destination, archive_name='apple-silicon-host-in
 
 def run(*args):
     return subprocess.check_output([str(x) for x in args], text=True).strip()
+
+
+def public_configure_arguments(configurations):
+    """Keep build options, not the builder's interpreter/engine cache paths."""
+    paths = {'--python=': '${BUILD_PYTHON}', '-Dhvdbt_engine=': '${HYBRID_ENGINE}'}
+    return {arch: [next((prefix + replacement for prefix, replacement in paths.items()
+                         if argument.startswith(prefix)), argument)
+                   for argument in arguments]
+            for arch, arguments in configurations.items()}
 
 
 def qemu_submodule_pin(qemu, path):
@@ -130,7 +171,7 @@ def require_universal(path, minimum=(11, 0, 0), *, exact=False):
 def require_macos_11(path, minimum=(11, 0, 0), *, exact=False):
     """Reject stale host artifacts even when their build receipt looks current.
 
-    The runtime targets macOS 11; the app itself may target a newer release."""
+    The app and runtime both target macOS 11."""
     commands = run('/usr/bin/otool', '-arch', 'all', '-l', path)
     versions = re.findall(r'^\s*minos\s+(\d+(?:\.\d+)*)', commands, re.MULTILINE)
     versions += re.findall(r'cmd LC_VERSION_MIN_MACOSX\s+cmdsize \d+\s+version (\d+(?:\.\d+)*)', commands)
@@ -139,6 +180,25 @@ def require_macos_11(path, minimum=(11, 0, 0), *, exact=False):
         raise RuntimeError(f'Host app must target exactly macOS {minimum[0]}.{minimum[1]}: {path}: {versions}')
     if not parsed or any(v > minimum for v in parsed):
         raise RuntimeError(f'Host binary requires newer than macOS {minimum[0]}.{minimum[1]} (or lacks minimum): {path}: {versions}')
+
+
+def build_host_install_worker(source, output, signing_identity):
+    """Build the same universal worker for packaging and component iterations."""
+    run('xcrun','clang','-arch','arm64','-arch','x86_64','-mmacosx-version-min=11.0',
+        '-O2','-fobjc-arc','-fobjc-exceptions','-Wall','-Wextra','-Werror',
+        '-framework','Foundation','-framework','Security','-lsqlite3','-lz','-llzma.5','-lcompression','-larchive','-lAppleArchive',
+        '-DVIM_BIGSUR_DIGEST_LIBRARY','-I',source/'vendor/xz-api',source/'tools/host-install-pbzx.c',
+        source/'tools/host-install-bigsur-seal.c',source/'tools/host-install-bigsur-digest.c',
+        *sorted((source/'tools/HostInstall').glob('*.m')),'-o',output)
+    require_universal(output)
+    run('/usr/bin/codesign','--force','--sign',signing_identity,output)
+
+
+def build_host_install_cryptex_decoder(source, output, signing_identity):
+    run('xcrun','clang','-arch','arm64','-arch','x86_64','-mmacosx-version-min=11.0',
+        '-O2','-Wall','-Wextra','-Werror',source/'tools/host-install-cryptex.c','-o',output)
+    require_universal(output)
+    run('/usr/bin/codesign','--force','--sign',signing_identity,output)
 
 
 def main():
@@ -209,6 +269,9 @@ def main():
         'bin/qemu-system-x86_64': args.runtime_bin/'qemu-system-x86_64',
         'bin/apple-gfx-helper': args.runtime_bin/'apple-gfx-helper',
         'bin/qemu-img': args.runtime_bin/'qemu-img',
+        'Licenses/QEMU-GPL-2.0.txt': args.qemu/'COPYING',
+        'Licenses/LightClick-MIT.txt': source.parent/'LICENSE',
+        'Licenses/ipsw-MIT.txt': source/'vendor/licenses/ipsw-MIT.txt',
         'Donor/ParavirtualizedGraphics.framework/Versions/A/ParavirtualizedGraphics': donor/'Versions/A/ParavirtualizedGraphics',
         'Donor/libLLVM.dylib': donor_root/'System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/31001/Libraries/libLLVM.dylib',
     }
@@ -220,21 +283,26 @@ def main():
     verify_opengl=runpy.run_path(str(source/'scripts/package-opengl-guest-support.py'))['verify']
     opengl_support={guest:verify_opengl(path,source) for guest,path in opengl_guests.items()}
     runpy.run_path(str(source/'scripts/build-snowleopard-samba.py'))['verify'](opengl_guests['snowleopard'])
+    native_smb=runpy.run_path(str(source/'scripts/build-native-smb.py'))['verify']
+    for guest in ('lion','yosemite','elcapitan','sierra'):
+        native_smb(opengl_guests[guest],guest)
     if not (opengl_guests['snowleopard']/'opengl-file-sharing').is_file():
         raise RuntimeError('Snow Leopard File Sharing repair tool is missing')
     tiger_native=source/'prebuilt/PassthroughOpenGL/tiger'
     tiger_support=runpy.run_path(str(source/'scripts/package-tiger-guest-support.py'))['verify'](tiger_native,source)
-    for guest in ('mojave', 'catalina', 'bigsur'):
+    derived_firmware = runpy.run_path(str(source/'scripts/build-unified-efi.py'))['DERIVED_PROFILES']
+    for guest in ('mojave', 'catalina', 'bigsur', *derived_firmware):
         for leaf in ['CODE.fd','VARS.fd']:
             inputs[f'Firmware/{guest}/{leaf}'] = firmware_root/leaf
-        inputs[f'Firmware/{guest}/BOOT.img'] = firmware_root/guest/'BOOT.img'
+        if guest not in derived_firmware:
+            inputs[f'Firmware/{guest}/BOOT.img'] = firmware_root/guest/'BOOT.img'
     firmware_code, firmware_candidate = quiet_firmware(source, args.qemu, args.firmware_build)
-    for guest in ('mojave', 'catalina', 'bigsur'):
+    for guest in ('mojave', 'catalina', 'bigsur', *derived_firmware):
         inputs[f'Firmware/{guest}/CODE.fd'] = firmware_code
     for path in [args.app/'Contents/MacOS/Virtual Intel Mac', args.qemu/'pc-bios', *inputs.values()]:
         if not path.exists():
             parser.error(f'missing input: {path}')
-    require_universal(args.app/'Contents/MacOS/Virtual Intel Mac', (15, 0, 0), exact=True)
+    require_universal(args.app/'Contents/MacOS/Virtual Intel Mac', (11, 0, 0), exact=True)
     for path in [inputs['bin/qemu-system-x86_64'], inputs['bin/qemu-img']]:
         require_universal(path)
     require_macos_11(inputs['bin/apple-gfx-helper'])
@@ -244,6 +312,75 @@ def main():
     if runtime.exists():
         raise RuntimeError('input app already contains a runtime; build a clean input app')
     runtime.mkdir()
+    stage_dependency_licenses(source, runtime)
+    host_install = runtime/'HostInstall'
+    host_install.mkdir()
+    offline_notifications = host_install/'offline-kext-notifications.dylib'
+    run('xcrun','clang','-arch','arm64','-arch','x86_64','-mmacosx-version-min=11.0',
+        '-O2','-Wall','-Wextra','-Werror','-dynamiclib','-install_name','@rpath/offline-kext-notifications.dylib',
+        source/'tools/HostInstall/offline-kext-notifications.c','-o',offline_notifications)
+    require_universal(offline_notifications)
+    run('/usr/bin/codesign','--force','--sign',args.signing_identity,offline_notifications)
+    install_worker = host_install/'install-worker'
+    build_host_install_worker(source, install_worker, args.signing_identity)
+    build_host_install_cryptex_decoder(source, host_install/'cryptex-decoder', args.signing_identity)
+    vendor = source/'vendor/source'
+    for prefix,license_name in (('leopard','Leopard'),('snow-leopard','Snow-Leopard'),('lion','Lion'),
+                                ('mountainlion','Mountain-Lion'),('mavericks','Mavericks'),
+                                ('yosemite','Yosemite'),('elcapitan','El-Capitan')):
+        dyld = vendor/f'dyld-{prefix}-cache'
+        cache_tool = host_install/f'{prefix}-cache'
+        run('xcrun','clang++','-std=c++17','-arch','arm64','-arch','x86_64','-mmacosx-version-min=11.0',
+            '-O2','-Wno-vla-extension','-Wno-cpp','-Wno-deprecated-declarations','-Wno-null-conversion',
+            '-Wno-nontrivial-memcall','-I',vendor/'dyld-host-compat','-I',dyld/'compat',
+            '-I',vendor/'dyld-leopard-cache/compat',
+            dyld/'launch-cache/update_dyld_shared_cache.cpp','-o',cache_tool)
+        require_universal(cache_tool)
+        run('/usr/bin/codesign','--force','--sign',args.signing_identity,cache_tool)
+        shutil.copyfile(dyld/'APPLE_LICENSE',host_install/f'{license_name}-dyld-APPLE_LICENSE')
+    dyld = vendor/'dyld-sierra-cache'
+    interlinked = dyld/'interlinked-dylibs'
+    cache_tool = host_install/'sierra-cache'
+    run('xcrun','clang++','-std=c++17','-arch','arm64','-arch','x86_64','-mmacosx-version-min=11.0',
+        '-O2','-fobjc-arc','-Werror=return-type','-Wno-vla-extension','-Wno-deprecated-declarations',
+        '-Wno-null-conversion','-Wno-nontrivial-memcall','-I',dyld/'compat','-I',dyld/'launch-cache',
+        *sorted(interlinked.glob('*.cpp')), *sorted(interlinked.glob('*.mm')),
+        dyld/'launch-cache/dsc_iterator.cpp','-framework','Foundation','-o',cache_tool)
+    require_universal(cache_tool)
+    run('/usr/bin/codesign','--force','--sign',args.signing_identity,cache_tool)
+    shutil.copyfile(dyld/'APPLE_LICENSE',host_install/'Sierra-dyld-APPLE_LICENSE')
+    for prefix,license_name in (('highsierra','High-Sierra'),('mojave','Mojave'),('catalina','Catalina')):
+        dyld = vendor/f'dyld-{prefix}-cache'
+        dyld3 = dyld/'dyld3'
+        cache_tool = host_install/f'{prefix}-cache'
+        run('xcrun','clang++','-std=c++17','-arch','arm64','-arch','x86_64','-mmacosx-version-min=11.0',
+            '-O2','-fblocks','-DBUILDING_CACHE_BUILDER=1',
+            *(['-DBUILDING_UPDATE_OTHER_DYLD_CACHE_BUILDER=1'] if prefix=='catalina' else []),
+            '-Werror=return-type','-Wno-vla-extension',
+            '-Wno-deprecated-declarations','-Wno-nontrivial-memcall','-I',dyld3,'-I',dyld3/'shared-cache',
+            '-I',dyld/'include','-I',vendor/'dyld-host-compat',
+            *sorted(dyld3.glob('*.cpp')), *sorted((dyld3/'shared-cache').glob('*.cpp')),
+            '-framework','CoreFoundation','-o',cache_tool)
+        require_universal(cache_tool)
+        run('/usr/bin/codesign','--force','--sign',args.signing_identity,cache_tool)
+        shutil.copyfile(dyld/'APPLE_LICENSE',host_install/f'{license_name}-dyld-APPLE_LICENSE')
+    shutil.copyfile(source/'tools/HostInstall/SupportedGuests.plist',host_install/'SupportedGuests.plist')
+    # Host and guest preparation share source, but the guest executables
+    # target the old Intel OS and its allocator. Keep the host variants
+    # separate and universal; never copy them onto the guest.
+    graphics_tools = host_install/'GraphicsTools'
+    run(source/'scripts/build-host-pvg-prepare', graphics_tools, '--graphics-only')
+    for tool in sorted(graphics_tools.iterdir()):
+        require_universal(tool)
+        if tool.name != 'codesign_allocate':
+            run('/usr/bin/codesign','--force','--sign',args.signing_identity,tool)
+        else:
+            # System codesign requires Apple's allocator signature, not ours.
+            run('/usr/bin/codesign','--verify','--strict',tool)
+    shutil.copyfile(source/'vendor/host-codesign/APPLE_LICENSE',host_install/'HostCodesign-APPLE_LICENSE')
+    shutil.copyfile(source/'support/install-targets-mojave.txt',host_install/'InstallTargets-mojave.txt')
+    shutil.copyfile(source/'support/install-targets.txt',host_install/'InstallTargets-catalina.txt')
+    shutil.copyfile(source/'support/install-targets-bigsur.txt',host_install/'InstallTargets-bigsur.txt')
     for guest,path in opengl_guests.items():
         shutil.copytree(path,runtime/'OpenGLGuests'/guest,ignore=shutil.ignore_patterns('.DS_Store'))
         run(sys.executable,source/'scripts/build-opengl-firmware.py','--guest',guest,'--output',runtime/'Firmware'/guest,'--code',firmware_code)
@@ -302,12 +439,15 @@ def main():
         shutil.copyfile(original, bios/original.name)
     boot_policy=args.boot_policy_build or source/'prebuilt/firmware/BootPolicy'
     boot_policy_receipt=plistlib.loads((boot_policy/'BuildReceipt.plist').read_bytes())
-    for guest in ('mojave', 'catalina', 'bigsur'):
+    derived = runpy.run_path(str(source/'scripts/build-unified-efi.py'))['DERIVED_PROFILES']
+    for guest in ('mojave', 'catalina', 'bigsur', *derived):
         firmware = runtime/'Firmware'/guest
+        base, product = derived.get(guest, (guest, None))
         options=['--quiet','--runtime-policy',boot_policy]
-        if guest=='bigsur':options+=['--bigsur-gl-registration',boot_policy/'PVGOpenGLProbe.kext']
+        if 'bigsur' in (guest, base):options+=['--bigsur-gl-registration',boot_policy/'PVGOpenGLProbe.kext']
+        if product:options+=['--product',product]
         run(sys.executable, source/'scripts/make-efi-disk.py',
-            inputs[f'Firmware/{guest}/BOOT.img'], firmware/'EFI.img', *options)
+            inputs[f'Firmware/{base}/BOOT.img'], firmware/'EFI.img', *options)
     from firmware_layout import share_identical_code
     saved_firmware = share_identical_code(runtime/'Firmware')
     print(f'Shared identical read-only firmware code: {saved_firmware} bytes saved', flush=True)
@@ -387,14 +527,15 @@ def main():
             raise RuntimeError(f'non-portable dependencies in {binary}: {remaining}')
     # One baseline runtime: no restricted TSO entitlement or launch-time probe.
     run('/usr/bin/codesign', '--force', '--sign', '-', runtime/'Donor/ParavirtualizedGraphics.framework')
-    for guest in ('mojave', 'catalina', 'bigsur'):
+    for guest in ('mojave', 'catalina', 'bigsur', *derived_firmware):
         shutil.copyfile(source/'VirtualIntelMac/Assets.xcassets'/f'{guest}Icon.imageset/art.png',
                         runtime/'GuestTools'/f'{guest}-support-icon.png')
     support_media = runpy.run_path(str(source/'scripts/package-guest-support-media.py'))['build'](
         runtime/'GuestPayloads', runtime/'GuestTools')
     receipt = {'FormatVersion': 2, 'HostArchitectures': ['arm64', 'x86_64'],
                'AppConfiguration': args.configuration,
-               'MinimumAppVersion': '15.0', 'MinimumRuntimeVersion': '11.0',
+               'MinimumAppVersion': LAUNCH_MINIMUM, 'MinimumAppBinaryVersion': BINARY_MINIMUM,
+               'MinimumRuntimeVersion': BINARY_MINIMUM,
                'QEMUCheckoutRevision': run('git','-C',args.qemu,'rev-parse','HEAD:./'),
                'QEMUBinaryVersion': run(runtime/'bin/qemu-system-x86_64', '--version'),
                'DevelopmentAdHocSigned': args.signing_identity == '-', 'HostSigningIdentity': args.signing_identity, 'StockHostValidated': False,
@@ -403,7 +544,7 @@ def main():
                'RuntimeBootPolicy':boot_policy_receipt,
                'UnifiedEFI':unified_firmware,
                'EFIImages':{guest:shared_efi_digest
-                            for guest in ('mojave','catalina','bigsur')},
+                            for guest in ('mojave','catalina','bigsur',*derived_firmware)},
                'GuestPayloads': guest_payload_receipt,
                'GuestSupportMedia': support_media,
                'NativeInstallerGuests':{'tiger':firmware_records['tiger']},
@@ -424,15 +565,16 @@ def main():
         build = receipt['RuntimeBuild']
         build.pop('BuildDirectory', None)
         build.pop('DependencyPrefixes', None)
-        build['ConfigureArguments'] = {
-            arch: [re.sub(r'--python=.*', '--python=${BUILD_PYTHON}', arg) for arg in arguments]
-            for arch, arguments in build.get('ConfigureArguments', {}).items()}
+        build['ConfigureArguments'] = public_configure_arguments(build.get('ConfigureArguments', {}))
     receipt['USBHelper'] = runpy.run_path(str(source/'scripts/build-usb-helper.py'))['build'](
         source, args.output, args.signing_identity, dependencies=args.dependencies)
     receipt['NetworkHelper'] = runpy.run_path(str(source/'scripts/build-usb-helper.py'))['build'](
         source, args.output, args.signing_identity, dependencies=args.dependencies, kind='network')
+    runpy.run_path(str(source/'scripts/build-rosetta-installer.py'))['build'](
+        source, args.output, args.signing_identity)
     with (runtime/'Packaging.plist').open('wb') as stream:
         plistlib.dump(receipt, stream)
+    apply_launch_minimum(args.output)
     run('/usr/bin/codesign', '--force', '--sign', args.signing_identity, args.output)
     run('/usr/bin/codesign', '--verify', '--deep', '--strict', args.output)
     print(f'Packaged {args.output}; {len(copied)} linked libraries. Stock-host testing remains required.')

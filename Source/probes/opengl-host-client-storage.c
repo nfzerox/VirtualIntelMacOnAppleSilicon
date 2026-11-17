@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <limits.h>
 static void fill(uint32_t *p,size_t count,uint32_t color)
 {for(size_t i=0;i<count;++i)p[i]=color;}
 static int croppedView(void)
@@ -99,15 +100,21 @@ static int experiment(GLenum hint,int w,int h,int pitch,int x,int y)
 }
 int main(int argc,char **argv)
 {
-    int requireIntel=0,rendererOnly=0;
+    int requireIntel=0,rendererOnly=0;GLint selectedRenderer=0;
     for(int i=1;i<argc;++i){
         if(!strcmp(argv[i],"--require-intel"))requireIntel=1;
         else if(!strcmp(argv[i],"--renderer-only"))rendererOnly=1;
-        else {fprintf(stderr,"Usage: %s [--require-intel] [--renderer-only]\n",argv[0]);return 2;}
+        else if(!strcmp(argv[i],"--renderer") && i+1<argc){
+            char *end=NULL;long value=strtol(argv[++i],&end,0);
+            if(!end || *end || value<=0 || value>INT_MAX)return 2;
+            selectedRenderer=(GLint)value;
+        }
+        else {fprintf(stderr,"Usage: %s [--require-intel] [--renderer-only] [--renderer ID]\n",argv[0]);return 2;}
     }
-    /* Do not wake a discrete GPU just by creating this reference context. */
+    /* Do not wake a discrete GPU unless explicitly selecting that renderer. */
     CGLPixelFormatAttribute attrs[]={kCGLPFAAccelerated,kCGLPFANoRecovery,
-        kCGLPFASupportsAutomaticGraphicsSwitching,0};
+        kCGLPFASupportsAutomaticGraphicsSwitching,selectedRenderer?kCGLPFARendererID:0,
+        (CGLPixelFormatAttribute)selectedRenderer,0};
     CGLPixelFormatObj pf=NULL;CGLContextObj c=NULL;GLint count=0;
     if(CGLChoosePixelFormat(attrs,&pf,&count) || CGLCreateContext(pf,NULL,&c))return 2;
     CGLDestroyPixelFormat(pf);CGLSetCurrentContext(c);

@@ -180,7 +180,7 @@ for row in rows:
         out += ["    GLenum pending=VIMTakeError(ctx); if(pending) { VIMRestoreGLI(previous,ctx); return pending; }"]
     out += [f"    if (!VIMFunction_{field}) {{ VIMUnsupported(ctx,{row['index']}); VIMRestoreGLI(previous,ctx);" +
             (" return;" if ret == "void" else f" return ({ret})0;") + " }"]
-    if a.runtime_dispatch_count == 968 and (field in {
+    if len(rows) in (764,968) and (field in {
             "begin","accum","bitmap","clear","call_list","call_lists","copy_pixels",
             "read_pixels","blit_framebuffer_EXT"
         } or field.startswith(("clear_buffer","draw_arrays","draw_elements","draw_range_elements",
@@ -204,6 +204,18 @@ for row in rows:
                 any(re.search(r"\blevel$", x.strip()) for x in params))
     if field == "delete_textures":
         out += ["    VIMFlushBeforeTextureDelete(ctx,n,textures);"]
+    if len(rows) == 975 and field in {"draw_buffer", "draw_buffers_ARB"}:
+        # Native Mojave's ordinary Flush publishes only after front selection.
+        # Keep a conservative, irreversible witness, including commands being
+        # compiled into shared lists. No native query on the draw hot path.
+        out += ["#if defined(VIM_PASSTHROUGH_OPENGL_BACKEND) && defined(VIM_GLI_PLUGIN)"]
+        if field == "draw_buffer":
+            out += ["    if(mode!=GL_BACK && mode!=GL_BACK_LEFT && mode!=GL_NONE)VIMRequireFrontPublication(ctx);"]
+        else:
+            # Native validation must own n/bufs, including invalid counts.
+            # Keep the existing path for MRT rather than inspecting the array.
+            out += ["    VIMRequireFrontPublication(ctx);"]
+        out += ["#endif"]
     if redefine:
         out += ["#if defined(VIM_PASSTHROUGH_OPENGL_BACKEND) && defined(VIM_GLI_PLUGIN)",
             "    GLuint cgs_redefinition=VIMCGSBeginRedefine(ctx,target,level);", "#endif"]
