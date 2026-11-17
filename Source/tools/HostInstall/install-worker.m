@@ -9,6 +9,7 @@
 #import "VIMApplePeriodUpdate.h"
 #import "VIMPeriodKextcache.h"
 #import "VIMCPIOPayload.h"
+#import "VIMKextHelperCache.h"
 #import "../../compat/VIMHostInstallAccountPolicy.h"
 #import "../../compat/VIMFlatHostUpdateRecipes.h"
 #import "VIMFlatReceipts.h"
@@ -2296,6 +2297,29 @@ static BOOL ValidCompressedKernelCache(NSURL *cache) {
     close(fd);
     return valid&&(!memcmp(bytes,"complzss",8)||!memcmp(bytes,"complzvn",8));
 }
+static void StageKextHelperCache(VIMInstallTarget *target,NSString *guest) {
+    if([@[@"tiger",@"leopard"] containsObject:guest]||VIMIsAssistantGuest(guest))return;
+    // kextd checks this property cache when taking the reboot lock, even
+    // when no kext declares OSBundleHelper. A missing empty cache queues a
+    // rescan after shutdown has disabled kext loads. Darwin13 can deadlock
+    // in failed-load cleanup while holding IOCatalogue's nonrecursive lock.
+    // Prepare the same ordinary metadata Apple creates with -system-caches;
+    // leave prelinking, driver selection and native shutdown checks intact.
+    BOOL localExtensions=![@[@"snowleopard",@"lion",@"mountainlion"] containsObject:guest];
+    NSError *error=nil;NSData *data=VIMKextHelperCache(target.root,@"x86_64",localExtensions,&error);
+    Require(data!=nil,error.localizedDescription);
+    NSString *path=@"System/Library/Caches/com.apple.kext.caches/Startup/KextPropertyValues_OSBundleHelper_x86_64.plist.gz";
+    [target file:path data:data mode:0644];
+    struct stat system,local;
+    Require(!stat(At(target.root,@"System/Library/Extensions").fileSystemRepresentation,&system),@"The installed kernel or extensions are missing.");
+    time_t stamp=system.st_mtimespec.tv_sec;
+    // Mavericks adds /Library/Extensions to the system repository set.
+    if(localExtensions&&
+       !stat(At(target.root,@"Library/Extensions").fileSystemRepresentation,&local))stamp=MAX(stamp,local.st_mtimespec.tv_sec);
+    struct timespec times[2]={{.tv_nsec=UTIME_OMIT},{.tv_sec=stamp+1}};
+    Require(!utimensat(AT_FDCWD,At(target.root,path).fileSystemRepresentation,times,0),@"Could not record the startup cache timestamp.");
+}
+
 static void StagePrelinkedKernel(VIMInstallTarget *target,NSURL *tool,NSURL *attempt,
                                  NSString *kernel,NSArray<NSString *> *destinations,BOOL localExtensions) {
     NSURL *cache=At(attempt,@"PrelinkedKernel");
@@ -3603,6 +3627,7 @@ static void Assemble(NSURL *attempt,NSDictionary *request,NSData *password) {
                 if(pvg)StagePVGGraphics(target,target.root,runtime,attempt,mounts,guest,build,&graphicsAttached);
                 else StageSupport(target,support,owner,build,expectedBuild);
                 StageAccount(target,target.root,owner,name,password);Checkpoint(attempt);
+                StageKextHelperCache(target,guest);Checkpoint(attempt);
                 if([guest isEqual:@"leopard"]) {
                     NSString *plugins=@"System/Library/Extensions/IONetworkingFamily.kext/Contents/PlugIns";
                     networkAdapter=VIMHostInstallNetworkAdapter(guest,
