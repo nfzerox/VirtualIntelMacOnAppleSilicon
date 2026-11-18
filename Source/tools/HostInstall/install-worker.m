@@ -12,6 +12,7 @@
 #import "VIMKextHelperCache.h"
 #import "../../compat/VIMHostInstallAccountPolicy.h"
 #import "../../compat/VIMFlatHostUpdateRecipes.h"
+#import "../../compat/VIMTigerSoftwareUpdatePolicy.h"
 #import "VIMFlatReceipts.h"
 #import "VIMGuestPath.h"
 #import "VIMAppleDouble.h"
@@ -2134,6 +2135,22 @@ static void StageSupport(VIMInstallTarget *target,NSURL *support,NSDictionary *o
         }
         return;
     }
+    // Seed Software Update's own ignore list so updates that break the Tiger
+    // graphics support are never offered (see VIMTigerSoftwareUpdatePolicy.h).
+    // The user can still bring them back with Reset Ignored Updates.
+    NSString *updates=VIMTigerSoftwareUpdatePreferences;
+    NSMutableDictionary *softwareUpdate=[Plist(At(target.root,updates)) mutableCopy]?:[NSMutableDictionary dictionary];
+    NSMutableArray *inactive=[softwareUpdate[@"InactiveUpdates"] isKindOfClass:NSArray.class]?
+        [softwareUpdate[@"InactiveUpdates"] mutableCopy]:[NSMutableArray array];
+    for(NSString *label in VIMTigerIgnoredSoftwareUpdates())
+        if(![inactive containsObject:label])[inactive addObject:label];
+    softwareUpdate[@"InactiveUpdates"]=inactive;
+    // Usually absent before first boot. Create it like the neighboring system
+    // preferences (root:admin 0644): /Library/Preferences is root:admin 0775
+    // without the sticky bit, so Software Update running as an admin user
+    // still replaces it with its own results and ignores later.
+    [target plist:updates value:softwareUpdate mode:0644];
+    target.metadata[updates]=@[@0,@80,@(S_IFREG|0644)];
     NSURL *audio=At(support,@"Audio");
     NSString *installed=[Support stringByAppendingPathComponent:@"NativeAudio"];
     NSMutableDictionary *audioFiles=[NSMutableDictionary dictionary];

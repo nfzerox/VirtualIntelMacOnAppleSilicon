@@ -36,6 +36,7 @@
 #import "VIMClipboardBridge.h"
 #import "VIMWindowGeometry.h"
 #import "../compat/VIMForceTermination.h"
+#import "../compat/VIMTigerSoftwareUpdatePolicy.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <QuartzCore/QuartzCore.h>
 #import <AVFoundation/AVFoundation.h>
@@ -237,6 +238,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
 @property NSUInteger automaticTabletTrim;
 @property BOOL legacyTabletObservationPending;
 @property NSUInteger legacyTabletObservationAttempts;
+@property BOOL tigerUpdateIgnoresChecked;
+@property BOOL tigerUpdateIgnoresPending;
+@property NSUInteger tigerUpdateIgnoresFailures;
 @property VIMGuestProgress *guestProgress;
 @property NSData *guestStatusTool;
 @property NSTextField *guestStatus;
@@ -1663,6 +1667,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         // the later bound-driver observation can still override it.
         session.legacyTabletGuest=VIMUsesLegacyTabletCalibration(session.machine.guest);
         session.legacyTabletObserved=NO;session.legacyTabletObservationAttempts=0;
+        session.tigerUpdateIgnoresChecked=NO;session.tigerUpdateIgnoresFailures=0;
         session.automaticTabletTrim=VIMInitialTabletTrim(session.machine.guest,classicInstaller);
         session.tabletTrim=VIMConfiguredTabletTrim(session.machine.editableConfiguration,session.automaticTabletTrim);
         session.displayView.releaseWithControlOption=![session.machine.editableConfiguration[@"InputReleaseShortcut"] isEqual:@"command-option"];
@@ -2343,6 +2348,45 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     return YES;
 }
 /*
+ * Tiger guests created before setup seeded Software Update's ignore list can
+ * still be offered updates that replace the files the Tiger graphics support
+ * depends on (VIMTigerSoftwareUpdatePolicy.h). Once per boot, as soon as the
+ * root guest agent answers, add any missing label to the same InactiveUpdates
+ * key Ignore Update writes. Existing ignores are kept; nothing else changes.
+ */
+- (void)ensureTigerSoftwareUpdateIgnores {
+    if(![self.machine.guest isEqual:@"tiger"]||self.tigerUpdateIgnoresChecked||self.tigerUpdateIgnoresPending)return;
+    self.tigerUpdateIgnoresPending=YES;
+    __weak VIMSession *weakSelf=self;
+    VIMGuestAgent *agent=self.guestAgent;
+    [agent connectWithCompletion:^(NSError *error){
+        VIMSession *session=weakSelf;
+        if(!session||session.guestAgent!=agent||!session.task.running||error){if(session)session.tigerUpdateIgnoresPending=NO;return;}
+        // $1: the plist path; then the labels. Prints each label it adds.
+        NSString *script=@"f=$1; shift; d=${f%.plist}; for label in \"$@\"; do "
+            "/usr/bin/defaults read \"$d\" InactiveUpdates 2>/dev/null | /usr/bin/grep -F -q \"$label\" && continue; "
+            "/usr/bin/defaults write \"$d\" InactiveUpdates -array-add \"$label\" || exit 1; echo \"$label\"; done; "
+            "/usr/bin/chgrp admin \"$f\" 2>/dev/null; /bin/chmod 644 \"$f\" 2>/dev/null; exit 0";
+        NSMutableArray *arguments=[@[@"-c",script,@"vim-tiger-update-ignores",
+            [@"/" stringByAppendingString:VIMTigerSoftwareUpdatePreferences]] mutableCopy];
+        [arguments addObjectsFromArray:VIMTigerIgnoredSoftwareUpdates()];
+        [agent runExecutable:@"/bin/sh" arguments:arguments timeout:30 completion:^(NSDictionary *result,NSError *failure){
+            VIMSession *current=weakSelf;if(!current)return;
+            current.tigerUpdateIgnoresPending=NO;
+            BOOL done=!failure&&[result[@"exitcode"] isEqual:@0];
+            // A bounded number of real command failures per boot; an agent
+            // that is not answering yet simply retries on the next refresh.
+            if(done||++current.tigerUpdateIgnoresFailures>=3)current.tigerUpdateIgnoresChecked=YES;
+            NSData *output=done?result[@"stdout"]:nil;
+            NSString *added=[output isKindOfClass:NSData.class]?[[NSString alloc] initWithData:output encoding:NSUTF8StringEncoding]:nil;
+            added=[added stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+            if(added.length)[current.log writeData:[[NSString stringWithFormat:
+                @"\n[Virtual Intel Mac] Software Update: ignoring %@\n",[added stringByReplacingOccurrencesOfString:@"\n" withString:@", "]]
+                dataUsingEncoding:NSUTF8StringEncoding]];
+        }];
+    }];
+}
+/*
  * The first installed boot after a classic installer still has the
  * installer attached (InstallState "installing"), so the session starts
  * with the installer's 15% fallback. The installed 10.5-10.9 driver binds
@@ -2401,6 +2445,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         self.guestTimer=[NSTimer scheduledTimerWithTimeInterval:15 repeats:NO block:^(NSTimer *timer){[weakSelf refreshGuestStatus];}];
         return;
     }
+    [self ensureTigerSoftwareUpdateIgnores];
     if(self.machine.preMetalGuest&&!self.openGLDesktopMonitoring){
         if([self.machine.guest isEqual:@"tiger"]&&!self.machine.passthroughOpenGLEnabled){
             // Native Tiger installation is available before its separate GL
