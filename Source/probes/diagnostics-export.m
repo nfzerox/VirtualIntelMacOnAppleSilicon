@@ -17,7 +17,7 @@ int main(int argc,const char **argv) { @autoreleasepool {
     [@{@"Phase":@"failed",@"Error":[NSString stringWithFormat:@"Cannot read %@ at 10.0.0.42",privatePath]}
         writeToURL:[state URLByAppendingPathComponent:@"GuestInstallation.plist"] atomically:YES];
     NSString *fault=@"qemu-system-x86_64: hvdbt: monitor fault: esr 0x2000000 far 0xffffff7f9fad6880 elr 0xf00000af1a6c arm-word 0x00000000";
-    NSString *retry=@"hvdbt: vCPU 2 synchronizing translated block entry after Unknown instruction; arm-pc 0xf000008157f0 x86-rip 0xffffff8000123456 retry 1";
+    NSString *retry=@"hvdbt: vCPU 2 re-fetching translated code after a stale Unknown instruction; arm-pc 0xf000008157f0 x86-rip 0xffffff8000123456 retry 1";
     NSString *startup=[@"" stringByPaddingToLength:280000 withString:@"ordinary QEMU startup data\n" startingAtIndex:0];
     if(![[NSString stringWithFormat:@"%@\nRuntime %@ and /Volumes/PrivateDrive/VM; mac=52:54:00:12:34:56 password=secret-value\n%@\n%@\n[Virtual Intel Mac] QEMU state: internal-error\n",startup,privatePath,retry,fault]
         writeToURL:[state URLByAppendingPathComponent:@"session.log"] atomically:YES encoding:NSUTF8StringEncoding error:&error])return 1;

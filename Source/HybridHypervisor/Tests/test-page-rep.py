@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Emit an actual-C page-REP service fixture. Generated guest words never execute.
+"""Emit an actual-C page-REP and interrupt-shadow retry fixture. No guest code executes.
 
 Only native libc and RAM/lock/walk stubs run. ARM acquire/release leaf instructions
 are replaced with observable data loads/stores; copy/tracking/service logic is actual.
@@ -27,16 +27,19 @@ def emit(path):
     names=['stubs_of','rep_page_site','is_ram','is_direct','rep_page_copy','rep_page_tracked','rep_page_fault','rep_page_service']
     bodies='\n\n'.join(function(source,n) for n in names)
     dispatch=function(source,'mon_sync');cut=dispatch.index('            case SVC_DIRECT:')
-    dispatch=dispatch[:cut]+'            default: stop(STOP_MONITOR_FAULT,0,0,0,0);\n        }\n    }\n}'
+    dead_start=dispatch.index('            case SVC_DEAD:')
+    dead_end=dispatch.index('            case SVC_STOP:',dead_start)
+    exit_start=dispatch.rindex('    exit_check(')
+    dispatch=(dispatch[:cut]+dispatch[dead_start:dead_end]+
+        '            default: stop(STOP_MONITOR_FAULT,0,0,0,0);\n        }\n    }\n'+dispatch[exit_start:])
     dispatch=dispatch.replace('void mon_sync(', 'void fixture_dispatch(',1)
     if 'case SVC_REP_PAGE:\n                rep_page_service(page_movs);\n                break;' not in dispatch:raise ValueError('dispatch reviewed path changed')
-    if 'if (!page_rep && me->smc_held)' not in dispatch or 'if (!page_rep && me->shadow_stepping)' not in dispatch:raise ValueError('internal service must preserve pending SMC/shadow before eligibility')
     control=(ENGINE/'Sources/Engine/Engine.swift').read_text();translator=(ENGINE/'Sources/CEngine/translate.c').read_text()
     if 'config.page_rep = environment["LC_HVDBT_PAGE_REP"] == "1"' not in control:raise ValueError('explicit default-OFF config missing')
     if 'cfg.page_rep' not in translator:raise ValueError('emitter mode missing')
     prefix=PREFIX.replace('HEADER',json.dumps(str(header))).replace('TYPEDEFS',typedef(source,'MonCpu')+'\n'+typedef(source,'Walk'))
     data=prefix+bodies+'\n'+dispatch+CHECKS;path.write_text(data)
-    receipt=dict(schema=1,result='ACTUAL_C_FIXTURE_EMITTED_NOT_YET_RUN',monitor_sha256=hashlib.sha256(source.encode()).hexdigest(),header_sha256=hashlib.sha256(header.read_bytes()).hexdigest(),generated_c_sha256=hashlib.sha256(data.encode()).hexdigest(),actual_functions=names,actual_dispatch_prologue_and_REP_case=True,guest_or_generated_code_executed=False,limits=['x86_walk, faults, locks, backing RAM and integer acquire/release leaves are stubs; no real MMU, SMP race, ARM barrier or executable code runs.','Actual service/copy/tracked/site functions execute on synthetic Walk metadata; current-permission errors are scripted walk returns.','Dispatch slice includes the actual prologue/REP case only; other production dispatch cases and trailing exit logic are not executed.','Ordinary external data writes are modeled as allowed races, never claimed excluded by mon_lock.'])
+    receipt=dict(schema=1,result='ACTUAL_C_FIXTURE_EMITTED_NOT_YET_RUN',monitor_sha256=hashlib.sha256(source.encode()).hexdigest(),header_sha256=hashlib.sha256(header.read_bytes()).hexdigest(),generated_c_sha256=hashlib.sha256(data.encode()).hexdigest(),actual_functions=names,actual_dispatch_prologue_and_REP_case=True,guest_or_generated_code_executed=False,limits=['x86_walk, faults, locks, backing RAM and integer acquire/release leaves are stubs; no real MMU, SMP race, ARM barrier or executable code runs.','Actual service/copy/tracked/site functions execute on synthetic Walk metadata; current-permission errors are scripted walk returns.','Dispatch slice runs the actual REP and dead-block cases and supplies their actual progress classification to a stub exit_check.','Ordinary external data writes are modeled as allowed races, never claimed excluded by mon_lock.'])
     path.with_suffix('.json').write_text(json.dumps(receipt,indent=2)+'\n');print(json.dumps(receipt,sort_keys=True))
 
 PREFIX=r'''
@@ -106,6 +109,14 @@ static Walk x86_walk(u64 cr3,u64 va,u32 access,bool set_ad){
  return w;
 }
 static u64 rip_here(u64 pc){CHECK(pc==head);return 0x123456;}
+static bool retry_unknown_code_fetch(void){CHECK(0);return false;}
+static u64 translate_here(u64 rip,u64 site,u32 kind,bool single){
+ CHECK(rip==c->irq_shadow_rip&&site==head&&kind==SVC_DIRECT&&!single);return head+256;
+}
+static bool exit_progress,exit_called;
+static void exit_check(bool progress,bool refresh){
+ CHECK(!refresh);exit_called=true;exit_progress=progress;
+}
 static void raise_gp(u64 error,u64 rip){CHECK(me->lock_depth==0&&error==0);fault_count++;fault_va=~0ULL;fault_error=~0u;fault_rip=rip;c->elr=0xf00d;}
 static void raise_pf(u64 va,u32 error,u64 rip){CHECK(me->lock_depth==0);fault_count++;fault_va=va;fault_error=error;fault_rip=rip;c->elr=0xf00d;}
 _Noreturn static void stop(u64 a,u64 b,u64 d,u64 e,u64 f){(void)a;(void)b;(void)d;(void)e;(void)f;stop_count++;longjmp(stop_escape,1);}
@@ -184,8 +195,17 @@ static void faults_and_sites(void){
  }
  for(unsigned which=0;which<2;which++){
   seed(true,1,64,128,256);if(which)me->shadow_stepping=true;else me->smc_held=0x1001;
-  fixture_dispatch();unchanged();CHECK(which?me->shadow_stepping:me->smc_held==0x1001);CHECK(c->elr==c->x[R_LR]);
+  exit_called=false;fixture_dispatch();unchanged();CHECK(which?me->shadow_stepping:me->smc_held==0x1001);
+  CHECK(c->elr==c->x[R_LR]&&exit_called&&!exit_progress);
  }
+ // The protected x86 RIP is the same after forwarding an invalidated block's
+ // entry to its replacement. Reaching that exact entry cannot retire STI's
+ // shadow, even though architecturally completed SVCs may do so.
+ seed(true,1,64,128,256);c->esr=(0x15ULL<<26)|SVC_DEAD;
+ c->irq_shadow_rip=me->shadow_step_rip=rip_here(head);me->shadow_stepping=true;
+ exit_called=false;fixture_dispatch();
+ CHECK(c->elr==head+256&&exit_called&&!exit_progress&&me->shadow_stepping&&c->irq_shadow_rip==0x123456);
+ c->esr=0x32ULL<<26;exit_called=false;fixture_dispatch();CHECK(exit_called&&exit_progress);
  seed(true,1,64,4080,256);successful();u8 saved[16];memcpy(saved,ram+dest_low,16);
  initial_count=c->x[1];initial_src=c->x[6];initial_dst=c->x[7];locks=unlocks=walks=loads=stores=fences=0;fail_walk=1;c->elr=head+4;
  rep_page_service(true);CHECK(fault_count==1&&stores==0&&c->x[1]==48&&memcmp(saved,ram+dest_low,16)==0&&c->stat_rep_page_prefixes==1); // no replay after a committed prefix

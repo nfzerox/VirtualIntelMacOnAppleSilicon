@@ -83,6 +83,7 @@ typedef struct {
     // Hybrid: the APIC is QEMU's, but the monitor answers for ICR, so that an IPI takes one exit. hybrid_apic_page: 0 if the APIC is off.
     uint64_t hybrid_apic_page;
     uint32_t hybrid_icr_lo, hybrid_icr_hi;
+    uint32_t irq_shadow; // the returned RIP is still protected by STI or MOV SS
 } EngineX86State;
 
 EngineHandle *engine_create(const EngineConfig *config, const EngineMachineOps *ops);

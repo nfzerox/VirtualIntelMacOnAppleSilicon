@@ -11,9 +11,9 @@ import bisect
 import collections
 import json
 import math
-import os
 from pathlib import Path
-import time
+import subprocess
+import sys
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('directory', nargs='?', type=Path, help='per-VM app diagnostics directory')
@@ -38,23 +38,17 @@ else:
         p.error('Choose finite coordinates, Seconds 1–15 and Hz 15–120.')
     if not args.directory.is_dir() or args.output.exists():
         p.error('Use an existing diagnostic directory and a new output file.')
-    request, running, result = (args.directory/n for n in ['Request.json', 'Running.json', 'Result.json'])
-    if request.exists() or running.exists():
-        raise SystemExit('Another app diagnostic is pending; do not start another control client.')
-    old = result.stat().st_mtime_ns if result.exists() else None
-    command = dict(Action='pointer-workload', Pattern=args.pattern, Seconds=args.seconds,
+    command = dict(Pattern=args.pattern, Seconds=args.seconds,
                    Hz=args.hz, Origin=args.origin, Amplitude=args.amplitude, MarkerRect=args.marker_rect,
                    CommandDrag=args.command_drag)
-    with os.fdopen(os.open(request, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as stream:
-        json.dump(command, stream)
-    deadline = time.monotonic()+args.seconds+15
-    while time.monotonic() < deadline:
-        if result.exists() and result.stat().st_mtime_ns != old and not request.exists() and not running.exists():
-            data = json.loads(result.read_text())
-            break
-        time.sleep(.1)
-    else:
-        raise SystemExit('No finite workload result; check the app. Do not retry over a second QMP socket.')
+    # Use the common adapter's per-emulator lifetime and request checks. An
+    # unbound file request must not actuate the next boot of the same VM.
+    request = subprocess.run([sys.executable, str(Path(__file__).with_name('app-guest-command.py')),
+                              str(args.directory), '--pointer-workload', json.dumps(command)],
+                             stdout=subprocess.PIPE, text=True)
+    if request.returncode:
+        raise SystemExit(request.returncode)
+    data = json.loads(request.stdout)
     args.output.write_text(json.dumps(data, indent=2)+'\n')
 if 'Error' in data:
     raise SystemExit(data['Error'])

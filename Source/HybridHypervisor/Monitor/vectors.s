@@ -7,6 +7,8 @@
 .set CTX_DF, 280
 .set CTX_RS_TOP, 296
 .set CTX_RFLAGS_SYS, 304
+.set CTX_CODE_GEN, 30680 // engine_abi.h asserts both
+.set CTX_CODE_SYNCED, 30688
 .set SVC_LOOKUP_MISS, 4
 .set SVC_REP_PAGE, 71
 .set HASH_MASK, 0xFFFF
@@ -114,6 +116,9 @@ _mon_enter_guest:
     ldp x26, x27, [x18, #208]
     ldp x28, x29, [x18, #224]
     ldr x30, [x18, #240]
+    // ERET alone does not discard instructions an H15 core fetched before
+    // another vCPU's write: relinks, lookups and stale-fetch retries return here.
+    isb
     eret
 
 // A stop that came back: start over on an empty stack, whatever depth the monitor stopped at.
@@ -168,6 +173,21 @@ _stub_lookup:
     cbz x20, 2f
     eor x20, x20, x16
     cbnz x20, 3f
+    cbz x22, 2f // a matching key whose value isn't there: let the monitor resolve it, never branch to 0
+    // A hit may be code another vCPU or the host published after this vCPU last
+    // synchronized. Only its own ISB makes its fetch of that code current: Apple M3
+    // (H15) cores otherwise run instructions fetched before the write. The host
+    // bumps code_gen before publishing; reading it with an address dependency on
+    // the value keeps it from being read before the entry. No NZCV change.
+    eor x23, x22, x22
+    add x23, x18, x23
+    ldr x17, [x23, #CTX_CODE_GEN]
+    ldr x23, [x18, #CTX_CODE_SYNCED]
+    eor x23, x23, x17
+    cbnz x23, 4f
+    ret
+4:  str x17, [x18, #CTX_CODE_SYNCED]
+    isb
     ret
 3:  add w17, w17, #1
     and w17, w17, #HASH_MASK

@@ -741,7 +741,7 @@ public final class Engine {
                 engine_ctx_set_irq_line(c, false)
                 let line = machine?.hasInterruptWaiting() ?? false
                 if line { engine_ctx_set_irq_line(c, true) }
-                if line && c.pointee.irq_pending == 0 && c.pointee.rflags_sys & 0x200 != 0 {
+                if c.pointee.req_a.0 != 0 && line && c.pointee.irq_pending == 0 && c.pointee.rflags_sys & 0x200 != 0 {
                     if let vector = machine?.acknowledgeInterrupt() { c.pointee.req_r.0 = UInt64(vector) }
                     engine_ctx_set_irq_line(c, false)
                     if machine?.hasInterruptWaiting() ?? false { engine_ctx_set_irq_line(c, true) }
@@ -755,7 +755,7 @@ public final class Engine {
             return try stopReport()
         case Int(HC_CODE_FETCH_RETRY):
             let a = c.pointee.req_a
-            let message = "hvdbt: vCPU \(cpuIndex) synchronizing translated block entry after Unknown instruction; arm-pc \(hex(a.0)) x86-rip \(hex(a.1)) retry \(a.2)\n"
+            let message = "hvdbt: vCPU \(cpuIndex) re-fetching translated code after a stale Unknown instruction; arm-pc \(hex(a.0)) x86-rip \(hex(a.1)) retry \(a.2)\n"
             FileHandle.standardError.write(Data(message.utf8))
         default:
             throw EngineError.stop("unknown host call \(code)")
@@ -806,7 +806,11 @@ public final class Engine {
             // In any dump that follows, the registers are the monitor's at the fault, and the rip is the last boundary or fallback.
             let instruction = a.5 & (1 << 32) != 0 ?
                 String(format: " arm-word 0x%08x", UInt32(truncatingIfNeeded: a.5)) : ""
-            throw EngineError.stop("monitor fault: esr \(hex(a.2)) far \(hex(a.3)) elr \(hex(a.4))\(instruction), the registers below are the monitor's, not the guest's")
+            // The translated code's ARM registers, as saved on the faulting entry: where a bad branch came from (x30), the
+            // lookup's result and probe (x22, x16, x17, x20, x23) and the shadow return stack (x26).
+            let x = withUnsafeBytes(of: ctx.pointee.x) { Array($0.bindMemory(to: UInt64.self)) }
+            let arm = [16, 17, 20, 22, 23, 26, 30].map { "x\($0) \(hex(x[$0]))" }.joined(separator: " ")
+            throw EngineError.stop("monitor fault: esr \(hex(a.2)) far \(hex(a.3)) elr \(hex(a.4))\(instruction); arm \(arm), the registers below are the monitor's, not the guest's")
         case Int(STOP_UNSUPPORTED):
             throw EngineError.stop("unsupported case \(a.2) at x86 rip \(hex(rip)): \(hex(a.3)) \(hex(a.4))")
         case Int(STOP_TRIPLE_FAULT):

@@ -12,7 +12,7 @@
 #include "../tools/opengl-support-revision.h"
 static NSString *const GuestTools=@"/Library/Application Support/Virtual Intel Mac/GuestTools";
 static NSError *SetupError(NSString *message){return [NSError errorWithDomain:@"VirtualIntelMac.OpenGLSetup" code:1 userInfo:@{NSLocalizedDescriptionKey:message}];}
-static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
+static NSDictionary *BundledGraphics(NSURL *support,NSString *guest,NSError **error) {
     NSMutableDictionary *digests=[NSMutableDictionary new];
     NSDictionary *names=@{@"EngineSHA256":@"GLEngine",@"BackendSHA256":@"libVIMPassthroughOpenGL.dylib"};
     for(NSString *key in names) {
@@ -22,7 +22,7 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
         NSMutableString *text=[NSMutableString new];for(NSUInteger i=0;i<sizeof(digest);i++)[text appendFormat:@"%02x",digest[i]];
         digests[key]=text;
     }
-    digests[@"GraphicsSupportRevision"]=@(VIM_OPENGL_SUPPORT_REVISION);
+    digests[@"GraphicsSupportRevision"]=@(VIMOpenGLSupportRevision(guest));
     return digests;
 }
 @interface VIMOpenGLSetup ()
@@ -100,7 +100,7 @@ static NSDictionary *BundledGraphics(NSURL *support,NSError **error) {
         // desktop/frame/clipboard polling path. Reuse the guest's existing
         // recovery hashes; there is no new payload seal or generated manifest.
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
-            NSError *error=nil;NSDictionary *expected=BundledGraphics(self.bundledSupport,&error);
+            NSError *error=nil;NSDictionary *expected=BundledGraphics(self.bundledSupport,self.machine.guest,&error);
             dispatch_async(dispatch_get_main_queue(),^{
                 if(!expected){completion(nil,error);return;}
                 self.bundledGraphics=expected;[self checkBundledGraphics:report completion:completion];

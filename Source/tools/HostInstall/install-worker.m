@@ -2120,7 +2120,7 @@ static void StageSupport(VIMInstallTarget *target,NSURL *support,NSDictionary *o
         @"PreviousEngineSHA256":nativeHash,@"EngineSHA256":Digest(engine),@"BackendSHA256":Digest(gl),
         @"GASHA256":Digest(gaBytes),@"GAInfoSHA256":Digest(infoBytes),@"Phase":@"installed",@"ChangedThisBoot":@NO,
         @"PrebootInstall":@YES,@"DesktopQualified":@NO,
-        @"GraphicsSupportRevision":@(VIM_OPENGL_SUPPORT_REVISION)}];
+        @"GraphicsSupportRevision":@(VIMOpenGLSupportRevision(guest))}];
     if(graphics[@"DispatchCount"])evidence[@"NativeDispatchCount"]=graphics[@"DispatchCount"];
     [target plist:[state stringByAppendingPathComponent:@"Graphics.plist"] value:evidence mode:0600];
     if(!tiger){

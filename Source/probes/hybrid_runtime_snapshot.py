@@ -5,11 +5,13 @@ writes, breakpoints or recurring sampling. Explicitly detach after the command:
 
   lldb -b -p PID \
     -o 'command script import /absolute/path/hybrid_runtime_snapshot.py' \
-    -o 'vim-hybrid-snapshot /absolute/new-snapshot.json' \
+    -o 'vim-hybrid-snapshot [--events] /absolute/new-snapshot.json' \
     -o 'process detach' -o quit
 
 Compare snapshots from the same emulator session. Attaching perturbs scheduling;
 counter deltas bracket a workload, but are not an unprofiled latency benchmark.
+The optional event rings are bounded observations of what the engine did;
+they do not include events delivered by plain TCG.
 """
 import ctypes
 import json
@@ -66,8 +68,11 @@ def snapshot(debugger, command, result, internal_dict):
     del internal_dict
     try:
         args = shlex.split(command)
+        include_events = '--events' in args
+        if include_events:
+            args.remove('--events')
         if len(args) != 1 or not Path(args[0]).is_absolute():
-            raise ValueError('usage: vim-hybrid-snapshot /absolute/new-snapshot.json')
+            raise ValueError('usage: vim-hybrid-snapshot [--events] /absolute/new-snapshot.json')
         target = debugger.GetSelectedTarget()
         process = target.GetProcess()
         if process.GetState() != lldb.eStateStopped:
@@ -98,6 +103,22 @@ def snapshot(debugger, command, result, internal_dict):
             # not a counter or proof that this instruction consumed the run.
             cpus[-1]['State'] = fields(context, ('cr0', 'cr3', 'cr4', 'cpl',
                 'compat', 'seg_bad', 'mxcsr', 'view', 'elr', 'far', 'esr'))
+            if include_events:
+                for index_name, array_name in (('event_next', 'events'),
+                                               ('user_pf_next', 'user_pf')):
+                    total = counter(context.GetChildMemberWithName(index_name))
+                    ring = context.GetChildMemberWithName(array_name)
+                    size = ring.GetNumChildren()
+                    if not size:
+                        raise ValueError('unavailable engine event ring: ' + array_name)
+                    names = ('rip', 'a', 'cr3', 'vector')
+                    if array_name == 'events':
+                        names += ('kind',)
+                    # Store the original monotonic write index so multiple
+                    # stopped reads can distinguish overlap from wraparound.
+                    rows = [{'index': index, **fields(ring.GetChildAtIndex(index % size), names)}
+                            for index in range(max(0, total - size), total)]
+                    cpus[-1][array_name] = {'total': total, 'rows': rows}
             # Optional appended diagnostics: old qualified binaries remain readable.
             for name in ('profile_shift_helpers', 'stat_shift_helpers_unclassified', 'stat_shift_helpers',
                          'profile_x87_helpers', 'stat_x87_helpers_unclassified', 'stat_x87_helpers',

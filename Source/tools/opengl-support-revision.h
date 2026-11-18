@@ -1,4 +1,11 @@
 #pragma once
-/* Monotonic shipping graphics-support revision. Bump with owned guest-library
- * changes, not for UI-only builds or rebuilt binaries with identical code. */
-#define VIM_OPENGL_SUPPORT_REVISION 12
+#import <Foundation/Foundation.h>
+
+/* Validate library upgrades per guest family. Unchanged guests should not
+ * restage their support or restart when another family's engine changes. */
+static inline unsigned VIMOpenGLSupportRevision(NSString *guest)
+{
+    if([guest isEqualToString:@"tiger"]||[guest isEqualToString:@"leopard"]||
+       [guest isEqualToString:@"snowleopard"])return 13;
+    return 12;
+}

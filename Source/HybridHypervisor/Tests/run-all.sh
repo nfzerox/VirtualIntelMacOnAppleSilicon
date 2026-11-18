@@ -51,6 +51,14 @@ else
     fail=1
 fi
 rm -f "$policy/note-rescans"
+if python3 "$here/test-page-rep.py" --emit-c "$policy/page-rep.c" && \
+    clang -O2 -Wall -Wextra "$policy/page-rep.c" -o "$policy/page-rep" && "$policy/page-rep"; then
+    echo "pass page REP and interrupt-shadow retry"
+else
+    echo "FAIL page REP and interrupt-shadow retry"
+    fail=1
+fi
+rm -f "$policy/page-rep" "$policy/page-rep.c" "$policy/page-rep.json"
 rmdir "$policy"
 
 check_same() { # name image [args]

@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import "../VirtualIntelMac/VIMOpenGLRestartEvidence.h"
+#import "../tools/opengl-support-revision.h"
 #include <assert.h>
 int main(void){@autoreleasepool {
     NSUserDefaults *preferences=[[NSUserDefaults alloc] initWithSuiteName:NSUUID.UUID.UUIDString];
@@ -45,6 +46,11 @@ int main(void){@autoreleasepool {
     assert(VIMOpenGLBundledSupportMatches(@"lion",report,versioned)); // no rebuild churn
     graphics[@"GraphicsSupportRevision"]=@12;
     assert(VIMOpenGLBundledSupportMatches(@"lion",report,versioned)); // no downgrade
+    for(NSString *guest in @[@"tiger",@"leopard",@"snowleopard",@"lion",@"mavericks",@"highsierra"]){
+        NSDictionary *bundled=@{@"GraphicsSupportRevision":@(VIMOpenGLSupportRevision(guest))};
+        BOOL affected=[@[@"tiger",@"leopard",@"snowleopard"] containsObject:guest];
+        assert(VIMOpenGLBundledSupportMatches(guest,report,bundled)==!affected);
+    }
     [graphics removeObjectForKey:@"GraphicsSupportRevision"];
     NSDictionary *ack=@{@"MachineIdentifier":@"machine",@"RequestState":@"acknowledged",@"FromBootSessionUUID":old,@"GuestReport":before};
     assert(VIMOpenGLGraphicsNeedsRestart(report,nil,now));

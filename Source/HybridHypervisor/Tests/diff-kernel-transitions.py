@@ -20,7 +20,8 @@ def main():
                         str(here/'x86/compat/boot.s'), '-o', str(work/'boot.o')], check=True)
         subprocess.run(['python3', str(here/'x86/compat/link32.py'), '0xF0000',
                         str(work/'boot.bin'), str(work/'boot.o')], check=True)
-        for fixture in ('descriptor-widths', 'kernel-far-jumps', 'kernel-far-null-stack'):
+        for fixture in ('descriptor-widths', 'kernel-far-jumps', 'kernel-far-null-stack',
+                        'irq-shadow-fallback'):
             subprocess.run(['zsh', str(here/'build-cross-key-jumps.sh'),
                             str(work), fixture], check=True)
             subprocess.run(['python3', str(here/'x86/compat/mkqemu.py'),
@@ -38,15 +39,24 @@ def main():
             outputs = []
             for hybrid in (False, True):
                 console = work/('hybrid.out' if hybrid else 'tcg.out')
+                env = {**os.environ, 'LC_HVDBT': str(int(hybrid))}
+                tally = work/f'{fixture}.tally'
+                check_shadow = hybrid and fixture == 'kernel-far-null-stack'
+                check_sysexit = hybrid and fixture == 'irq-shadow-fallback'
+                if check_shadow or check_sysexit:
+                    env['LC_HVDBT_TALLY'] = str(tally)
                 run = subprocess.run(args + ['-chardev', f'file,id=con,path={console}'],
-                    env={**os.environ, 'LC_HVDBT': str(int(hybrid))},
-                    capture_output=True, timeout=30)
+                    env=env, capture_output=True, timeout=30)
                 output = console.read_bytes()
                 # isa-debug-exit encodes guest status zero as process status 1.
                 if run.returncode != 1 or (hybrid and
                         b'hvdbt: the engine takes over' not in run.stderr):
                     raise RuntimeError(f'{fixture}, hybrid={hybrid}: exit {run.returncode}\n'
                                        + (output + run.stderr).decode(errors='replace'))
+                if check_shadow and b'refused: interrupt shadow' not in tally.read_bytes():
+                    raise RuntimeError(f'{fixture}: handoff did not preserve the MOV SS shadow')
+                if check_sysexit and b'entering compatibility mode with a segment only TCG runs' not in tally.read_bytes():
+                    raise RuntimeError(f'{fixture}: protected SYSEXIT did not exercise TCG fallback')
                 outputs.append(output)
             if outputs[0] != outputs[1] or b'PASS ' not in outputs[1]:
                 raise RuntimeError(f'{fixture}: different or incomplete transcripts: {outputs!r}')

@@ -35,6 +35,7 @@ static u32 pc_map_used[2] = {0, (OFF_PCMAP2 - OFF_PCMAP) / sizeof(PcMap)};
 static u32 *cc_cursor[2];
 int cur_part;
 static EngineCtx *ctx_ptr;
+static void code_published(void);
 
 typedef struct {
     u64 rip;
@@ -781,6 +782,7 @@ static bool reuse_dead_block(u32 key, int cpl, u64 rip, TrResult *res) {
     if (!__atomic_compare_exchange_n(entry, &dead, hb->first_word, false, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED))
         return reuse_rejected(TR_REUSE_ENTRY_CAS); // something that ran into it has since been sent on to a newer block, for good
     sys_icache_invalidate(entry, 4);
+    code_published();
     hb->dead = false;
     u32 idx = it - 1;
     if (!hb->on_frame) {
@@ -1062,10 +1064,6 @@ static TrResult do_translate(int key, int view, u64 cr3, int cpl, u64 rip, bool 
         }
     }
 
-    // Finish instruction-cache maintenance before publishing this body in
-    // any lookup or in the monitor's address-to-block directory.
-    sys_icache_invalidate(start, (u8 *)tr_cc - (u8 *)start);
-
     // Registers the block.
     u32 idx = BLOCK_BASE(cur_part) + hblock_count[cur_part]++;
     HostBlock *hb = &hblocks[idx];
@@ -1097,6 +1095,8 @@ static TrResult do_translate(int key, int view, u64 cr3, int cpl, u64 rip, bool 
     ctx_ptr->block_count = hblock_count[0];
     ctx_ptr->block_count_private = hblock_count[1];
     cc_cursor[cur_part] = tr_cc;
+    sys_icache_invalidate(start, (u8 *)tr_cc - (u8 *)start);
+    code_published();
     stats.blocks++;
     stats.words += tr_cc - start;
     stats.exit_words += (u64)(tr_cc - tail);
@@ -1531,6 +1531,7 @@ void tr_lookup_tail(uint64_t site, uint64_t target) {
     br(S2);
     cc_cursor[cur_part] = tr_cc;
     sys_icache_invalidate(tail, (u8 *)tr_cc - (u8 *)tail);
+    code_published();
     i64 d = tail - s;
     if (__atomic_compare_exchange_n(s, &was, (call ? 0x94000000u : 0x14000000u) | ((u32)d & 0x3ffffff), false, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
         sys_icache_invalidate(s, 4);
@@ -1873,6 +1874,23 @@ void tr_flush_all(void) {
     tr_flush_parked(false);
 }
 
+// After new code is written and its cache maintenance done, before any lookup or
+// link can lead another vCPU there: see EngineCtx.code_gen. Under the translator lock.
+static void code_published(void) {
+    static u64 generation;
+    u64 g = ++generation;
+    for (u64 i = 0; i < MAX_VCPUS; i++)
+        __atomic_store_n(&((EngineCtx *)(cfg.priv + OFF_CTX + i * CTX_SLOT))->code_gen, g, __ATOMIC_RELAXED);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST); // before a hash key or an existing key's new value
+}
+
+static void clear_code(u32 *from, u32 *to) {
+    if (to <= from)
+        return;
+    memset(from, 0, (size_t)((u8 *)to - (u8 *)from));
+    sys_icache_invalidate(from, (size_t)((u8 *)to - (u8 *)from));
+}
+
 void tr_flush_parked(bool everything) {
     everything = everything || part_full(0);
     ctx_ptr->tr_flushed = 1;
@@ -1885,6 +1903,13 @@ void tr_flush_parked(bool everything) {
         memset(hash_table(v), 0, HASH_BYTES);
     memset(hash_slots_used, 0, sizeof hash_slots_used);
     membership_clear_all(); // Both full and private-part flushes empty ALL view hashes before any block index is reused.
+    // Return the reused span to zeros (UDF). A core may prefetch past the
+    // cursor before the next translation lands there, and with old code left
+    // in place that stale fetch would run silently. A zero traps, and the
+    // monitor retries it once after synchronizing.
+    clear_code(cc_base + CC_PART2_WORD, cc_cursor[1]);
+    if (everything)
+        clear_code(cc_base, cc_cursor[0]);
     cc_cursor[1] = cc_base + CC_PART2_WORD;
     hblock_count[1] = 0;
     pc_map_used[1] = (OFF_PCMAP2 - OFF_PCMAP) / sizeof(PcMap);

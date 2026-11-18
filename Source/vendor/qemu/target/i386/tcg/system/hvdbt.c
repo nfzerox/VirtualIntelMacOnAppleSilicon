@@ -69,7 +69,7 @@ typedef struct {
     bool tcg_ran; /* normal TBs have been generated: engine writes may have made them stale, and nothing tells TCG */
     bool fallback_quantum;
     unsigned fallback_left;
-    bool transition_guard; /* i386 selector fallback, checked at every TB */
+    bool transition_guard; /* temporary selector/interrupt state, checked at every TB */
     /* Pages TCG wrote since DIRTY_MEMORY_CODE was last cleared for them. Only the vCPU thread touches this. */
     HvdbtWriteSpan written;
     bool protect_all;
@@ -407,9 +407,11 @@ static uint32_t hvdbt_seg_bad(CPUX86State *env)
 static void hvdbt_put_state(CPUState *cs)
 {
     CPUX86State *env = cpu_env(cs);
-    EngineX86State s;
+    /* TCG owns the architectural state here. Every input to engine_set_state
+     * is populated below; the engine's internal APIC state stays in place.
+     * Don't read the old FPSR and 16 SIMD registers just to overwrite them. */
+    EngineX86State s = { 0 };
 
-    engine_get_state(HV(cs)->engine, &s);
     memcpy(s.gpr, env->regs, sizeof s.gpr);
     {
         APICCommonState *apic = X86_CPU(cs)->apic_state;
@@ -546,7 +548,8 @@ static void hvdbt_get_state(CPUState *cs)
     env->segs[R_FS].base = s.fs_base;
     env->segs[R_GS].base = s.gs_base;
     x86_update_hflags(env);
-    env->hflags &= ~HF_INHIBIT_IRQ_MASK;
+    env->hflags = (env->hflags & ~HF_INHIBIT_IRQ_MASK) |
+        (s.irq_shadow ? HF_INHIBIT_IRQ_MASK : 0);
 
     cpu_set_mxcsr(env, s.mxcsr);
     for (int i = 0; i < 16; i++) {
@@ -795,21 +798,27 @@ static bool hvdbt_want_engine(CPUState *cs, vaddr pc, uint32_t flags)
         exit(EXIT_FAILURE);
     }
     char why[sizeof cpu->refused];
-    bool selector_transition = false;
+    bool guarded_transition = false;
     why[0] = 0;
-    if (!(flags & HF_CS64_MASK)) {
+    if (flags & HF_INHIBIT_IRQ_MASK) {
+        /* The input ABI contains RFLAGS but not TCG's one-instruction
+         * interrupt shadow. Finish the protected instruction in TCG
+         * rather than admitting IRQs early on return to the engine. */
+        snprintf(why, sizeof why, "refused: interrupt shadow");
+        guarded_transition = true;
+    } else if (!(flags & HF_CS64_MASK)) {
         const SegmentCache *cseg = &env->segs[R_CS], *sseg = &env->segs[R_SS];
         if (!(flags & HF_LMA_MASK)) {
             snprintf(why, sizeof why, "refused: not in long mode");
         } else if (!(flags & HF_CS32_MASK) || !(flags & HF_SS32_MASK)) {
             snprintf(why, sizeof why, "refused: 16-bit code or stack");
-            selector_transition = (flags & HF_CS32_MASK) && !(flags & HF_CPL_MASK);
+            guarded_transition = (flags & HF_CS32_MASK) && !(flags & HF_CPL_MASK);
         } else if ((flags & HF_CPL_MASK) != 0 && (flags & HF_CPL_MASK) != 3) {
             snprintf(why, sizeof why, "refused: compatibility mode in ring 1 or 2");
         } else if (cseg->base || cseg->limit != 0xffffffff || sseg->base || sseg->limit != 0xffffffff || (sseg->flags & DESC_E_MASK) ||
                    engine_compat_segments_bad(hvdbt_seg_bad(env),flags & HF_CPL_MASK)) {
             snprintf(why, sizeof why, "refused: compatibility mode, non-flat segments");
-            selector_transition = true;
+            guarded_transition = true;
         }
     }
     if (why[0]) {
@@ -836,7 +845,7 @@ static bool hvdbt_want_engine(CPUState *cs, vaddr pc, uint32_t flags)
          * validates actual decoded bytes before every unchained execution.
          * Keep this ownership through the temporary state, then return to
          * the engine without a global TB flush/exclusive stop on every copy. */
-        if (cpu->engine && selector_transition) {
+        if (cpu->engine && guarded_transition) {
             cpu->transition_guard = true;
         }
         if (!cpu->transition_guard) {
@@ -911,7 +920,7 @@ static void hvdbt_prepare_step(CPUState *cs)
     unsigned instructions = 1;
 
     TranslateForDebugResult page;
-    if ((env->hflags & HF_CS64_MASK) &&
+    if ((env->hflags & HF_CS64_MASK) && !(env->hflags & HF_INHIBIT_IRQ_MASK) &&
         cpu_translate_for_debug(cs, env->eip & TARGET_PAGE_MASK, &page)) {
         uint64_t off = page.physaddr >= HIGH_RAM ? page.physaddr - HIGH_RAM + hv.below_4g : page.physaddr;
         if ((page.physaddr >= HIGH_RAM || page.physaddr < hv.below_4g) && off < hv.ram_bytes) {

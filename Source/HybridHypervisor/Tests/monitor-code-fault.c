@@ -16,13 +16,13 @@ int main(void) {
     assert(!engine_capture_code_fault(0,a,b,sizeof first));
     assert(!engine_capture_code_fault(UINT64_MAX,a,b,sizeof first));
     assert(!engine_capture_code_fault(a,a,b,0));
-    uint64_t nop = valid | ENGINE_ARM_BLOCK_NOP;
-    assert(engine_code_fetch_can_retry(ENGINE_ARM_UNKNOWN_A64,nop,true,a,0,0));
-    assert(!engine_code_fetch_can_retry(0,nop,true,a,0,0));
-    assert(!engine_code_fetch_can_retry(ENGINE_ARM_UNKNOWN_A64,valid,true,a,0,0));
-    assert(!engine_code_fetch_can_retry(ENGINE_ARM_UNKNOWN_A64,0,true,a,0,0));
-    assert(!engine_code_fetch_can_retry(ENGINE_ARM_UNKNOWN_A64,nop,false,a,0,0));
-    assert(!engine_code_fetch_can_retry(ENGINE_ARM_UNKNOWN_A64,nop,true,a,a,1));
-    assert(!engine_code_fetch_can_retry(ENGINE_ARM_UNKNOWN_A64,nop,true,a,b,ENGINE_CODE_FETCH_RETRY_LIMIT));
-    puts("PASS bounded fault words and narrow A64 block-entry cache retry policy");
+    uint64_t nop = valid | UINT32_C(0xd503201f), branch = valid | UINT32_C(0x17e82c40);
+    // Any owned translated word, not only an entry NOP: M3 stale fetches also hit B and MOVN.
+    assert(engine_code_fetch_can_retry(ENGINE_ARM_UNKNOWN_A64,nop,a,0));
+    assert(engine_code_fetch_can_retry(ENGINE_ARM_UNKNOWN_A64,branch,a+4,a));
+    assert(engine_code_fetch_can_retry(ENGINE_ARM_UNKNOWN_A64,valid,a,b)); // a stale UDF read back as UDF still gets its one retry
+    assert(!engine_code_fetch_can_retry(0,nop,a,0));
+    assert(!engine_code_fetch_can_retry(ENGINE_ARM_UNKNOWN_A64,0,a,0)); // outside the code cache
+    assert(!engine_code_fetch_can_retry(ENGINE_ARM_UNKNOWN_A64,nop,a,a)); // the retry faulted again: a real bad word
+    puts("PASS bounded fault words and one re-fetch per translated ARM PC");
 }

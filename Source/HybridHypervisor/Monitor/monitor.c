@@ -51,7 +51,8 @@ typedef struct {
     u64 rs_saved[MAX_VIEWS]; // where this vCPU's return stack stood when it left each view. 0: not been there yet
     u32 lock_depth, rs_epoch;
     u64 smc_held; // frame + 1: this vCPU's one-off store to a code frame hasn't run yet, so nobody may protect that frame again
-    bool shadow_stepping; // stepping the instruction in sti's shadow: an interrupt arriving before its first word has run must not end the shadow
+    u64 shadow_step_rip;
+    bool shadow_stepping; // stepping an x86 instruction in the interrupt shadow, not just its first ARM word
     bool tracked_new; // a fill just started protecting a guest table, so what it read of that table may predate the protection
     u32 pin[3]; // view index + 1 of the current address space, by CPL 0 or 3, then the CPL 0 one before: a kernel with its own page tables crosses between two at every syscall. Eviction leaves these alone, so none of those crossings needs the lock
     u32 xfl;
@@ -2187,6 +2188,8 @@ static void deliver(u32 vector, u32 err, bool has_err, u64 ret_rip, bool sw_int)
         shim_fault(vector, err, ret_rip, c->far);
         return;
     }
+    c->irq_shadow_rip = ~0ULL;
+    me->shadow_stepping = false;
     event_delivered = true;
     c->stat_vector[vector & 255]++;
     c->vector_last_rip[vector & 255] = ret_rip;
@@ -2369,6 +2372,7 @@ static void host_resync(void) {
             c->x[i] = (u32)c->x[i];
     view_switch(cr3_key(c->cr3), view_mode());
     c->irq_shadow_rip = ~0ULL;
+    me->shadow_stepping = false;
     deliver_depth = 0;
     if (c->tr_flushed) { // the code cache was reset while this vCPU was out: its return stacks hold old addresses
         c->tr_flushed = 0;
@@ -2378,7 +2382,14 @@ static void host_resync(void) {
     c->elr = translate_here(c->req_r[0], 0, 0, false);
 }
 
-static void exit_check(void);
+static void sync_host_irq(bool can_acknowledge) {
+    c->req_a[0] = can_acknowledge;
+    hostcall(HC_IRQ);
+    if (c->req_r[0] != ~0ULL)
+        c->irq_pending = (u32)c->req_r[0] + 1;
+}
+
+static void exit_check(bool after_sync_progress, bool refresh_host_irq);
 
 // Reached through mon_restart with the monitor's stack reset: a stop abandons whatever called it.
 void mon_after_stop(void) {
@@ -2387,12 +2398,12 @@ void mon_after_stop(void) {
         host_resync();
     }
     deliver_depth = 0;
-    exit_check();
+    exit_check(false, false);
 }
 
 // Called on every way out of the monitor. If an interrupt is due and the pc is at an x86 boundary, take it. Otherwise step ARM
 // instructions until it is: one trap per ARM word, only while an interrupt waits. Costs nothing when none does.
-static void exit_check(void) {
+static void exit_check(bool after_sync_progress, bool refresh_host_irq) {
     stack_check();
 again:
     if (__atomic_load_n(&rs_epoch_shared, __ATOMIC_RELAXED) != me->rs_epoch) { // shortcut: one load, and at one vCPU it never differs
@@ -2401,6 +2412,8 @@ again:
     }
     step_off();
     if (pt_step_slot) {
+        if (refresh_host_irq)
+            sync_host_irq(false);
         step_on();
         return;
     }
@@ -2411,22 +2424,39 @@ again:
         shadow_drop_all();
         mon_unlock();
     }
-    if (c->hybrid) {
+    if (c->hybrid)
         notes_drain();
-        if (c->irq_line && !c->irq_pending && (c->rflags_sys & RF_IF)) {
-            hostcall(HC_IRQ); // level-triggered in QEMU's APIC: IF has opened since the line rose
-            if (c->req_r[0] != ~0ULL)
-                c->irq_pending = (u32)c->req_r[0] + 1;
-        }
-    }
     bool stop_now = c->stop_requested;
     u32 apic_vector = 0;
-    if (c->rflags_sys & RF_IF)
+    bool if_open = c->rflags_sys & RF_IF;
+    if (if_open)
         apic_vector = apic_ready_vector();
-    if (!stop_now && !apic_vector && (!c->irq_pending || !(c->rflags_sys & RF_IF)))
+    bool waiting = if_open && (apic_vector || c->irq_pending || (c->hybrid && c->irq_line));
+    if (!stop_now && !waiting && !me->shadow_stepping && !(if_open && refresh_host_irq)) {
+        if (refresh_host_irq)
+            sync_host_irq(false);
         return; // none waiting, or masked: sti, popf and iret come back through here
+    }
     bool exact, found;
     u64 rip = rip_of_pc(c->elr, &exact, &found);
+    if (me->shadow_stepping) {
+        if (me->shadow_step_rip != c->irq_shadow_rip) {
+            me->shadow_stepping = false; // the protected instruction established a new shadow
+        } else if (after_sync_progress && found && exact) {
+            c->irq_shadow_rip = ~0ULL;
+            me->shadow_stepping = false;
+        }
+    }
+    // Do not dequeue an interrupt before a complete x86 boundary. In the
+    // shadowed fallback case the pending vector must stay visible to TCG.
+    bool can_acknowledge = !stop_now && if_open && found && exact && rip != c->irq_shadow_rip;
+    if (refresh_host_irq || (c->hybrid && can_acknowledge && !c->irq_pending && c->irq_line)) {
+        sync_host_irq(can_acknowledge);
+        refresh_host_irq = false;
+    }
+    waiting = if_open && (apic_vector || c->irq_pending || (c->hybrid && c->irq_line));
+    if (!stop_now && !waiting)
+        return;
     if (found && exact) {
         if (stop_now && rip != c->irq_shadow_rip) { // the host wants the vCPU at an x86 boundary, with all state in place. Not inside sti's shadow, which resuming would lose: the next boundary will do
             c->stop_requested = 0;
@@ -2439,13 +2469,18 @@ again:
                 event_delivered = false;
                 c->elr = translate_here(c->req_r[0], 0, 0, false);
             }
+            after_sync_progress = false;
             goto again;
         }
         if (rip != c->irq_shadow_rip) {
+            if (!waiting || (!apic_vector && !c->irq_pending))
+                return;
             irq_deliver_now(rip, apic_vector);
+            after_sync_progress = false;
             goto again;
         }
         me->shadow_stepping = true; // the instruction after sti runs first
+        me->shadow_step_rip = rip;
     }
     c->stat_steps++;
     step_on();
@@ -2791,7 +2826,9 @@ static void do_mov_seg(void) {
         seg_note(sr, got ? d : 0, (u16)sel);
     }
     c->seg_sel[sr] = (u16)sel;
-    if (sr >= SEG_FS && (!null || c->compat))
+    // The exposed CPU is Intel: a null FS/GS load clears the hidden base
+    // even in 64-bit code. Tiger expects this in its return trampoline.
+    if (sr >= SEG_FS)
         c->x[sr == SEG_FS ? R_FS : R_GS] = null ? 0 : desc_base(d);
     if (pop)
         c->x[4] = c->compat ? (u32)(c->x[4] + pop) : c->x[4] + pop;
@@ -3516,49 +3553,40 @@ static void rep_page_service(bool movs) {
 
 #define HLT_POLL_TICKS 2400 // 100 us of the 24 MHz counter
 static bool retry_unknown_code_fetch(void) {
-    // A reported Unknown instruction at the SMP entry NOP may mean that
-    // the instruction and data views of the translated code diverged.
-    // Re-synchronize the actual execution VA and retry this exact ARM PC.
-    // Unrecognized words, non-entry addresses and repeated faults are fatal.
-    if (!c->hybrid || !smp || c->esr != ENGINE_ARM_UNKNOWN_A64 ||
-        pt_step_slot || me->shadow_stepping || me->smc_held)
-        return false;
+    // See engine_code_fetch_can_retry: a stale fetch of translated code that
+    // another vCPU has just written. Re-synchronize this executing alias and
+    // run the same ARM PC again; repeating at that PC is a real fault.
     u64 pc = c->elr;
-    BlockEntry *block = find_block(pc);
-    bool entry = block && pc == PRIV_VA + OFF_CC + ((u64)block->arm_off << 2);
-    if (!entry)
-        return false;
     u64 word = engine_capture_code_fault(pc, PRIV_VA + OFF_CC, PRIV_VA + OFF_CC2, CC_SIZE);
-    if (!engine_code_fetch_can_retry(c->esr, word, entry, pc,
-                                    me->code_retry_pc, me->code_retry_count))
+    if (!engine_code_fetch_can_retry(c->esr, word, pc, me->code_retry_pc))
         return false;
     me->code_retry_pc = pc;
-    c->req_a[0] = pc;
-    c->req_a[1] = block->rip;
-    c->req_a[2] = ++me->code_retry_count;
-    hostcall(HC_CODE_FETCH_RETRY);
+    if (++me->code_retry_count <= ENGINE_CODE_FETCH_RETRY_LOGGED) {
+        BlockEntry *block = find_block(pc);
+        c->req_a[0] = pc;
+        c->req_a[1] = block ? block->rip : 0;
+        c->req_a[2] = me->code_retry_count;
+        hostcall(HC_CODE_FETCH_RETRY);
+    }
     code_changed((u32 *)pc);
     return true;
 }
 
 void mon_sync(void) {
     u32 ec = (u32)(c->esr >> 26);
+    u32 n = (u32)c->esr & 0xffff;
     if (ec == 0 && retry_unknown_code_fetch())
         return;
+    me->code_retry_pc = 0; // anything else between two faults at one PC means the first retry got past it
     bool page_movs = false;
-    bool page_rep = ec == 0x15 && ((u32)c->esr & 0xffff) == SVC_REP_PAGE;
+    bool page_rep = ec == 0x15 && n == SVC_REP_PAGE;
     if (page_rep && !rep_page_site(c->elr - 4, &page_movs))
         stop(STOP_MONITOR_FAULT, 0, SVC_REP_PAGE, c->elr, 0);
     if (!page_rep && me->smc_held)
         __atomic_store_n(&me->smc_held, 0, __ATOMIC_RELEASE);
-    if (!page_rep && me->shadow_stepping) { // Internal zero-progress service entries have not executed an x86 element.
-        me->shadow_stepping = false;
-        c->irq_shadow_rip = ~0ULL;
-    }
     if (ec == 0x24) {
         handle_data_abort(true);
     } else if (ec == 0x15) {
-        u32 n = (u32)c->esr & 0xffff;
         c->stat_svc[n & 127]++;
         switch (n) {
             case SVC_REP_PAGE:
@@ -3650,11 +3678,9 @@ void mon_sync(void) {
                         while (!__atomic_load_n(&c->irq_line, __ATOMIC_ACQUIRE) && !__atomic_load_n(&c->stop_requested, __ATOMIC_ACQUIRE) && RSR(cntvct_el0) < until)
                             __asm__ volatile("yield");
                         if (__atomic_load_n(&c->irq_line, __ATOMIC_ACQUIRE)) {
-                            hostcall(HC_IRQ);
-                            if (c->req_r[0] != ~0ULL) {
-                                c->irq_pending = (u32)c->req_r[0] + 1;
+                            sync_host_irq(true); // HLT retires before accepting the wake interrupt
+                            if (c->irq_pending)
                                 c->stat_hlt_polled++;
-                            }
                         }
                     }
                     if (c->irq_pending && (c->rflags_sys & RF_IF)) { // sti; hlt with a vector already in hand: the hlt is over before it starts
@@ -3906,7 +3932,10 @@ void mon_sync(void) {
     } else {
         stop(STOP_MONITOR_FAULT, 0, c->esr, c->far, c->elr);
     }
-    exit_check();
+    // An invalidated block's entry trap relinks the same x86 instruction;
+    // it has not executed even if the new ARM PC is an exact x86 boundary.
+    // A retryable data abort or internal REP service can also make no progress.
+    exit_check(ec == 0x32 || (ec == 0x15 && !page_rep && n != SVC_DEAD), false);
 }
 
 void mon_irq(void) {
@@ -3915,12 +3944,10 @@ void mon_irq(void) {
     // The host raised the virtual IRQ line: a timer expiry, new vectors in the host IRR, an ExtINT, or a request to stop.
     // The timer rearms first, because the host unmasks the virtual timer in this call and an expired compare would fire again.
     apic_timer_check();
-    c->req_a[0] = c->elr;
-    hostcall(HC_IRQ);
-    if (c->req_r[0] != ~0ULL)
-        c->irq_pending = (u32)c->req_r[0] + 1;
+    if (!c->hybrid)
+        sync_host_irq(true);
     apic_merge_host();
-    exit_check();
+    exit_check(false, c->hybrid);
 }
 
 void mon_fiq(void) { stop(STOP_MONITOR_FAULT, 0, 0, 0, c->elr); }
@@ -3955,7 +3982,7 @@ void mon_init(void) {
     fp_trap_sync();
     u64 entry = c->req_a[0];
     c->elr = translate_here(entry, 0, 0, false);
-    exit_check();
+    exit_check(false, false);
     mon_enter_guest();
 }
 

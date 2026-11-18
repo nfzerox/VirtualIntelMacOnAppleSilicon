@@ -307,6 +307,7 @@ extension Engine {
         s.hybrid_apic_page = c.pointee.hybrid_apic_page
         s.hybrid_icr_lo = c.pointee.apic_icr_lo
         s.hybrid_icr_hi = c.pointee.apic_icr_hi
+        s.irq_shadow = s.rip == c.pointee.irq_shadow_rip ? 1 : 0
         s.compat = c.pointee.compat
         s.seg_bad = c.pointee.seg_bad
         s.ldt_base = c.pointee.ldt_base

@@ -112,7 +112,12 @@ static int VIMNativeAccumulationAvailable(void)
  * flags are separately shifted by CGL before calling gliCreateContext. */
 #define VIM_GLI_GL4_FORMAT 0x40000u
 
+/* AppKit first needs this repair on High Sierra. Earlier Rosetta OpenGL
+ * loads this native image into a smaller CoreFoundation namespace, where
+ * even an uncalled Keynote check can make the entire renderer unloadable. */
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 101300
 #include "keynote-screen-compatibility.h"
+#endif
 GLI_EXPORT void gliInitializeLibrary(void *devices,void *plugins,unsigned count,
     void *unbind,void *bind,void *io
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1050
@@ -120,7 +125,9 @@ GLI_EXPORT void gliInitializeLibrary(void *devices,void *plugins,unsigned count,
 #endif
     )
 {
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 101300
     VIMApplyKeynoteScreenCompatibility();
+#endif
     (void)plugins;(void)unbind;(void)io;
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1050
     (void)flags;

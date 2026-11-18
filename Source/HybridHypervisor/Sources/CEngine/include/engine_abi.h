@@ -187,7 +187,7 @@ enum {
     HC_WRMSR, // a[0] msr, a[1] value. r[1] 1 if unhandled
     HC_CPUID, // a[0] leaf, a[1] subleaf. r[0..3] eax,ebx,ecx,edx
     HC_HLT, // guest halted with interrupts possibly enabled. Host returns when an interrupt may be pending.
-    HC_IRQ, // host-injected IRQ arrived; a[0] arm pc. Asks the host for an external vector. r[0] vector or -1
+    HC_IRQ, // refresh the host IRQ line; a[0] allows acknowledging a Hybrid vector. r[0] vector or -1
     HC_APIC_EOI, // a[0] vector: EOI of a level-triggered vector, for the host's IO-APIC
     HC_APIC_ICR, // a[0] icr: an IPI the monitor cannot finish itself
     HC_BOUNDARY, // a[0] x86 rip: the vCPU stopped at an instruction boundary on request. r[0] rip to continue at
@@ -199,7 +199,7 @@ enum {
     HC_PARK, // out of the code cache for a moment, in case another vCPU is resetting it
     HC_VIEW_FORGET, // a[0] view: empty its lookup table, as a slot above a shared directory changed
     HC_CALL_TAIL, // a[0] a cross-key call/jump site, a[1] its x86 target: use a view lookup without repeatedly entering the monitor
-    HC_CODE_FETCH_RETRY, // a[0] ARM pc, a[1] x86 block entry, a[2] attempt number
+    HC_CODE_FETCH_RETRY, // a[0] ARM pc, a[1] x86 block entry or 0, a[2] this vCPU's retry count (only the first few are reported)
 };
 
 // Stop reasons for HC_STOP.
@@ -363,8 +363,20 @@ typedef struct {
     EngineNoteRescanRing note_rescans;
     // vCPU zero publishes the VM's effective FPCR.NEP before translating.
     uint32_t fpcr_merges_scalar;
+    // Code publication generation: the host translator stores a new value in
+    // every vCPU's slot after writing code and before publishing a lookup for it.
+    // code_synced is the last value this vCPU saw before executing ISB in
+    // stub_lookup. A hit runs code another thread wrote, and on Apple M3 (H15)
+    // cores only this vCPU's own ISB discards instructions fetched before that write.
+    uint64_t code_gen __attribute__((aligned(8)));
+    uint64_t code_synced;
 } EngineCtx;
 _Static_assert(sizeof(EngineCtx) <= CTX_SLOT, "EngineCtx must fit its existing per-vCPU slot");
+// Monitor/vectors.s reads these two from x18 with fixed offsets.
+#define CTX_CODE_GEN_OFFSET 30680
+#define CTX_CODE_SYNCED_OFFSET 30688
+_Static_assert(__builtin_offsetof(EngineCtx, code_gen) == CTX_CODE_GEN_OFFSET, "update CTX_CODE_GEN in Monitor/vectors.s");
+_Static_assert(__builtin_offsetof(EngineCtx, code_synced) == CTX_CODE_SYNCED_OFFSET, "update CTX_CODE_SYNCED in Monitor/vectors.s");
 
 // Block table, one entry per translated block, ordered by arm_off because the code cache only grows.
 typedef struct {

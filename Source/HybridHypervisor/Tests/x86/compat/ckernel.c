@@ -353,6 +353,17 @@ static bool on_engine(void) {
 static void expect(const char *name, int test, u64 vector, u64 err);
 
 static void test_entries(void) {
+    // Intel clears the hidden base on an explicit null selector load, even
+    // in 64-bit mode. A stale per-CPU GS base breaks i386 TLS after IRET.
+    u16 null_selector = 0;
+    wrmsr(0xC0000100, GS_AREA);
+    wrmsr(0xC0000101, GS_AREA + 4096);
+    __asm__ volatile("movw %0, %%fs; movw %0, %%gs" : : "r"(null_selector) : "memory");
+    u64 fs = rdmsr(0xC0000100), gs = rdmsr(0xC0000101);
+    CHECK(fs == 0 && gs == 0, "null FS/GS preserved hidden bases %x %x", fs, gs);
+    wrmsr(0xC0000100, 0);
+    wrmsr(0xC0000101, 0);
+
     u64 r = run32(T_INT80, 0);
     CHECK(r == 0, "int status %x", r);
     r = run32(T_SYSENTER, 0);
