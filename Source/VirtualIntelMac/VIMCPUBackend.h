@@ -8,6 +8,21 @@ static inline BOOL VIMCPUUsesEmulation(NSDictionary *configuration,BOOL appleSil
     if(!appleSilicon)return NO; // Intel hosts use native HVF, even for an ARM-created Mac.
     return [VIMCPUBackend(configuration) isEqual:@"tcg"];
 }
+// 2.2.1 Hybrid Hypervisor enforces MAX_VCPUS = 8 and GPA ramTop <= 32 GiB
+// (with Q35 placing 2 GiB below 4 GiB, ramBytes <= 30 GiB = 30720 MiB).
+static const NSUInteger VIMHybridMaximumVCPUs=8;
+static const NSUInteger VIMHybridMaximumMemoryMiB=30*1024;
+static inline NSUInteger VIMMaximumProcessorCount(NSDictionary *configuration,BOOL appleSilicon) {
+    NSUInteger host=MAX((NSUInteger)1,NSProcessInfo.processInfo.processorCount);
+    NSUInteger cap=(appleSilicon&&!VIMCPUUsesEmulation(configuration,appleSilicon))?VIMHybridMaximumVCPUs:64;
+    return MIN(cap,host);
+}
+static inline NSUInteger VIMMaximumMemoryMiB(NSDictionary *configuration,BOOL appleSilicon) {
+    NSUInteger hostMiB=(NSUInteger)MAX(1024ULL,NSProcessInfo.processInfo.physicalMemory/(1024ULL*1024ULL));
+    if(appleSilicon&&!VIMCPUUsesEmulation(configuration,appleSilicon))
+        return MIN(VIMHybridMaximumMemoryMiB,hostMiB);
+    return MIN((NSUInteger)(1024ULL*1024ULL),hostMiB);
+}
 
 // Runtime-only regression comparisons stay in the normally signed app, with
 // its existing privacy identity and document handling. Scope the override to

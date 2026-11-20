@@ -370,8 +370,15 @@ GLI_EXPORT CGLError gliQueryRendererInfo(struct GLIRenderer **out,unsigned mask)
     r->data[11]=VIMRendererMemoryBytes(properties.video_mb);
     r->data[12]=VIMRendererMemoryBytes(properties.texture_mb);
 #else
-    r->data[11]=(uint32_t)properties.video_mb;r->data[12]=(uint32_t)properties.texture_mb;
+    r->data[11]=VIMRendererMemoryMegabytes32(properties.video_mb);
+    r->data[12]=VIMRendererMemoryMegabytes32(properties.texture_mb);
 #endif
+#elif VIM_GLI_DISPATCH_COUNT == 764
+    /* Snow Leopard's GLCompositor converts r->data[17] (MB) into a 32-bit byte
+     * count; saturate to 2047 MB so 4/8/16/24/32/48/64 GB host GPUs never wrap
+     * to < 16 MB and disable WindowServer OpenGL acceleration. */
+    r->data[17]=VIMRendererMemoryMegabytes32(properties.video_mb);
+    r->data[19]=VIMRendererMemoryMegabytes32(properties.texture_mb);
 #else
     r->data[17]=(uint32_t)properties.video_mb;r->data[19]=(uint32_t)properties.texture_mb;
 #endif

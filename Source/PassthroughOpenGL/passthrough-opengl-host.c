@@ -2035,6 +2035,14 @@ static int DGRendererMemory(struct DGHostContext *context,struct DGReply *reply)
     }
     if(info) CGLDestroyRendererInfo(info);
     if(!matched || video<0 || texture<0) { reply->error=GL_INVALID_OPERATION;return 0; }
+    const char *max_vram=getenv("VIM_PASSTHROUGH_OPENGL_MAX_VRAM_MB");
+    if(max_vram && *max_vram) {
+        char *end=NULL;long limit=strtol(max_vram,&end,10);
+        if(end && !*end && limit>0 && limit<=INT32_MAX) {
+            if(video>(GLint)limit)video=(GLint)limit;
+            if(texture>(GLint)limit)texture=(GLint)limit;
+        }
+    }
     reply->result=(uint32_t)video|((uint64_t)(uint32_t)texture<<32);return 0;
 }
 /* Persistent interpreter state is independent of transport and native thread.

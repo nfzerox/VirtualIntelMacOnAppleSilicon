@@ -1,6 +1,7 @@
 #import "VIMLocalization.h"
 #import "VIMGuestFamilies.h"
 #import "VIMNewMachineWindow.h"
+#import "VIMCPUBackend.h"
 #import "VIMMachine.h"
 #import "VIMLibraryLocation.h"
 #import "VIMSession.h"
@@ -465,13 +466,19 @@ static NSString *const VIMDevelopmentTestPassword=@"123456";
         self.status=AssistantText(@"",12,NSFontWeightRegular);self.status.textColor=NSColor.secondaryLabelColor;
         self.configurationStatus=self.status;
         self.systemTitle=AssistantText(VIMLocalized(@"creation.configure-your-mac", @"Configure Your Mac"),27,NSFontWeightSemibold);
+#if defined(__arm64__)
+        BOOL appleSilicon=YES;
+#else
+        BOOL appleSilicon=NO;
+#endif
         NSUInteger hostGiB=NSProcessInfo.processInfo.physicalMemory/(1024ULL*1024*1024);
-        self.memorySlider=[NSSlider sliderWithValue:4 minValue:1 maxValue:MAX(1,MIN(64,hostGiB-1)) target:self action:@selector(memoryChanged:)];
+        NSUInteger maxNewMemoryGiB=MAX((NSUInteger)1,MIN(VIMMaximumMemoryMiB(nil,appleSilicon)/1024,MIN((NSUInteger)64,hostGiB>1?hostGiB-1:1)));
+        self.memorySlider=[NSSlider sliderWithValue:MIN(4,(double)maxNewMemoryGiB) minValue:1 maxValue:maxNewMemoryGiB target:self action:@selector(memoryChanged:)];
         self.memorySlider.numberOfTickMarks=(NSInteger)self.memorySlider.maxValue;
         self.memorySlider.allowsTickMarkValuesOnly=YES;
         [self.memorySlider.widthAnchor constraintEqualToConstant:140].active=YES;self.memorySlider.accessibilityLabel=VIMLocalized(@"creation.memory-in-gigabytes", @"Memory in gigabytes");
         self.memoryField.target=self;self.memoryField.action=@selector(memoryFieldChanged:);
-        self.cpuSlider=[NSSlider sliderWithValue:self.cpuField.doubleValue minValue:1 maxValue:MIN(64,NSProcessInfo.processInfo.processorCount) target:self action:@selector(cpuChanged:)];
+        self.cpuSlider=[NSSlider sliderWithValue:self.cpuField.doubleValue minValue:1 maxValue:VIMMaximumProcessorCount(nil,appleSilicon) target:self action:@selector(cpuChanged:)];
         [self.cpuSlider.widthAnchor constraintEqualToConstant:140].active=YES;
         self.cpuSlider.accessibilityLabel=VIMLocalized(@"creation.number-of-processors", @"Number of processors");self.cpuField.target=self;self.cpuField.action=@selector(cpuFieldChanged:);
         NSStackView *memory=[NSStackView stackViewWithViews:@[self.memorySlider,self.memoryField,[NSTextField labelWithString:@"GB"]]];memory.spacing=8;memory.alignment=NSLayoutAttributeCenterY;

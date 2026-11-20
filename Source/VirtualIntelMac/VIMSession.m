@@ -1149,6 +1149,14 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         cpuConfiguration[@"CPUBackend"]=value;
     }
     BOOL emulation=developmentTCG||VIMCPUUsesEmulation(cpuConfiguration,appleSilicon);
+    NSUInteger configuredCPU=MAX((NSUInteger)1,[config[@"CPUCount"] unsignedIntegerValue]);
+    NSUInteger configuredMemory=MAX((NSUInteger)1024,[config[@"MemoryMiB"] unsignedIntegerValue]);
+    NSUInteger effectiveCPU=(appleSilicon&&!emulation)?MIN(configuredCPU,VIMHybridMaximumVCPUs):configuredCPU;
+    NSUInteger effectiveMemory=(appleSilicon&&!emulation)?MIN(configuredMemory,VIMHybridMaximumMemoryMiB):configuredMemory;
+    if(effectiveCPU!=configuredCPU||effectiveMemory!=configuredMemory)
+        [self.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] Hybrid Hypervisor capped CPU/memory for this boot: %lu cores, %lu MB (configured %lu cores, %lu MB)\n",
+            (unsigned long)effectiveCPU,(unsigned long)effectiveMemory,(unsigned long)configuredCPU,(unsigned long)configuredMemory] dataUsingEncoding:NSUTF8StringEncoding]];
+    memory=[NSString stringWithFormat:@"%lu",(unsigned long)effectiveMemory];
     BOOL earlyAppleXHCI=[@[@"lion",@"mountainlion",@"mavericks",@"yosemite"] containsObject:self.machine.guest];
     NSString *xhciDevice=@"qemu-xhci,id=xhci,bus=pcie.0,addr=0x7";
     // El Capitan binds the 64-bit BAR, but its MSI-X path delays physical
@@ -1162,7 +1170,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         // states to macOS in the first place; pmset sleep=0 remains a second
         // safeguard, rather than the sole defense against an idle timer.
         @"-global",@"ICH9-LPC.disable_s3=1",@"-global",@"ICH9-LPC.disable_s4=1",
-        @"-cpu",cpu,@"-smp",[config[@"CPUCount"] stringValue],@"-m",memory,
+        @"-cpu",cpu,@"-smp",[NSString stringWithFormat:@"%lu",(unsigned long)effectiveCPU],@"-m",memory,
         @"-object",[NSString stringWithFormat:appleSilicon?
             @"memory-backend-shm,id=pvg-ram,size=%@M,share=on":
             @"memory-backend-ram,id=pvg-ram,size=%@M",memory],
@@ -1477,6 +1485,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         environment[@"VIM_PASSTHROUGH_OPENGL_INPROCESS_LIBRARY"]=inprocessLibrary;
         if(!environment[@"VIM_PASSTHROUGH_OPENGL_INLINE"])environment[@"VIM_PASSTHROUGH_OPENGL_INLINE"]=@"1";
         if(!environment[@"VIM_PASSTHROUGH_OPENGL_SURFACE_IMPORT"])environment[@"VIM_PASSTHROUGH_OPENGL_SURFACE_IMPORT"]=@"1";
+        if([@[@"tiger",@"leopard",@"snowleopard"] containsObject:self.machine.guest]&&
+           !environment[@"VIM_PASSTHROUGH_OPENGL_MAX_VRAM_MB"])
+            environment[@"VIM_PASSTHROUGH_OPENGL_MAX_VRAM_MB"]=@"2047";
         if(!environment[@"VIM_DISPLAY_EVENT_DRIVEN"])environment[@"VIM_DISPLAY_EVENT_DRIVEN"]=@"1";
         if(![environment[@"VIM_OPENGL_VRAM_SERVICE"] length])
             environment[@"VIM_OPENGL_VRAM_SERVICE"]=[@"com.mac.virtualintelmac.ram." stringByAppendingString:NSUUID.UUID.UUIDString];

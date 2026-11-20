@@ -373,14 +373,21 @@ static BOOL VIMConfigurationFormLayoutIsValid(NSView *view) {
 - (NSView *)hardware {
     NSDictionary *c=self.machine.editableConfiguration;
     if(self.hardwareIndex==0) {
+#if defined(__arm64__)
+        BOOL appleSilicon=YES;
+#else
+        BOOL appleSilicon=NO;
+#endif
+        NSUInteger maxCores=VIMMaximumProcessorCount(c,appleSilicon);
+        NSUInteger maxMemoryMiB=VIMMaximumMemoryMiB(c,appleSilicon);
         NSPopUpButton *cpu=[NSPopUpButton new];cpu.identifier=@"CPUCount";cpu.target=self;cpu.action=@selector(processorsChanged:);
-        for(NSInteger i=1;i<=NSProcessInfo.processInfo.processorCount;i++)[cpu addItemWithTitle:[NSString stringWithFormat:@"%ld%@",(long)i,i==MIN(4,NSProcessInfo.processInfo.processorCount)?VIMLocalized(@"ui.recommended", @" (Recommended)"):@""]];
-        [cpu selectItemAtIndex:MAX(0,[c[@"CPUCount"] integerValue]-1)];[cpu.widthAnchor constraintEqualToConstant:170].active=YES;self.fields[@"CPUCount"]=cpu;
+        for(NSUInteger i=1;i<=maxCores;i++)[cpu addItemWithTitle:[NSString stringWithFormat:@"%lu%@",(unsigned long)i,i==MIN((NSUInteger)4,maxCores)?VIMLocalized(@"ui.recommended", @" (Recommended)"):@""]];
+        [cpu selectItemAtIndex:MIN((NSInteger)maxCores-1,MAX(0,[c[@"CPUCount"] integerValue]-1))];[cpu.widthAnchor constraintEqualToConstant:170].active=YES;self.fields[@"CPUCount"]=cpu;
         NSTextField *memory=[self field:@"MemoryMiB" value:[c[@"MemoryMiB"] stringValue]];self.memoryValue=memory;
-        NSStepper *stepper=[NSStepper new];stepper.minValue=1024;stepper.maxValue=NSProcessInfo.processInfo.physicalMemory/(1024*1024);stepper.increment=1024;stepper.doubleValue=memory.doubleValue;stepper.target=self;stepper.action=@selector(memoryStepped:);
+        NSStepper *stepper=[NSStepper new];stepper.minValue=1024;stepper.maxValue=maxMemoryMiB;stepper.increment=1024;stepper.doubleValue=MIN(memory.doubleValue,(double)maxMemoryMiB);stepper.target=self;stepper.action=@selector(memoryStepped:);
         NSStackView *memoryRow=[NSStackView stackViewWithViews:@[memory,[NSTextField labelWithString:@"MB"],stepper]];memoryRow.spacing=4;
-        double maxGiB=MAX(1,NSProcessInfo.processInfo.physicalMemory/(1024*1024*1024));
-        self.memorySlider=[NSSlider sliderWithValue:memory.doubleValue/1024 minValue:1 maxValue:maxGiB target:self action:@selector(memorySlid:)];
+        double maxGiB=MAX(1,maxMemoryMiB/1024);
+        self.memorySlider=[NSSlider sliderWithValue:MIN(memory.doubleValue/1024,maxGiB) minValue:1 maxValue:maxGiB target:self action:@selector(memorySlid:)];
         self.memorySlider.continuous=NO;self.memorySlider.numberOfTickMarks=(NSInteger)maxGiB;self.memorySlider.allowsTickMarkValuesOnly=YES;self.memorySlider.accessibilityLabel=VIMLocalized(@"settings.memory-allocation-in-gigabytes", @"Memory allocation in gigabytes");
         [self.memorySlider.widthAnchor constraintEqualToConstant:280].active=YES;
         NSTextField *low=VIMText(@"1 GB",NO),*mid=VIMText([NSString stringWithFormat:@"%.0f GB",round((maxGiB+1)/2)],NO),*high=VIMText([NSString stringWithFormat:@"%.0f GB",maxGiB],NO);mid.alignment=NSTextAlignmentCenter;high.alignment=NSTextAlignmentRight;
@@ -389,11 +396,6 @@ static BOOL VIMConfigurationFormLayoutIsValid(NSView *view) {
         NSPopUpButton *backend=[NSPopUpButton new];
         backend.autoenablesItems=NO;backend.identifier=@"CPUBackend";backend.accessibilityLabel=VIMLocalized(@"settings.cpu.backend.label", @"CPU backend");
         backend.target=self;backend.action=@selector(cpuBackendChanged:);
-#if defined(__arm64__)
-        BOOL appleSilicon=YES;
-#else
-        BOOL appleSilicon=NO;
-#endif
         [backend addItemsWithTitles:appleSilicon?@[
             VIMLocalized(@"settings.cpu.backend.hybrid", @"Hybrid Hypervisor"),
             VIMLocalized(@"settings.cpu.backend.tcg", @"TCG Emulation")]:@[
@@ -1032,8 +1034,15 @@ static BOOL VIMConfigurationFormLayoutIsValid(NSView *view) {
     NSScanner *scanner=[NSScanner scannerWithString:field.stringValue];long long value=0;
     BOOL port=[key hasSuffix:@"Port"];
     BOOL megabytes=[key isEqual:@"MemoryMiB"];
-    if(![scanner scanLongLong:&value]||!scanner.isAtEnd||value<(port||megabytes?1024:1)||value>(port?65535:(megabytes?NSProcessInfo.processInfo.physicalMemory/(1024*1024):([key isEqual:@"CPUCount"]?NSProcessInfo.processInfo.processorCount:1024)))) {
-        self.feedback.stringValue=port?VIMLocalized(@"settings.enter-a-local-port-from-1024-65535", @"Enter a local port from 1024–65535."):[NSString stringWithFormat:VIMLocalized(@"settings.use-up-to-lu-processors-or-llu-mb-of-memory", @"Use up to %lu processors or %llu MB of memory."),(unsigned long)NSProcessInfo.processInfo.processorCount,NSProcessInfo.processInfo.physicalMemory/(1024ULL*1024)];self.invalidField=YES;return;
+#if defined(__arm64__)
+    BOOL appleSilicon=YES;
+#else
+    BOOL appleSilicon=NO;
+#endif
+    NSUInteger maxCores=VIMMaximumProcessorCount(self.machine.editableConfiguration,appleSilicon);
+    NSUInteger maxMemoryMiB=VIMMaximumMemoryMiB(self.machine.editableConfiguration,appleSilicon);
+    if(![scanner scanLongLong:&value]||!scanner.isAtEnd||value<(port||megabytes?1024:1)||value>(port?65535:(megabytes?(long long)maxMemoryMiB:([key isEqual:@"CPUCount"]?(long long)maxCores:1024)))) {
+        self.feedback.stringValue=port?VIMLocalized(@"settings.enter-a-local-port-from-1024-65535", @"Enter a local port from 1024–65535."):[NSString stringWithFormat:VIMLocalized(@"settings.use-up-to-lu-processors-or-llu-mb-of-memory", @"Use up to %lu processors or %llu MB of memory."),(unsigned long)maxCores,(unsigned long long)maxMemoryMiB];self.invalidField=YES;return;
     }
     if([key isEqual:@"MemoryGiB"]){key=@"MemoryMiB";value*=1024;}
     if([self.machine.editableConfiguration[key] longLongValue]==value){self.feedback.stringValue=@"";return;}
@@ -1056,7 +1065,16 @@ static BOOL VIMConfigurationFormLayoutIsValid(NSView *view) {
 - (void)processorsChanged:(NSPopUpButton *)sender {[self commitSettings:@{@"CPUCount":@(sender.indexOfSelectedItem+1)}];}
 - (void)cpuBackendChanged:(NSPopUpButton *)sender {
 #if defined(__arm64__)
-    if([self commitSettings:@{@"CPUBackend":sender.indexOfSelectedItem==0?@"hybrid":@"tcg"}])[self render];
+    NSString *backend=sender.indexOfSelectedItem==0?@"hybrid":@"tcg";
+    NSMutableDictionary *update=[NSMutableDictionary dictionaryWithObject:backend forKey:@"CPUBackend"];
+    if([backend isEqual:@"hybrid"]) {
+        NSDictionary *c=self.machine.editableConfiguration;
+        NSUInteger maxCores=VIMMaximumProcessorCount(update,YES);
+        NSUInteger maxMemoryMiB=VIMMaximumMemoryMiB(update,YES);
+        if([c[@"CPUCount"] unsignedIntegerValue]>maxCores)update[@"CPUCount"]=@(maxCores);
+        if([c[@"MemoryMiB"] unsignedIntegerValue]>maxMemoryMiB)update[@"MemoryMiB"]=@(maxMemoryMiB);
+    }
+    if([self commitSettings:update])[self render];
 #else
     // Intel has one backend; choosing it must not replace an ARM-side preference.
     (void)sender;
@@ -1069,7 +1087,13 @@ static BOOL VIMConfigurationFormLayoutIsValid(NSView *view) {
 }
 - (void)memoryStepped:(NSStepper *)sender {self.memoryValue.integerValue=sender.integerValue;self.memorySlider.doubleValue=sender.doubleValue/1024;[self commitSettings:@{@"MemoryMiB":@(sender.integerValue)}];}
 - (void)memorySlid:(NSSlider *)sender {
-    NSInteger mib=MIN(NSProcessInfo.processInfo.physicalMemory/(1024*1024),1024*(NSInteger)llround(sender.doubleValue));self.memoryValue.integerValue=mib;
+#if defined(__arm64__)
+    BOOL appleSilicon=YES;
+#else
+    BOOL appleSilicon=NO;
+#endif
+    NSUInteger maxMemoryMiB=VIMMaximumMemoryMiB(self.machine.editableConfiguration,appleSilicon);
+    NSInteger mib=(NSInteger)MIN(maxMemoryMiB,(NSUInteger)(1024*(NSInteger)llround(sender.doubleValue)));self.memoryValue.integerValue=mib;
     [self commitSettings:@{@"MemoryMiB":@(mib)}];
 }
 - (void)retinaChanged:(NSButton *)sender {if([self commitSettings:@{@"DisplayMode":@[@"space",@"retina",@"scaled"][sender.tag],@"RetinaEnabled":@(sender.tag!=2)}])[self render];}
