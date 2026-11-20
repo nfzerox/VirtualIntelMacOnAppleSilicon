@@ -1,5 +1,10 @@
 #import <Foundation/Foundation.h>
 NS_ASSUME_NONNULL_BEGIN
+typedef NS_ENUM(NSUInteger,VIMDownloadState) {
+    VIMDownloadStateAuthorizing,
+    VIMDownloadStateWaitingToRetry,
+    VIMDownloadStateVerifying,
+};
 /// One persistent, app-owned transfer directory per Apple URL. Payload validity
 /// here means complete HTTP transfer; installer signature validation is separate.
 @interface VIMDownload : NSObject
@@ -7,6 +12,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) NSURL *sourceURL;
 /// Main-thread callbacks. Progress uses -1 total when the server gives no size.
 @property(nonatomic, copy, nullable) void (^progress)(int64_t received,int64_t total);
+/// Main-thread authorization, retry-wait and verification state changes.
+@property(nonatomic, copy, nullable) void (^stateChanged)(VIMDownloadState state,NSTimeInterval delay);
 - (nullable instancetype)initWithSourceURL:(NSURL *)URL directory:(NSURL *)directory error:(NSError **)error;
 - (void)startWithCompletion:(void (^)(NSURL *_Nullable file,NSError *_Nullable error,BOOL paused))completion;
 - (void)pause;

@@ -1,0 +1,20 @@
+#!/bin/zsh
+set -euo pipefail
+root=${0:A:h:h}
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/vim-installer-recovery.XXXXXX")
+python3 "$root/probes/installer-recovery-server.py" --port-file "$scratch/port" --events "$scratch/events.jsonl" > "$scratch/server.log" 2>&1 &
+server_pid=$!
+trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+for attempt in {1..50}; do
+    [[ -s "$scratch/port" ]] && break
+    sleep .1
+done
+[[ -s "$scratch/port" ]] || { print -u2 "Server failed: $scratch/server.log"; exit 1; }
+port=$(cat "$scratch/port")
+xcrun clang -fobjc-arc -fmodules -Wall -Wno-deprecated-declarations -mmacosx-version-min=15.0 \
+    -I "$root/VirtualIntelMac" -framework Foundation -framework Security \
+    "$root/probes/installer-recovery-tests.m" "$root/VirtualIntelMac/VIMDownload.m" \
+    "$root/VirtualIntelMac/VIMInstallerSource.m" "$root/VirtualIntelMac/VIMInstallerCatalog.m" \
+    -o "$scratch/installer-recovery-tests"
+print "Recovery evidence: $scratch"
+"$scratch/installer-recovery-tests" "http://127.0.0.1:$port" "$scratch/transfers" "$scratch/events.jsonl"

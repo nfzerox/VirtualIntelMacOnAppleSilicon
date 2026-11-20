@@ -1516,6 +1516,7 @@ static BOOL ShowsVirtualBuddyRecommendation(NSString *guest) {
     NSString *instructions=
         [@[@"tiger",@"leopard",@"snowleopard"] containsObject:self.job[@"Guest"]]?VIMLocalized(@"creation.when-the-installer-opens-follow-the-onscreen-instructions-and-install", @"When the installer opens, follow the onscreen instructions and install on Macintosh HD."):
         [NSString stringWithFormat:VIMLocalized(@"creation.when-utilities-appears-choose-reinstall-and-install-on-macintosh-hd", @"When %@ Utilities appears, choose Reinstall %@ and install on Macintosh HD."),os,os];
+    if(self.downloadOnly)preparation=VIMLocalized(@"creation.download-only-introduction", @"We’ll download the installer and keep it in your library’s Downloads folder.");
     NSString *hostPreparation=existing?VIMLocalized(@"vimnewmachinewindow.we-ll-use-your-installer-to-prepare-the-virtual", @"We’ll use your installer to prepare the virtual disk. Your virtual Mac will start when it’s ready."):
         [NSString stringWithFormat:VIMLocalized(@"vimnewmachinewindow.we-ll-download-from-and-prepare-your-virtual-disk", @"We’ll download %@ from %@ and prepare your virtual disk. Your virtual Mac will start when it’s ready."),system,
         [@[@"tiger",@"leopard",@"snowleopard"] containsObject:self.job[@"Guest"]]?VIMLocalized(@"creation.the-internet-archive", @"the Internet Archive"):@"Apple"];
@@ -1633,7 +1634,11 @@ static BOOL ShowsVirtualBuddyRecommendation(NSString *guest) {
     if(self.fileIndex==self.files.count){
         if(self.downloadOnly){
             [self stopLengthProbes];[self setPhase:@"downloaded"];
-            self.status.stringValue=VIMLocalized(@"creation.download-complete", @"Download complete");self.progressDetail.stringValue=VIMLocalized(@"creation.the-installer-download-is-saved-in-your-library-s-downloads", @"The installer download is saved in your library’s Downloads folder.");
+            BOOL checked=YES;
+            for(NSDictionary *file in self.files)
+                if(![VIMInstallerSource isMavericksRecoveryAsset:[NSURL URLWithString:file[@"URL"]]]||![file[@"SHA256"] length])checked=NO;
+            self.status.stringValue=VIMLocalized(@"creation.download-complete", @"Download complete");
+            self.progressDetail.stringValue=checked?VIMLocalized(@"creation.download-verified-save-location", @"SHA-256 matches. Your installer is in the library’s Downloads folder."):VIMLocalized(@"creation.the-installer-download-is-saved-in-your-library-s-downloads", @"The installer download is saved in your library’s Downloads folder.");
             [self updateOverallProgress:1];self.pauseResume.enabled=NO;return;
         }
         [self prepareMedia];return;
@@ -1653,6 +1658,17 @@ static BOOL ShowsVirtualBuddyRecommendation(NSString *guest) {
     [self updateOverallProgress:self.overallProgress];
     self.status.stringValue=[NSString stringWithFormat:VIMLocalized(@"ui.downloading.named", @"Downloading %@…"),VIMOperatingSystemName(self.job[@"Guest"])];
     __weak typeof(self) weakSelf=self;
+    self.transfer.stateChanged=^(VIMDownloadState state,NSTimeInterval delay){
+        typeof(self) self=weakSelf;if(!self)return;
+        if(state==VIMDownloadStateWaitingToRetry) {
+            self.rateSampleTime=0;self.bytesPerSecond=0;
+            self.status.stringValue=[NSString stringWithFormat:VIMLocalized(@"download.recovery-countdown", @"Reconnecting in %ld s…"),(long)MAX(1,ceil(delay))];
+            self.progressDetail.stringValue=VIMLocalized(@"download.recovery-wait-actions", @"You can pause or cancel while waiting.");
+        } else if(state==VIMDownloadStateVerifying) {
+            self.status.stringValue=[VIMInstallerSource isMavericksRecoveryAsset:source]&&[VIMInstallerCatalog fileForURL:source][@"SHA256"]?VIMLocalized(@"download.checking-sha256", @"Checking SHA-256…"):VIMLocalized(@"download.checking-download", @"Checking download…");
+            self.progressDetail.stringValue=VIMLocalized(@"download.checking-file-detail", @"Checking the downloaded file.");
+        } else if(state==VIMDownloadStateAuthorizing)self.status.stringValue=VIMLocalized(@"download.connecting-server", @"Connecting to the download server…");
+    };
     self.transfer.progress=^(int64_t received,int64_t total){
         typeof(self) self=weakSelf;if(!self)return;
         self.downloadReceived[source.absoluteString]=@(received);if(total>0)self.downloadLengths[source.absoluteString]=@(total);
@@ -1686,7 +1702,7 @@ static BOOL ShowsVirtualBuddyRecommendation(NSString *guest) {
             }
             self.files=base;self.fileIndex=base.count;[self saveJob];[self nextFile];return;
         }
-        if(paused||failure){[self stopLengthProbes];[self setPhase:failure?@"failed":@"paused"];if(failure)[self presentDownloadFailure:failure source:source];else self.status.stringValue=VIMLocalized(@"creation.download-paused", @"Download paused");[self.progress stopAnimation:nil];return;}
+        if(paused||failure){[self stopLengthProbes];[self setPhase:failure?@"failed":@"paused"];if(failure)[self presentDownloadFailure:failure source:source];else {self.status.stringValue=VIMLocalized(@"creation.download-paused", @"Download paused");self.progressDetail.stringValue=VIMLocalized(@"download.resume-instruction", @"Choose Resume to continue.");}[self.progress stopAnimation:nil];return;}
         NSDictionary *attributes=[NSFileManager.defaultManager attributesOfItemAtPath:file.path error:nil];
         if(attributes[NSFileSize])self.downloadReceived[source.absoluteString]=self.downloadLengths[source.absoluteString]=attributes[NSFileSize];
         [self updateOverallProgress:[self downloadProgressForFileFraction:1]];

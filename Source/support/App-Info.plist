@@ -23,5 +23,9 @@
 <key>oscdn.apple.com</key><dict>
 <key>NSExceptionAllowsInsecureHTTPLoads</key><true/>
 <key>NSIncludesSubdomains</key><false/>
+</dict>
+<key>oscdn.apple.com.edgesuite.net</key><dict>
+<key>NSExceptionAllowsInsecureHTTPLoads</key><true/>
+<key>NSIncludesSubdomains</key><false/>
 </dict></dict></dict>
 </dict></plist>

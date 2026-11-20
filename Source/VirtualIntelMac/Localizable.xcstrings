@@ -1963,6 +1963,24 @@
         }
       }
     },
+    "creation.download-only-introduction" : {
+      "comment" : "Installer download recovery",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We’ll download the installer and keep it in your library’s Downloads folder."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我们将下载安装器，并将文件保留在虚拟机库的Downloads文件夹中。"
+          }
+        }
+      }
+    },
     "creation.download-paused" : {
       "comment" : "VIMNewMachineWindow.m: Download paused",
       "extractionState" : "manual",
@@ -1977,6 +1995,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "下载已暂停"
+          }
+        }
+      }
+    },
+    "creation.download-verified-save-location" : {
+      "comment" : "Installer download recovery",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SHA-256 matches. Your installer is in the library’s Downloads folder."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SHA-256校验通过。你可以在虚拟机库的Downloads文件夹中找到安装器。"
           }
         }
       }
@@ -4789,6 +4825,78 @@
         }
       }
     },
+    "download.checking-download" : {
+      "comment" : "Installer download recovery",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Checking download…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在检查下载文件…"
+          }
+        }
+      }
+    },
+    "download.checking-file-detail" : {
+      "comment" : "Installer download recovery",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Checking the downloaded file."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在检查已下载的文件。"
+          }
+        }
+      }
+    },
+    "download.checking-sha256" : {
+      "comment" : "Installer download recovery",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Checking SHA-256…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在校验SHA-256…"
+          }
+        }
+      }
+    },
+    "download.connecting-server" : {
+      "comment" : "Installer download recovery",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connecting to the download server…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在连接下载服务器…"
+          }
+        }
+      }
+    },
     "download.could-not-flush-the-completed-download-to-disk" : {
       "comment" : "VIMDownload.m: Could not flush the completed download to disk.",
       "extractionState" : "manual",
@@ -4897,6 +5005,96 @@
         }
       }
     },
+    "download.partial-save-failed" : {
+      "comment" : "Installer download recovery",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not save the partial download to disk."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法将已下载的部分保存到磁盘。"
+          }
+        }
+      }
+    },
+    "download.recovery-countdown" : {
+      "comment" : "Installer download recovery",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reconnecting in %ld s…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%ld秒后重新连接…"
+          }
+        }
+      }
+    },
+    "download.recovery-countdown-pause" : {
+      "comment" : "Installer download recovery",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reconnecting in %ld s. You can pause while waiting."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%ld秒后重新连接，等待期间可以暂停。"
+          }
+        }
+      }
+    },
+    "download.recovery-wait-actions" : {
+      "comment" : "Installer download recovery",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You can pause or cancel while waiting."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "等待期间可以暂停或取消。"
+          }
+        }
+      }
+    },
+    "download.resume-instruction" : {
+      "comment" : "Installer download recovery",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose Resume to continue."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "点按“继续”以恢复下载。"
+          }
+        }
+      }
+    },
     "download.the-cached-installer-is-incomplete-remove-this-download-through-the" : {
       "comment" : "VIMDownload.m: The cached installer is incomplete. Remove this download through the app before retrying.",
       "extractionState" : "manual",
@@ -5001,6 +5199,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "此下载已在进行中。"
+          }
+        }
+      }
+    },
+    "download.unsupported-redirect" : {
+      "comment" : "Installer download recovery",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The download server redirected to an unsupported location."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下载服务器重定向到了不支持的位置。"
           }
         }
       }
