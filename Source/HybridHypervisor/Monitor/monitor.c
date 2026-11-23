@@ -1029,6 +1029,16 @@ static struct {
 #define SHARED_SEEN (SHARED_USER_DIRS + 8)
 static u32 shared_seen_next;
 
+// Whether the view still mirrors the guest table that maps va. Asking the guest's tables wouldn't do: an OS frees a dead process's tables as they are, still
+// pointing where they did. A view stops mirroring a table once the table is written while nobody runs there, as when it goes to a new process.
+static bool view_shadows_table(u32 view, u64 table, u32 level, u64 va) {
+    u32 span = 12 + 9 * (level + 1);
+    for (u32 it = table < c->ram_size ? mirror_head[table >> 12] : 0; it; it = desc[it - 1].next_mirror)
+        if (desc[it - 1].view == view && desc[it - 1].level == level && desc[it - 1].va_base >> span == va >> span)
+            return true;
+    return false;
+}
+
 // Whether the rip's directory is shared, deciding it now if a second address space has just reached it. Returns its row, or -1.
 static int shared_row(const Walk *w, const View *v, u64 rip) {
     bool compat = c->compat && engine_shared_compat_address(rip);
@@ -1036,7 +1046,8 @@ static int shared_row(const Walk *w, const View *v, u64 rip) {
         (!compat && (c->compat || rip < SHARED_USER_BASE || rip >= SHARED_USER_END - 4096)) ||
         w->leaf_level > (compat ? 0 : 1))
         return -1;
-    u64 directory = compat ? engine_shared_compat_domain(rip, *w->chain[1] & X_ADDR) : *w->chain[2] & X_ADDR;
+    u64 table = *w->chain[compat ? 1 : 2] & X_ADDR;
+    u64 directory = compat ? engine_shared_compat_domain(rip, table) : table;
     if (compat && c->cpl == 0)
         directory |= SHARED_COMPAT_KERNEL;
     for (u32 i = 0; i < SHARED_SEEN; i++) {
@@ -1047,9 +1058,14 @@ static int shared_row(const Walk *w, const View *v, u64 rip) {
                 return (int)i;
         if (shared_seen[i].first_cr3 == v->cr3 || c0->shared_dir_count == SHARED_USER_DIRS)
             return -1;
-        c0->shared_dirs[c0->shared_dir_count++] = directory;
         View *first = &views[shared_seen[i].first_view];
-        shared_seen[i].keeper = first->valid && first->cr3 == shared_seen[i].first_cr3 && first->cpl == v->cpl ? shared_seen[i].first_view : (u32)(v - views);
+        if (!first->valid || first->cr3 != shared_seen[i].first_cr3 || !view_shadows_table(shared_seen[i].first_view, table, compat ? 0 : 1, rip)) {
+            shared_seen[i].first_cr3 = v->cr3; // the first let the table go and this one took it over: nothing is shared
+            shared_seen[i].first_view = (u32)(v - views);
+            return -1;
+        }
+        c0->shared_dirs[c0->shared_dir_count++] = directory;
+        shared_seen[i].keeper = first->cpl == v->cpl ? shared_seen[i].first_view : (u32)(v - views);
         views[shared_seen[i].keeper].keeper = 1;
         return (int)i;
     }
