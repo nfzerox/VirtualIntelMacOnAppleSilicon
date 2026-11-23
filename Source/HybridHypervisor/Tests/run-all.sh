@@ -101,6 +101,13 @@ for fixture in descriptor-widths kernel-far-jumps; do
         fail=1
     fi
 done
+if zsh "$here/build-cross-key-jumps.sh" "${images:A}" shared-table-reuse && \
+    ENGINE_SHARE=1 ENGINE_ALARM=60 "$engine" --kernel "$images/shared-table-reuse"; then
+    echo "pass shared-table-reuse"
+else
+    echo "FAIL shared-table-reuse"
+    fail=1
+fi
 # kernel-far-null-stack deliberately needs TCG for its transient invalid
 # Engine stack model. Compare that image under real QEMU+hybrid and plain TCG;
 # a standalone Engine pass is not the expected behavior for that fixture.
