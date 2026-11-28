@@ -110,6 +110,11 @@ struct VIMContext {
 #ifdef VIM_GLI_PLUGIN
     void (*native_surface_flush)(int,int,int,const int32_t *,unsigned);
     GLint swap_rectangle[4],swap_rectangle_enabled;
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ == 1050
+    /* The generated dispatch-count macro is defined after this structure.
+     * Darwin 9 CGL translates backing-size state to GLI selector 298. */
+    GLint period_backing[3]; /* flags, width, height; bit 1 enables override */
+#endif
 #endif
 };
 static void VIMGetVertexAttribPointer(GLIContext opaque,GLuint index,GLenum pname,void **out)
