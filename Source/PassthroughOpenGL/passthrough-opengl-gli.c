@@ -357,22 +357,13 @@ GLI_EXPORT CGLError gliQueryRendererInfo(struct GLIRenderer **out,unsigned mask)
     /* Native CGL prepends one pointer to the GLI record. DescribeRenderer's
      * MB fields are public +0x54/0x5c (64-bit) or +0x4c/0x54 (i386). */
 #if VIM_GLI_DISPATCH_COUNT == 757 || __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ == 1040
-    /* Native9J3050 CoreGraphics compares GLI record+0x30 (i386) against
-     * GLCompositorMinimumVRAM. The physical9L30 driver's gldGetRendererInfo
-     * writes its real video/texture MB to+0x30/+0x34 in the56-byte record;
-     * public CGLDescribeRenderer uses the same compact period fields.
-     * Newer records moved these fields. Reporting only the newer positions
-     * falsely describes zero VRAM to Leopard's desktop admission gate. */
-#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ == 1040
-    /* Tiger's compact native records contain bytes, not the later public
-     * Megabytes properties queried by the host transport. Preserve units
-     * and saturate rather than wrap a modern host's larger GPU budget. */
+    /* Compact Tiger/Leopard GLI records back the legacy public CGL
+     * VideoMemory/TextureMemory byte properties (120/121). Leopard CI uses
+     * property120 directly as a byte budget. Reporting MB here reduced a
+     * 2047-MB renderer to 2047 bytes and made ordinary CI images untileable.
+     * Preserve the compact ABI and saturate the signed GLint byte domain. */
     r->data[11]=VIMRendererMemoryBytes(properties.video_mb);
     r->data[12]=VIMRendererMemoryBytes(properties.texture_mb);
-#else
-    r->data[11]=VIMRendererMemoryMegabytes32(properties.video_mb);
-    r->data[12]=VIMRendererMemoryMegabytes32(properties.texture_mb);
-#endif
 #elif VIM_GLI_DISPATCH_COUNT == 764
     /* Snow Leopard's GLCompositor converts r->data[17] (MB) into a 32-bit byte
      * count; saturate to 2047 MB so 4/8/16/24/32/48/64 GB host GPUs never wrap
@@ -515,6 +506,11 @@ GLI_EXPORT CGLError gliGetInteger(GLIContext c,unsigned key,GLint *value)
     if(!c) return kCGLBadContext;
     struct VIMContext *v=(struct VIMContext *)c;
     switch(key) {
+#if VIM_GLI_DISPATCH_COUNT == 757
+    case kCGLCPSurfaceBackingSize:
+        value[0]=v->period_backing[1];value[1]=v->period_backing[2];break;
+    case kCGLCESurfaceBackingSize:*value=!!(v->period_backing[0]&2);break;
+#endif
 #if VIM_GLI_DISPATCH_COUNT == 975
     case 0x1f6:return VIMGetPVGSurfaceInfo(value);
     case kCGLCPSwapRectangle:memcpy(value,v->swap_rectangle,sizeof(v->swap_rectangle));break;
@@ -543,6 +539,19 @@ GLI_EXPORT CGLError gliSetInteger(GLIContext c,unsigned key,const GLint *value)
     if(!c) return kCGLBadContext;if(!value) return kCGLBadAddress;
     struct VIMContext *v=(struct VIMContext *)c;
     switch(key) {
+#if VIM_GLI_DISPATCH_COUNT == 757
+    case 298:
+        /* Observed Darwin 9 CGLSetParameter(backing size) sends {1,w,h};
+         * CGLEnable/Disable(surface backing size) sends {3,w,h}/{1,w,h}.
+         * DVDPlayback also supplies flags=7: preserve its additional native
+         * bit rather than reject the otherwise valid backing-size request.
+         * Retain the source extent independently of the CGS display bounds.
+         * Native CGL reattaches the window after changing this state. */
+        if((value[0]&~7) || ((value[0]&2) &&
+            (value[1]<1 || value[2]<1 || value[1]>8192 || value[2]>8192)))
+            return kCGLBadValue;
+        memcpy(v->period_backing,value,sizeof(v->period_backing));break;
+#endif
 #if VIM_GLI_DISPATCH_COUNT == 975
     // Native Mojave GLEngine stores one pointer for key800. AppKit's
     // NSCGLSurface registers NSCGLSurfaceFlush here before CGLSetSurface.

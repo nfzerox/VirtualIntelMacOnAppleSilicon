@@ -960,6 +960,12 @@ static CGLError VIMCreateAcceleratorDrawable(struct VIMContext *c,const uint32_t
         CGRect bounds={0};
         int query=CGSGetSurfaceBounds(ids[0],ids[1],ids[2],&bounds);
         pixels=bounds.size;
+#if VIM_GLI_DISPATCH_COUNT == 757
+        if(!query && (c->period_backing[0]&2)) {
+            pixels.width=c->period_backing[1];
+            pixels.height=c->period_backing[2];
+        }
+#endif
 #else
         int query=CGSGetSurfaceResolution(ids[0],ids[1],ids[2],&resolution,&pixels);
 #endif
