@@ -40,6 +40,7 @@
 #include "passthrough-opengl-mipmap-host.h"
 #include "passthrough-opengl-automatic-mipmap-host.h"
 #include "pixel-format-host.h"
+#include "renderer-memory.h"
 #include "passthrough-opengl-endian.h"
 #ifdef VIM_PASSTHROUGH_OPENGL_COMMAND_TIMING
 #include <mach/mach_time.h>
@@ -214,7 +215,7 @@ struct DGHostDrawable {
     struct DGSurfaceRegistration *surface_registration;
     int prepared; // Explicit private-attach reservation; never ordinary MakeCurrent.
     struct DGDamage damage;
-    int alias_dirty;
+    int alias_dirty,front_written;
 #ifdef VIM_BACKING_CANONICAL_EXPERIMENT
     int scope_canonical;
 #endif
@@ -641,6 +642,7 @@ static void DGSetBuffer(struct DGHostContext *c,GLenum mode,int reading)
     GLint binding=0;glGetIntegerv(reading ? GL_READ_FRAMEBUFFER_BINDING_EXT : GL_DRAW_FRAMEBUFFER_BINDING_EXT,&binding);
     if((GLuint)binding!=c->framebuffer) { if(reading) glReadBuffer(mode);else glDrawBuffer(mode);return; }
     GLenum attachment=GL_NONE;
+    if(!reading && c->drawable && (mode==GL_FRONT || mode==GL_FRONT_LEFT || mode==GL_FRONT_AND_BACK))c->drawable->front_written=1;
     if(mode==GL_FRONT || mode==GL_FRONT_LEFT) attachment=GL_COLOR_ATTACHMENT0_EXT;
     else if((mode==GL_BACK || mode==GL_BACK_LEFT) && c->double_buffer) attachment=GL_COLOR_ATTACHMENT1_EXT;
     else if(mode==GL_FRONT_AND_BACK && !reading) {
@@ -712,6 +714,22 @@ static int DGVirtualInteger(struct DGHostContext *c,GLenum key,GLint *value)
 /* The GLI must distinguish a window flush from an offscreen-FBO flush.
  * Query at the same ordered native flush, rather than a second guest/host
  * round trip. Preserve prior GL errors; do not infer state from guest calls. */
+static void DGPublishFlushedBack(struct DGHostContext *c)
+{
+    GLint draw=0,read=0,source_read=0;glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING_EXT,&draw);
+    if(!c->drawable || c->drawable->front_written || !c->double_buffer || (GLuint)draw!=c->framebuffer ||
+       (c->draw_mode!=GL_BACK && c->draw_mode!=GL_BACK_LEFT))return;
+    GLboolean scissor=glIsEnabled(GL_SCISSOR_TEST),srgb=glIsEnabled(GL_FRAMEBUFFER_SRGB_EXT);
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING_EXT,&read);
+    glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT,c->framebuffer);
+    glGetIntegerv(GL_READ_BUFFER,&source_read);glReadBuffer(GL_COLOR_ATTACHMENT1_EXT);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0_EXT);DGSetBlitScissor(c,GL_FALSE);glDisable(GL_FRAMEBUFFER_SRGB_EXT);
+    glBlitFramebufferEXT(0,0,c->drawable->width,c->drawable->height,0,0,c->drawable->width,c->drawable->height,
+        GL_COLOR_BUFFER_BIT,GL_NEAREST);
+    glDrawBuffer(GL_COLOR_ATTACHMENT1_EXT);glReadBuffer((GLenum)source_read);
+    glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT,(GLuint)read);
+    if(scissor)DGSetBlitScissor(c,GL_TRUE);if(srgb)glEnable(GL_FRAMEBUFFER_SRGB_EXT);
+}
 static int DGFlushDrawableState(struct DGHostContext *c,const struct DGMessage *m,struct DGReply *reply)
 {
     if(m->bytes || m->args[0]>1){reply->error=GL_INVALID_VALUE;return 0;}
@@ -721,6 +739,7 @@ static int DGFlushDrawableState(struct DGHostContext *c,const struct DGMessage *
      * producer flush/finish so another context's bind sees the new pixels.
      * Serial checks skip unchanged views; no CPU read or additional wait. */
     DGRefreshFlippedAliases(c,0);
+    if(getenv("VIM_OPENGL_FLUSH_PUBLISHES_BACK"))DGPublishFlushedBack(c);
     if(m->args[0])glFinish();else glFlush();
     DGSubmitIOSurfaceWrites(c);
     GLint binding=0;glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING_EXT,&binding);
@@ -2035,6 +2054,7 @@ static int DGRendererMemory(struct DGHostContext *context,struct DGReply *reply)
     }
     if(info) CGLDestroyRendererInfo(info);
     if(!matched || video<0 || texture<0) { reply->error=GL_INVALID_OPERATION;return 0; }
+    if(getenv("VIM_OPENGL_RENDERER_MEMORY_BYTES")){video=(GLint)VIMRendererMemoryBytes(video);texture=(GLint)VIMRendererMemoryBytes(texture);}
     reply->result=(uint32_t)video|((uint64_t)(uint32_t)texture<<32);return 0;
 }
 /* Persistent interpreter state is independent of transport and native thread.
@@ -2801,7 +2821,19 @@ static int DGInterpretCommand(struct DGInterpreter *s,int fd,struct DGMessage *m
         }
     }
     else if(m->op==DG_DRAW || m->op==DG_DRAW_INSTANCED_ARRAYS) error=DGHostDraw(context,m);
-    else error=DGExecute(context,m,&reply);
+    else {
+        if((m->op==DG_OP_get_tex_level_parameteriv || m->op==DG_OP_get_tex_level_parameterfv) && (int32_t)m->args[1]>0) {
+            void *out=DGHostPointer(m,3,4);if(out)memset(out,0,4);
+            GLenum prior=context&&context->cgl&&!context->inside_begin?glGetError():GL_NO_ERROR;
+            if(prior && !context->error)context->error=prior;
+            error=DGExecute(context,m,&reply);
+            if(context&&context->cgl&&!context->inside_begin){
+                GLenum after=glGetError();
+                if(after && after!=GL_INVALID_VALUE && !context->error)context->error=after;
+            }
+        }
+        else error=DGExecute(context,m,&reply);
+    }
 #ifdef VIM_GL_DRAW_WITNESS
     if(!error)DGTraceDrawWitness(context,m);
 #endif

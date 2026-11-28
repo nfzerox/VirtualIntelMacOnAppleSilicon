@@ -260,6 +260,8 @@
 				INFOPLIST_FILE = "VirtualIntelMac-Info.plist";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMainNibFile = MainMenu;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Allow your virtual Macs to use this Mac’s camera when a guest app needs video.";
+				INFOPLIST_KEY_NSCameraUseContinuityCameraDeviceType = YES;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Allow your virtual Macs to use this Mac’s microphone when a guest app records audio.";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				INFOPLIST_KEY_NSViewGestureRecognizerIsExclusive = NO;
@@ -294,6 +296,8 @@
 				INFOPLIST_FILE = "VirtualIntelMac-Info.plist";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMainNibFile = MainMenu;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Allow your virtual Macs to use this Mac’s camera when a guest app needs video.";
+				INFOPLIST_KEY_NSCameraUseContinuityCameraDeviceType = YES;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Allow your virtual Macs to use this Mac’s microphone when a guest app records audio.";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				INFOPLIST_KEY_NSViewGestureRecognizerIsExclusive = NO;

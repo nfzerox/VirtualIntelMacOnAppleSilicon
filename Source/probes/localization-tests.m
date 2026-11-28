@@ -43,6 +43,8 @@ int main(int argc, const char *argv[]) {
         Check(VIMMenuItem(root, @"vim.missing") == nil, @"Missing menu returned an unrelated item");
         NSString *permission = [NSBundle.mainBundle localizedStringForKey:@"NSMicrophoneUsageDescription" value:@"" table:@"InfoPlist"];
         Check(chinese ? [permission containsString:@"麦克风"] : [permission containsString:@"microphone"], @"Permission description has the wrong language");
+        NSString *cameraPermission = [NSBundle.mainBundle localizedStringForKey:@"NSCameraUsageDescription" value:@"" table:@"InfoPlist"];
+        Check(chinese ? [cameraPermission containsString:@"相机"] : [cameraPermission containsString:@"camera"], @"Camera permission description has the wrong language");
         for(NSString *guest in VIMSupportedGuests()) {
             NSString *release=VIMReleaseNameForGuest(guest);
             NSString *title=[NSString stringWithFormat:@"Installing %@ system files…",release];

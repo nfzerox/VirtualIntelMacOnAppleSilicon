@@ -12,10 +12,11 @@ typedef struct {uint64_t length;uint32_t page,pixelFormat,planeCount;} VIMPacked
 // through unchanged. Original range/stride validation must still run.
 static inline int VIMNormalizePacked422Plane(uint32_t format,VIMPackedBackingPlane *plane) {
     uint32_t row=plane->strideAndElement&0xffffffu,element=plane->strideAndElement>>24;
-    if(format!=0x76323136u||element!=8||!plane->width||
-       (uint64_t)plane->width*8<=row)return 0;
+    uint32_t pair=format==0x76323136u?8:format==0x32767579u||format==0x79757673u?4:0;
+    if(!pair||element!=pair||!plane->width||
+       (uint64_t)plane->width*element<=row)return 0;
     uint32_t elements=plane->width/2+plane->width%2;
-    if((uint64_t)elements*8>row)return 0;
+    if((uint64_t)elements*element>row)return 0;
     plane->width=elements;return 1;
 }
 

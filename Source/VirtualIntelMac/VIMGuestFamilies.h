@@ -45,6 +45,18 @@ NS_INLINE uint64_t VIMAssistantHostScratchGiB(NSString *guest) {
     return budget?budget.unsignedLongLongValue:96;
 }
 
+NS_INLINE BOOL VIMIsPreLionGuest(NSString *guest) {
+    return [@[@"tiger",@"leopard",@"snowleopard"] containsObject:guest];
+}
+
+NS_INLINE BOOL VIMOpenGLRendererMemoryInBytes(NSString *guest) {return [guest isEqual:@"leopard"];}
+
+NS_INLINE BOOL VIMOpenGLFlushPublishesBack(NSString *guest) {return !VIMIsPreLionGuest(guest);}
+
+NS_INLINE NSString *VIMCameraDeviceSuffix(NSString *guest) {return VIMIsPreLionGuest(guest)?@",isight=on":@"";}
+
+NS_INLINE unsigned VIMCameraFrameRate(NSString *guest) {return VIMIsPreLionGuest(guest)?10:30;}
+
 /// macOS 13 and later: no Intel 8254x Ethernet driver; VirtIO networking.
 NS_INLINE BOOL VIMUsesVirtIONetwork(NSString *guest) {
     return VIMIsPostBigSurGuest(guest)&&![guest isEqual:@"monterey"];

@@ -27,6 +27,10 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)setNetworkConnected:(BOOL)connected machine:(VIMMachine *)machine completion:(void (^)(NSError *_Nullable))completion;
 + (void)enableGuestRemoteLogin:(VIMMachine *)machine completion:(void (^)(NSError *_Nullable))completion;
 + (void)clipboardPreferencesChangedForMachine:(VIMMachine *)machine;
++ (void)cameraPreferencesChangedForMachine:(VIMMachine *)machine;
++ (void)cameraAccessChanged;
++ (BOOL)cameraDriverLoadedForMachine:(VIMMachine *)machine;
++ (void)offerCameraRestartForMachine:(VIMMachine *)machine window:(NSWindow *)window;
 + (void)openGuestPreferences:(NSString *)pane machine:(VIMMachine *)machine completion:(void (^)(NSError *_Nullable))completion;
 + (void)openHostConnection:(NSURL *)URL inMachine:(VIMMachine *)machine completion:(void (^)(NSError *_Nullable))completion;
 + (NSString *)statusForMachine:(VIMMachine *)machine;

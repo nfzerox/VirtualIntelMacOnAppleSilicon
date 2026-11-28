@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+cd "$(dirname "$0")/.."
+out="${TMPDIR:-/tmp}/vim-camera-routing-tests.$$"
+trap 'rm -f "$out"' EXIT
+xcrun clang -fobjc-arc -fmodules -Wall -Werror -Wno-unused-function -Wno-deprecated-declarations \
+    probes/camera-routing-tests.m VirtualIntelMac/VIMCameraCapture.m \
+    vendor/qemu/hw/usb/vim-camera-stream.c \
+    -framework Foundation -framework AVFoundation -framework CoreMedia -framework CoreVideo \
+    -framework IOKit -o "$out"
+"$out"

@@ -20833,6 +20833,24 @@
         }
       }
     },
+    "appdelegate.show-camera-test-pattern" : {
+      "comment" : "AppDelegate.m: Show the camera Test Pattern mode",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show the camera Test Pattern mode"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示相机测试图案模式"
+          }
+        }
+      }
+    },
     "appdelegate.developers" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23243,6 +23261,546 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "虚拟Intel Mac"
+          }
+        }
+      }
+    },
+    "category.camera" : {
+      "comment" : "Display label for the stable Camera identifier.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Camera"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "相机"
+          }
+        }
+      }
+    },
+    "common.continue" : {
+      "comment" : "VIMMachineSettings.m: Continue",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "继续"
+          }
+        }
+      }
+    },
+    "session.camera-disconnected" : {
+      "comment" : "VIMSession.m: Camera menu title while the camera is disconnected",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Camera Disconnected"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "相机已断开连接"
+          }
+        }
+      }
+    },
+    "session.connect-camera" : {
+      "comment" : "VIMSession.m: Opens camera settings to connect the camera",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connect Camera…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连接相机…"
+          }
+        }
+      }
+    },
+    "session.restart-to-change-the-camera" : {
+      "comment" : "VIMSession.m: Restart to change the camera",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restart to change the camera"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重启以更改相机"
+          }
+        }
+      }
+    },
+    "session.restart-to-change-the-camera-mode" : {
+      "comment" : "VIMSession.m: Restart to change the camera mode",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restart to change the camera mode"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重启以更改相机模式"
+          }
+        }
+      }
+    },
+    "session.restart-to-disable-the-camera-driver" : {
+      "comment" : "VIMSession.m: Restart prompt after disabling the camera driver",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restart to disable the camera?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "要重新启动以停用相机吗？"
+          }
+        }
+      }
+    },
+    "session.restart-to-enable-the-camera-driver" : {
+      "comment" : "VIMSession.m: Restart prompt after enabling the camera driver",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restart to enable the camera?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "要重新启动以启用相机吗？"
+          }
+        }
+      }
+    },
+    "session.the-camera-is-added-or-removed-when-the-virtual-mac-starts" : {
+      "comment" : "VIMSession.m: Camera driver restart explanation",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The virtual Mac adds or removes its camera when it starts. Save your work before restarting."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "虚拟Mac会在启动时添加或移除相机。重新启动前请存储你的工作。"
+          }
+        }
+      }
+    },
+    "settings.allow-virtual-intel-mac-to-use-this-mac-s-camera" : {
+      "comment" : "VIMMachineSettings.m: Allow Virtual Intel Mac to use this Mac’s camera.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allow Virtual Intel Mac to use this Mac’s camera."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许虚拟Intel Mac使用此Mac的相机。"
+          }
+        }
+      }
+    },
+    "settings.autosense" : {
+      "comment" : "VIMMachineSettings.m: Autosense",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Autosense"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动感应"
+          }
+        }
+      }
+    },
+    "settings.autosense-onboarding" : {
+      "comment" : "VIMMachineSettings.m: Autosense onboarding body",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Through a custom cross-architecture driver, Virtual Intel Mac will automatically detect when the virtual machine is in need of camera output, and hint at the host accordingly. This helps better preserve your privacy, but may not work in all edge cases."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通过自定义跨架构驱动，虚拟Intel Mac会自动检测虚拟机何时需要相机输出，并据此提示主机。这有助于更好地保护隐私，但可能无法覆盖所有边缘情况。"
+          }
+        }
+      }
+    },
+    "settings.camera" : {
+      "comment" : "VIMMachineSettings.m: Camera:",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Camera:"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "相机："
+          }
+        }
+      }
+    },
+    "settings.camera-access-is-turned-off" : {
+      "comment" : "VIMMachineSettings.m: Camera access is turned off",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Camera access is turned off"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "相机访问已关闭"
+          }
+        }
+      }
+    },
+    "settings.camera-driver-light-tooltip" : {
+      "comment" : "VIMMachineSettings.m: Camera driver status light help",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Green while the virtual Mac’s camera driver is loaded."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "虚拟Mac的相机驱动载入时显示为绿色。"
+          }
+        }
+      }
+    },
+    "settings.camera-explanation.autosense" : {
+      "comment" : "VIMMachineSettings.m: Camera explanation for Autosense",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This Mac’s camera turns on only while an app in the virtual Mac uses it."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅当虚拟Mac中的App使用相机时，此Mac的相机才会开启。"
+          }
+        }
+      }
+    },
+    "settings.camera-explanation.constant" : {
+      "comment" : "VIMMachineSettings.m: Camera explanation for Constant Output",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This Mac’s camera stays on while the virtual Mac is running."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "虚拟Mac运行时，此Mac的相机会保持开启。"
+          }
+        }
+      }
+    },
+    "settings.camera-explanation.disconnected" : {
+      "comment" : "VIMMachineSettings.m: Camera explanation when disconnected",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The virtual Mac has no camera. Turn on Enable Camera to add one; only Autosense and Constant Output ask for camera access."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "虚拟Mac没有相机。打开“启用相机”即可添加；只有自动感应和持续输出会请求相机权限。"
+          }
+        }
+      }
+    },
+    "settings.camera-explanation.off" : {
+      "comment" : "VIMMachineSettings.m: Camera explanation for Off",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No camera data is sent, but the camera stays connected, so apps in the virtual Mac still see it and you can switch to another mode without restarting. Turn the camera off to remove it entirely."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不会发送任何相机数据，但相机保持连接，虚拟Mac中的App仍能看到它，而且无需重新启动即可切换到其他模式。若要完全移除相机，请关闭相机。"
+          }
+        }
+      }
+    },
+    "settings.camera-explanation.testpattern" : {
+      "comment" : "VIMMachineSettings.m: Camera explanation for Test Pattern",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The virtual Mac receives a test pattern. This Mac’s camera stays off and is never asked for access."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "虚拟Mac接收测试图案。此Mac的相机保持关闭，也不会请求访问权限。"
+          }
+        }
+      }
+    },
+    "settings.camera-mode" : {
+      "comment" : "VIMMachineSettings.m: Mode:",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mode:"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模式："
+          }
+        }
+      }
+    },
+    "settings.camera-mode.off" : {
+      "comment" : "VIMMachineSettings.m: Camera mode that keeps the camera connected without a picture",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Picture"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无画面"
+          }
+        }
+      }
+    },
+    "settings.connected" : {
+      "comment" : "VIMMachineSettings.m: Camera connection status",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connected"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已连接"
+          }
+        }
+      }
+    },
+    "settings.constant-output" : {
+      "comment" : "VIMMachineSettings.m: Constant Output",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Constant Output"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "持续输出"
+          }
+        }
+      }
+    },
+    "settings.enable-virtual-intel-mac-driver" : {
+      "comment" : "VIMMachineSettings.m: Camera driver switch",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable Camera"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启用相机"
+          }
+        }
+      }
+    },
+    "settings.off" : {
+      "comment" : "VIMMachineSettings.m: Off",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Off"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关闭"
+          }
+        }
+      }
+    },
+    "settings.play-chimes-when-autosense-acknowledges-camera-requests" : {
+      "comment" : "VIMMachineSettings.m: Autosense chime option",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Play chimes when Autosense acknowledges camera requests"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动感应响应相机请求时播放提示音"
+          }
+        }
+      }
+    },
+    "settings.selected-device-unavailable" : {
+      "comment" : "VIMMachineSettings.m: Saved camera that is not attached to this Mac",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Selected Camera (Unavailable)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所选相机（不可用）"
+          }
+        }
+      }
+    },
+    "settings.test-pattern" : {
+      "comment" : "VIMMachineSettings.m: Test Pattern",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Test Pattern"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "测试图案"
+          }
+        }
+      }
+    },
+    "settings.you-can-allow-virtual-intel-mac-to-use-this-mac-s-camera" : {
+      "comment" : "VIMMachineSettings.m: You can allow Virtual Intel Mac to use this Mac’s camera in Privacy settings.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You can allow Virtual Intel Mac to use this Mac’s camera in Privacy settings."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你可以在隐私设置中允许虚拟Intel Mac使用此Mac的相机。"
           }
         }
       }

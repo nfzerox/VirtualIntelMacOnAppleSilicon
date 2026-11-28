@@ -22,6 +22,7 @@ static inline NSString *VIMLocalizedLabel(NSString *identifier) {
         @"Sound": VIMLocalized(@"category.sound", @"Sound"),
         @"Sound Output": VIMLocalized(@"category.sound-output", @"Sound Output"),
         @"Microphone": VIMLocalized(@"category.microphone", @"Microphone"),
+        @"Camera": VIMLocalized(@"category.camera", @"Camera"),
         @"Keyboard": VIMLocalized(@"category.keyboard", @"Keyboard"),
         @"Hard Disk": VIMLocalized(@"category.hard-disk", @"Hard Disk"),
         @"CD/DVD": VIMLocalized(@"category.optical", @"CD/DVD"),

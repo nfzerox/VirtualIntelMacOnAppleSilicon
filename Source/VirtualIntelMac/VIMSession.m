@@ -31,6 +31,7 @@
 #import "VIMAlerts.h"
 #import "VIMDiscImage.h"
 #import "VIMHostAudio.h"
+#import "VIMCameraCapture.h"
 #import "VIMNetworkDefaults.h"
 #import "VIMNetworkClient.h"
 #import "VIMClipboardBridge.h"
@@ -315,6 +316,10 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
 @property NSMutableDictionary<NSString *,NSString *> *usbAttached;
 @property NSArray<NSDictionary *> *audioOutputChoices;
 @property NSArray<NSDictionary *> *audioInputChoices;
+@property VIMCameraCapture *cameraCapture;
+@property BOOL cameraDriverLoaded;
+@property NSString *cameraSocketPath;
+@property NSUInteger cameraFunctions;
 @property BOOL audioChoicesPending;
 @property NSArray<NSString *> *guestIPAddresses;
 @property NSTimer *statusTimer;
@@ -345,6 +350,18 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
 @property NSMutableDictionary<NSNumber *,NSDictionary *> *additionalMedia;
 @property NSMutableSet<NSNumber *> *imageDevices;
 @end
+static void VIMPlayAutosenseChime(BOOL start) {
+    static NSSound *startSound,*endSound;static dispatch_once_t once;
+    dispatch_once(&once,^{
+        NSBundle *bundle=NSBundle.mainBundle;
+        NSURL *startURL=[bundle URLForResource:@"AutosenseStart" withExtension:@"aif"],*endURL=[bundle URLForResource:@"AutosenseEnd" withExtension:@"aif"];
+        startSound=startURL?[[NSSound alloc] initWithContentsOfURL:startURL byReference:YES]:nil;
+        endSound=endURL?[[NSSound alloc] initWithContentsOfURL:endURL byReference:YES]:nil;
+        startSound.volume=.3;endSound.volume=.3;
+    });
+    NSSound *sound=start?startSound:endSound;
+    [startSound stop];[endSound stop];[sound play];
+}
 @implementation VIMSession
 + (void)initialize {
     if(self!=VIMSession.class)return;
@@ -1265,6 +1282,33 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         if(!VIMIsAssistantGuest(self.machine.guest)&&[NSProcessInfo.processInfo.arguments containsObject:@"--trace-hda-codec"])
             [baseArguments addObjectsFromArray:@[@"-global",@"intel-hda.debug=2",@"-global",@"hda-duplex.debug=2"]];
     }
+    if(VIMCameraDeviceAdvertised(config)) {
+        self.cameraSocketPath=[self.runtimeDirectory stringByAppendingPathComponent:@"camera"];
+        NSString *cameraBus=@"usb.0";
+        NSUInteger cameraPort=3;
+        if(!VIMImageUsesUSB3(self.machine.guest)) {
+            NSMutableIndexSet *used=[NSMutableIndexSet indexSetWithIndex:3];
+            for(NSUInteger slot=1;slot<VIMImageSlotCount;slot++)
+                if(VIMImageSlotPath(config,slot).length)[used addIndex:VIMImageUSBPort(self.machine.guest,slot)];
+            cameraPort=0;
+            for(NSUInteger candidate=4;candidate<=6;candidate++)
+                if(![used containsIndex:candidate]){cameraPort=candidate;break;}
+            if(!cameraPort){cameraBus=@"xhci.0";cameraPort=1;}
+        }
+        NSString *namesPath=[self.runtimeDirectory stringByAppendingPathComponent:@"camera-names"];
+        NSMutableString *names=[NSMutableString string];
+        NSUInteger functions=0;
+        for(NSDictionary *camera in VIMCameraFunctions(config)) {
+            NSString *name=[camera[@"Name"] stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+            if(name.length){[names appendFormat:@"%@\n",name];functions++;}
+        }
+        if(!functions||VIMIsPreLionGuest(self.machine.guest))functions=1;
+        self.cameraFunctions=functions;
+        [names writeToFile:namesPath atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+        [baseArguments addObjectsFromArray:@[@"-chardev",[NSString stringWithFormat:
+            @"socket,id=camera0,path=%@,server=on,wait=off",VIMOptionPath(self.cameraSocketPath)],
+            @"-device",[NSString stringWithFormat:@"usb-camera,chardev=camera0,names=%@,bus=%@,port=%lu%@,fps=%u",VIMOptionPath(namesPath),cameraBus,(unsigned long)cameraPort,VIMCameraDeviceSuffix(self.machine.guest),VIMCameraFrameRate(self.machine.guest)]]];
+    }
     if(!efiOverride&&[@[@"snowleopard",@"lion",@"mountainlion",@"mavericks",@"yosemite",
                         @"elcapitan",@"sierra",@"highsierra"] containsObject:self.machine.guest]) {
         // The bundled MacPro5,1 profiles preserve the virtual DIMM records.
@@ -1484,6 +1528,8 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
             environment[@"VIM_OPENGL_VRAM_ENDPOINT"]=[self.runtimeDirectory stringByAppendingPathComponent:@"vram-endpoint.plist"];
         if(![environment[@"VIM_OPENGL_DISPLAY_ENDPOINT"] length])
             environment[@"VIM_OPENGL_DISPLAY_ENDPOINT"]=[self.runtimeDirectory stringByAppendingPathComponent:@"graphics-endpoint.plist"];
+        if(VIMOpenGLRendererMemoryInBytes(self.machine.guest))environment[@"VIM_OPENGL_RENDERER_MEMORY_BYTES"]=@"1";
+        if(VIMOpenGLFlushPublishesBack(self.machine.guest))environment[@"VIM_OPENGL_FLUSH_PUBLISHES_BACK"]=@"1";
     }
     // Never inherit a developer's routing override into an unrelated VM.
     [environment removeObjectForKey:@"VIM_AUDIO_OUTPUT_DEVICE"];
@@ -1608,6 +1654,32 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         }];
     });};
     if(![self.task launchAndReturnError:error]) { [self cleanUp];return NO; }
+    if(self.cameraSocketPath) {
+        self.cameraCapture=[VIMCameraCapture new];
+        self.cameraCapture.frameRate=VIMCameraFrameRate(self.machine.guest);
+        self.cameraCapture.driverChanged=^(BOOL loaded){
+            [weakSelf setCameraDriverState:loaded];
+        };
+        self.cameraCapture.autosenseActivityChanged=^(BOOL active){
+            VIMSession *session=weakSelf;
+            if(!session||!VIMCameraChimesEnabled(session.machine.editableConfiguration))return;
+            VIMPlayAutosenseChime(active);
+        };
+        [self applyCameraPreferences];
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(cameraDevicesChanged:) name:AVCaptureDeviceWasConnectedNotification object:nil];
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(cameraDevicesChanged:) name:AVCaptureDeviceWasDisconnectedNotification object:nil];
+        [self.cameraCapture startWithSocketPath:self.cameraSocketPath functions:self.cameraFunctions guestOpened:^(NSString *uid){
+            VIMSession *session=weakSelf;
+            if(!session||![VIMCameraMode(session.machine.editableConfiguration) isEqual:@"autosense"])return;
+            if([VIMCameraSelection(session.machine.editableConfiguration) isEqual:uid])return;
+            if(![session.machine saveSettings:@{@"CameraDevice":uid} error:NULL])return;
+            [session applyCameraPreferences];
+            [NSNotificationCenter.defaultCenter postNotificationName:@"VIMLibraryChanged" object:nil];
+        } log:^(NSString *message){
+            VIMSession *session=weakSelf;if(!session.log)return;
+            [session.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] %@\n",message] dataUsingEncoding:NSUTF8StringEncoding]];
+        }];
+    }
     if(openGLInprocess) {
         rendererPID=[NSString stringWithFormat:@"%d",self.task.processIdentifier];
         if(!VIMPrepareOpenGLSurfaceEndpoint(self.displayConnection,self.task.processIdentifier,self.runtimeDirectory,error)) {
@@ -3445,6 +3517,35 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         off.representedObject=@{@"Input":@(input),@"UID":@"disabled"};off.state=[selected isEqual:@"disabled"]?NSControlStateValueOn:NSControlStateValueOff;
         [self refreshAudioChoices];return;
     }
+    if([kind isEqual:@"Camera"]) {
+        if(!VIMCameraDeviceAdvertised(config)) {
+            [self addDeviceItem:VIMLocalized(@"session.camera-disconnected", @"Camera Disconnected") action:nil toMenu:menu].enabled=NO;
+            [menu addItem:NSMenuItem.separatorItem];
+            [self addDeviceItem:VIMLocalized(@"session.connect-camera", @"Connect Camera…") action:@selector(showCameraSettings:) toMenu:menu];
+            return;
+        }
+        NSString *selected=VIMCameraSelection(config);
+        NSMutableArray *choices=[NSMutableArray arrayWithArray:@[@{@"Name":VIMLocalized(@"app.default", @"Default"),@"UID":@"default"}]];
+        [choices addObjectsFromArray:VIMHostCameraDevices()?:@[]];
+        for(NSDictionary *choice in choices) {
+            NSMenuItem *item=[self addDeviceItem:choice[@"Name"] action:@selector(changeCameraChoice:) toMenu:menu];item.representedObject=choice[@"UID"];item.state=[selected isEqual:choice[@"UID"]]?NSControlStateValueOn:NSControlStateValueOff;
+        }
+        [menu addItem:NSMenuItem.separatorItem];
+        NSString *mode=VIMCameraMode(config);
+        NSMenuItem *modeOff=[self addDeviceItem:VIMLocalized(@"settings.camera-mode.off", @"No Picture") action:@selector(changeCameraMode:) toMenu:menu];
+        modeOff.representedObject=@"off";modeOff.state=[mode isEqual:@"off"]?NSControlStateValueOn:NSControlStateValueOff;
+        NSMenuItem *autosense=[self addDeviceItem:VIMLocalized(@"settings.autosense", @"Autosense") action:@selector(changeCameraMode:) toMenu:menu];
+        autosense.representedObject=@"autosense";autosense.state=[mode isEqual:@"autosense"]?NSControlStateValueOn:NSControlStateValueOff;
+        NSMenuItem *constant=[self addDeviceItem:VIMLocalized(@"settings.constant-output", @"Constant Output") action:@selector(changeCameraMode:) toMenu:menu];
+        constant.representedObject=@"constant";constant.state=[mode isEqual:@"constant"]?NSControlStateValueOn:NSControlStateValueOff;
+        if(VIMCameraTestPatternOffered(mode)){
+            [menu addItem:NSMenuItem.separatorItem];
+            NSMenuItem *pattern=[self addDeviceItem:VIMLocalized(@"settings.test-pattern", @"Test Pattern") action:@selector(changeCameraMode:) toMenu:menu];
+            pattern.representedObject=@"testpattern";pattern.state=[mode isEqual:@"testpattern"]?NSControlStateValueOn:NSControlStateValueOff;
+        }
+        [menu addItem:NSMenuItem.separatorItem];[self addDeviceItem:VIMLocalized(@"library.configure", @"Configure…") action:@selector(showCameraSettings:) toMenu:menu];
+        return;
+    }
     if([kind isEqual:@"Keyboard"]) {
         NSArray *shortcuts=@[@[@"Command–Option–Escape",@[@"meta_l",@"alt",@"esc"]],
             @[@"Command–Tab",@[@"meta_l",@"tab"]],@[@"Command–Space",@[@"meta_l",@"spc"]],
@@ -3455,6 +3556,7 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         for(NSArray *shortcut in shortcuts)[self addDeviceItem:shortcut[0] action:@selector(sendMenuShortcut:) toMenu:menu].representedObject=shortcut[1];
     }
 }
+- (void)showCameraSettings:(id)sender {[VIMMachineSettings showForMachine:self.machine section:@"Hardware" category:@"Camera" window:self.window];}
 - (void)showOpticalSettings:(id)sender {[VIMMachineSettings showForMachine:self.machine section:@"Hardware" category:@"CD/DVD" window:self.window];}
 - (void)copyGuestIPAddress:(NSMenuItem *)sender {
     // The menu may have stayed open through a network change. Never copy a
@@ -3479,10 +3581,30 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     }
     else [NSNotificationCenter.defaultCenter postNotificationName:@"VIMLibraryChanged" object:nil];
 }
+- (void)changeCameraChoice:(NSMenuItem *)sender {
+    NSString *uid=sender.representedObject;NSError *error=nil;
+    if(![uid isKindOfClass:NSString.class]||[uid isEqual:@"disabled"]||!VIMCameraDeviceAdvertised(self.machine.editableConfiguration)||
+       [VIMCameraSelection(self.machine.editableConfiguration) isEqual:uid])return;
+    if(![self.machine saveSettings:@{@"CameraDevice":uid} error:&error]){VIMPresentError(error,self.window);return;}
+    [VIMSession cameraPreferencesChangedForMachine:self.machine];
+    [NSNotificationCenter.defaultCenter postNotificationName:@"VIMLibraryChanged" object:nil];
+}
+- (void)logCamera:(NSString *)message {
+    [self.log writeData:[[NSString stringWithFormat:@"\n[Virtual Intel Mac] Camera: %@\n",message] dataUsingEncoding:NSUTF8StringEncoding]];
+}
+- (void)changeCameraMode:(NSMenuItem *)sender {
+    NSString *mode=sender.representedObject;NSError *error=nil;
+    if(![mode isKindOfClass:NSString.class]||!VIMCameraDeviceAdvertised(self.machine.editableConfiguration)||
+       [VIMCameraMode(self.machine.editableConfiguration) isEqual:mode])return;
+    if(![self.machine saveSettings:@{@"CameraMode":mode} error:&error]){VIMPresentError(error,self.window);return;}
+    [VIMMachineSettings handleCameraModeSelection:mode fromWindow:self.window];
+    [VIMSession cameraPreferencesChangedForMachine:self.machine];
+    [NSNotificationCenter.defaultCenter postNotificationName:@"VIMLibraryChanged" object:nil];
+}
 - (void)menuNeedsUpdate:(NSMenu *)menu {
     NSString *kind=[menu isKindOfClass:VIMLiveDeviceMenu.class]?((VIMLiveDeviceMenu *)menu).deviceKind:menu.identifier;
     if([kind isEqual:VIMUSBMenuTitle]||[kind isEqual:@"USB"])[self populateUSBMenu:menu];
-    else if([@[@"CD/DVD",@"Network",@"Sound Output",@"Microphone",@"Keyboard"] containsObject:kind])[self populateDeviceMenu:menu];
+    else if([@[@"CD/DVD",@"Network",@"Sound Output",@"Microphone",@"Camera",@"Keyboard"] containsObject:kind])[self populateDeviceMenu:menu];
 }
 - (void)refreshUSBToolbar:(NSNotification *)notification {
     for(NSToolbarItem *top in self.window.toolbar.items) {
@@ -3743,6 +3865,48 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
 + (void)clipboardPreferencesChangedForMachine:(VIMMachine *)machine {
     VIMSession *session=sessions[SessionKey(machine)];
     [session updateClipboardForBoot:session.usernameBoot];
+}
++ (void)cameraPreferencesChangedForMachine:(VIMMachine *)machine {
+    [sessions[SessionKey(machine)] applyCameraPreferences];
+}
+- (void)setCameraDriverState:(BOOL)loaded {
+    if(self.cameraDriverLoaded==loaded)return;
+    self.cameraDriverLoaded=loaded;
+    [self logCamera:loaded?@"the guest driver took the camera":@"the guest driver released the camera"];
+    NSString *identifier=self.machine.configuration[@"Identifier"];
+    [NSNotificationCenter.defaultCenter postNotificationName:@"VIMCameraDriverChanged" object:identifier];
+}
++ (BOOL)cameraDriverLoadedForMachine:(VIMMachine *)machine {
+    VIMSession *session=sessions[SessionKey(machine)];
+    return session.task.running&&session.cameraDriverLoaded;
+}
++ (void)offerCameraRestartForMachine:(VIMMachine *)machine window:(NSWindow *)window {
+    VIMSession *session=sessions[SessionKey(machine)];
+    if(!session.task.running)return;
+    BOOL connect=VIMCameraDeviceAdvertised(machine.editableConfiguration);
+    if(connect==(session.cameraSocketPath!=nil))return;
+    NSAlert *alert=[NSAlert new];
+    alert.messageText=connect?VIMLocalized(@"session.restart-to-enable-the-camera-driver", @"Restart to enable the camera?"):
+        VIMLocalized(@"session.restart-to-disable-the-camera-driver", @"Restart to disable the camera?");
+    alert.informativeText=VIMLocalized(@"session.the-camera-is-added-or-removed-when-the-virtual-mac-starts", @"The virtual Mac adds or removes its camera when it starts. Save your work before restarting.");
+    [alert addButtonWithTitle:VIMLocalized(@"session.restart-now", @"Restart Now")];[alert addButtonWithTitle:VIMLocalized(@"ui.later", @"Later")];
+    VIMPresentAlert(alert,window?:session.window,^(NSModalResponse response){
+        if(response!=NSAlertFirstButtonReturn||!session.task.running||session.shutdownRequested)return;
+        [session.guestAgent requestRestartWithCompletion:^(NSError *error){
+            if(error&&session.task.running)VIMPresentError(error,window?:session.window);
+        }];
+    });
+}
++ (void)cameraAccessChanged {
+    for(VIMSession *session in sessions.allValues)[session applyCameraPreferences];
+}
+- (void)cameraDevicesChanged:(NSNotification *)notification {
+    (void)notification;[self applyCameraPreferences];
+}
+- (void)applyCameraPreferences {
+    if(!self.cameraCapture)return;
+    NSDictionary *config=self.machine.editableConfiguration;
+    [self.cameraCapture updateWithCameras:VIMCameraFunctions(config) mode:VIMCameraMode(config) preferredUID:VIMCameraPreferredUID(config) enabled:VIMCameraRoutingEnabled(config)];
 }
 - (void)updateClipboardForBoot:(NSString *)boot {
     [self updateBridgeForBoot:boot displayPowerOnly:YES];
@@ -4211,6 +4375,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
     self.bootPolicyPending=NO;self.bootPolicyCheckedBoot=nil;self.mojaveAppPolicyBoot=nil;
     self.networkStarting=NO;[self.networkClient stop];self.networkClient=nil;self.guestIPAddresses=nil;
     [self.usbClient stop];self.usbClient=nil;self.usbOperationPending=NO;self.usbAttached=nil;
+    [NSNotificationCenter.defaultCenter removeObserver:self name:AVCaptureDeviceWasConnectedNotification object:nil];
+    [NSNotificationCenter.defaultCenter removeObserver:self name:AVCaptureDeviceWasDisconnectedNotification object:nil];
+    [self.cameraCapture stop];self.cameraCapture=nil;[self setCameraDriverState:NO];
     [self.smbService stop];self.smbService=nil;
     [self.clipboard stop];self.clipboard=nil;self.clipboardPending=NO;self.clipboardConfiguredBoot=nil;
     [self.powerBridge stop];self.powerBridge=nil;self.powerConfiguredBoot=nil;self.powerRetryAfter=nil;
@@ -4228,6 +4395,9 @@ static NSMenu *WithToolbarMenuTitle(NSMenu *menu,NSString *title) {
         unlink([self.runtimeDirectory stringByAppendingPathComponent:@"control"].fileSystemRepresentation);
         unlink([self.runtimeDirectory stringByAppendingPathComponent:@"guest-agent"].fileSystemRepresentation);
         unlink([self.runtimeDirectory stringByAppendingPathComponent:@"recovery-agent"].fileSystemRepresentation);
+        unlink([self.runtimeDirectory stringByAppendingPathComponent:@"camera"].fileSystemRepresentation);
+        unlink([self.runtimeDirectory stringByAppendingPathComponent:@"camera-names"].fileSystemRepresentation);
+        self.cameraSocketPath=nil;
         rmdir(self.runtimeDirectory.fileSystemRepresentation);
     }
     // Only called before launch or after NSTask reports termination.

@@ -111,12 +111,14 @@ static BOOL SettingsValid(NSDictionary *c) {
     if(c[@"MACAddress"]&&(![c[@"MACAddress"] isKindOfClass:NSString.class]||([c[@"MACAddress"] length]&&!VIMNetworkMACAddressIsValid(c[@"MACAddress"]))))return NO;
     if(c[@"DisplayMode"]&&![@[@"retina",@"scaled",@"space"] containsObject:c[@"DisplayMode"]])return NO;
     if(c[@"DisplayScalingFilter"]&&![@[@"linear",@"nearest"] containsObject:c[@"DisplayScalingFilter"]])return NO;
-    for(NSString *key in @[@"AudioOutputDevice",@"AudioInputDevice"])
+    for(NSString *key in @[@"AudioOutputDevice",@"AudioInputDevice",@"CameraDevice"])
         if(c[key]&&(![c[key] isKindOfClass:NSString.class]||[c[key] length]>1024))return NO;
+    if(c[@"CameraChimesEnabled"]&&![c[@"CameraChimesEnabled"] isKindOfClass:NSNumber.class])return NO;
+    if(c[@"CameraMode"]&&![@[@"off",@"constant",@"autosense",@"testpattern"] containsObject:c[@"CameraMode"]])return NO;
     return YES;
 }
 static NSSet *BaseEditableSettingKeys(void) {
-    static NSSet *keys;static dispatch_once_t once;dispatch_once(&once,^{keys=[NSSet setWithArray:@[@"CPUCount",@"MemoryMiB",@"SSHEnabled",@"SSHPort",@"FileSharingEnabled",@"FileSharingPort",@"AudioEnabled",@"Description",@"RetinaEnabled",@"OpticalMedia",@"NetworkConnected",@"MACAddress",@"DisplayMode",@"AudioOutputDevice",@"AudioInputDevice",@"ClipboardEnabled"]];});return keys;
+    static NSSet *keys;static dispatch_once_t once;dispatch_once(&once,^{keys=[NSSet setWithArray:@[@"CPUCount",@"MemoryMiB",@"SSHEnabled",@"SSHPort",@"FileSharingEnabled",@"FileSharingPort",@"AudioEnabled",@"Description",@"RetinaEnabled",@"OpticalMedia",@"NetworkConnected",@"MACAddress",@"DisplayMode",@"AudioOutputDevice",@"AudioInputDevice",@"CameraDevice",@"CameraMode",@"CameraChimesEnabled",@"ClipboardEnabled"]];});return keys;
 }
 static NSSet *EditableSettingKeys(void) {
     NSMutableSet *keys=[BaseEditableSettingKeys() mutableCopy];[keys addObjectsFromArray:@[@"NetworkMode",@"BridgeInterface",@"DisplayScalingFilter",@"AdditionalMedia",@"PassthroughOpenGLEnabled",@"CPUBackend",@"MouseRegionAccommodation",@"InputReleaseShortcut"]];return keys;

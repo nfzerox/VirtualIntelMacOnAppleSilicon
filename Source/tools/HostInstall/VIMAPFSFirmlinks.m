@@ -644,6 +644,7 @@ static BOOL EmitCanonicalFilesystem(Container c,NSUUID *system,NSDictionary *pla
     uint64_t stamp=[plan[@"ChangeTime"] unsignedLongLongValue];
     static const char rootlessName[]="com.apple.rootless";
     static const char alternateName[]="com.apple.fs.altlink";
+    static const char provenanceName[]="com.apple.provenance";
     BOOL walked=WalkTree(c,U64(volume+136),resolve,14,NO,
         ^BOOL(__unused uint8_t *node,__unused uint64_t address,BOOL leaf,uint8_t *key,size_t k,uint8_t *value,size_t v) {
             if(!leaf)return YES;
@@ -655,6 +656,8 @@ static BOOL EmitCanonicalFilesystem(Container c,NSUUID *system,NSDictionary *pla
             if(kind==Xattr&&k==10+sizeof(rootlessName)&&!memcmp(key+10,rootlessName,sizeof(rootlessName))&&rootless[@(oid)])
                 return YES; // Emit the original signed value below.
             if(kind==Xattr&&k==10+sizeof(alternateName)&&!memcmp(key+10,alternateName,sizeof(alternateName))&&alternate[@(oid)])
+                return YES;
+            if(kind==Xattr&&k==10+sizeof(provenanceName)&&!memcmp(key+10,provenanceName,sizeof(provenanceName)))
                 return YES;
             Set64(key,(kind<<60)|CanonicalID(ids,oid));
             if(kind==Inode) {

@@ -432,7 +432,9 @@
         keep.state=[NSUserDefaults.standardUserDefaults boolForKey:@"VIMKeepInstallers"]?NSControlStateValueOn:NSControlStateValueOff;
         NSButton *guestInstaller=[NSButton checkboxWithTitle:VIMLocalized(@"appdelegate.use-slower-guest-side-installation-for-troubleshooting", @"Use slower guest-side installation for troubleshooting") target:self action:@selector(changeGuestInstaller:)];
         guestInstaller.state=[NSUserDefaults.standardUserDefaults boolForKey:@"VIMUseGuestInstaller"]?NSControlStateValueOn:NSControlStateValueOff;
-        NSStackView *options=[NSStackView stackViewWithViews:@[keep,guestInstaller]];options.orientation=NSUserInterfaceLayoutOrientationVertical;options.alignment=NSLayoutAttributeLeading;options.spacing=16;options.translatesAutoresizingMaskIntoConstraints=NO;[advanced.view addSubview:options];
+        NSButton *testPattern=[NSButton checkboxWithTitle:VIMLocalized(@"appdelegate.show-camera-test-pattern", @"Show the camera Test Pattern mode") target:self action:@selector(changeCameraTestPattern:)];
+        testPattern.state=[NSUserDefaults.standardUserDefaults boolForKey:@"VIMShowCameraTestPattern"]?NSControlStateValueOn:NSControlStateValueOff;
+        NSStackView *options=[NSStackView stackViewWithViews:@[keep,guestInstaller,testPattern]];options.orientation=NSUserInterfaceLayoutOrientationVertical;options.alignment=NSLayoutAttributeLeading;options.spacing=16;options.translatesAutoresizingMaskIntoConstraints=NO;[advanced.view addSubview:options];
         [NSLayoutConstraint activateConstraints:@[[options.leadingAnchor constraintEqualToAnchor:advanced.view.leadingAnchor constant:32],[options.trailingAnchor constraintEqualToAnchor:advanced.view.trailingAnchor constant:-32],[options.topAnchor constraintEqualToAnchor:advanced.view.topAnchor constant:28],[options.bottomAnchor constraintEqualToAnchor:advanced.view.bottomAnchor constant:-24],[advanced.view.widthAnchor constraintEqualToConstant:640]]];
         NSTabViewItem *advancedItem=[NSTabViewItem tabViewItemWithViewController:advanced];advancedItem.label=VIMLocalized(@"app.advanced", @"Advanced");advancedItem.image=[NSImage imageWithSystemSymbolName:@"gearshape.2" accessibilityDescription:VIMLocalized(@"app.advanced", @"Advanced")];[tabs addTabViewItem:advancedItem];
         self.settingsWindow.contentViewController=tabs;
@@ -450,6 +452,10 @@
 }
 - (void)changeGuestInstaller:(NSButton *)sender {
     [NSUserDefaults.standardUserDefaults setBool:sender.state==NSControlStateValueOn forKey:@"VIMUseGuestInstaller"];
+}
+- (void)changeCameraTestPattern:(NSButton *)sender {
+    [NSUserDefaults.standardUserDefaults setBool:sender.state==NSControlStateValueOn forKey:@"VIMShowCameraTestPattern"];
+    [NSNotificationCenter.defaultCenter postNotificationName:@"VIMCameraTestPatternChanged" object:nil];
 }
 - (void)exportDiagnostics:(id)sender {[VIMDiagnostics exportFromWindow:self.settingsWindow];}
 - (void)showAbout:(id)sender {

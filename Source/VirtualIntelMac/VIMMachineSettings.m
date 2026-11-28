@@ -10,6 +10,7 @@
 #import "VIMNetworkDefaults.h"
 #import "VIMSMBService.h"
 #import "VIMHostAudio.h"
+#import "VIMCameraCapture.h"
 #import "VIMAlerts.h"
 #import "VIMConfigurationTabs.h"
 #import "VIMDiskMaintenance.h"
@@ -96,6 +97,42 @@ static void VIMSetOpticalImageTitle(NSPopUpButton *popup,NSImage *image,NSString
 }
 - (void)cancel:(id)sender {[self.window.sheetParent endSheet:self.window];}
 - (void)save:(id)sender {if(!self.save||self.save(self.window))[self.window.sheetParent endSheet:self.window];}
+@end
+
+@interface VIMAutosenseOnboardingSheet : NSWindowController
+@end
+@implementation VIMAutosenseOnboardingSheet
+- (instancetype)init {
+    const CGFloat width=440;
+    NSImage *banner=[NSImage imageNamed:@"AutosenseOnboarding"];
+    CGFloat bannerHeight=banner.size.width>0?(width*(banner.size.height/banner.size.width)):275;
+    NSWindow *window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,width,bannerHeight+200) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+    if((self=[super initWithWindow:window])) {
+        window.title=@"";window.titleVisibility=NSWindowTitleHidden;window.releasedWhenClosed=NO;
+        NSImageView *image=[NSImageView imageViewWithImage:banner];
+        image.imageScaling=NSImageScaleAxesIndependently;image.imageAlignment=NSImageAlignCenter;
+        [image.widthAnchor constraintEqualToConstant:width].active=YES;
+        [image.heightAnchor constraintEqualToConstant:bannerHeight].active=YES;
+        NSTextField *title=[NSTextField labelWithString:VIMLocalized(@"settings.autosense", @"Autosense")];
+        title.font=[NSFont systemFontOfSize:20 weight:NSFontWeightSemibold];title.alignment=NSTextAlignmentCenter;
+        title.textColor=NSColor.labelColor;
+        NSTextField *body=[NSTextField wrappingLabelWithString:VIMLocalized(@"settings.autosense-onboarding", @"Through a custom cross-architecture driver, Virtual Intel Mac will automatically detect when the virtual machine is in need of camera output, and hint at the host accordingly. This helps better preserve your privacy, but may not work in all edge cases.")];
+        body.font=[NSFont systemFontOfSize:13 weight:NSFontWeightRegular];body.alignment=NSTextAlignmentCenter;
+        body.textColor=NSColor.secondaryLabelColor;body.preferredMaxLayoutWidth=width-48;
+        NSButton *continueButton=[NSButton buttonWithTitle:VIMLocalized(@"common.continue", @"Continue") target:self action:@selector(continue:)];
+        continueButton.keyEquivalent=@"\r";[continueButton.widthAnchor constraintGreaterThanOrEqualToConstant:90].active=YES;
+        NSStackView *copy=[NSStackView stackViewWithViews:@[title,body]];
+        copy.orientation=NSUserInterfaceLayoutOrientationVertical;copy.alignment=NSLayoutAttributeCenterX;copy.spacing=8;
+        NSStackView *content=[NSStackView stackViewWithViews:@[copy,continueButton]];
+        content.orientation=NSUserInterfaceLayoutOrientationVertical;content.alignment=NSLayoutAttributeCenterX;content.spacing=20;
+        content.edgeInsets=NSEdgeInsetsMake(20,24,24,24);
+        NSStackView *root=[NSStackView stackViewWithViews:@[image,content]];
+        root.orientation=NSUserInterfaceLayoutOrientationVertical;root.alignment=NSLayoutAttributeLeading;root.spacing=0;
+        window.contentView=root;
+        [window setContentSize:NSMakeSize(width,bannerHeight+content.fittingSize.height)];
+    }return self;
+}
+- (void)continue:(id)sender {[self.window.sheetParent endSheet:self.window];}
 @end
 
 @interface VIMConfigurationSidebar : NSTableView
@@ -240,6 +277,8 @@ static BOOL VIMConfigurationFormLayoutIsValid(NSView *view) {
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(sessionStateChanged:) name:@"VIMLibraryChanged" object:nil];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(sessionStateChanged:) name:@"VIMNetworkChanged" object:nil];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(packageRelocated:) name:@"VIMMachineRelocated" object:nil];
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(cameraDriverChanged:) name:@"VIMCameraDriverChanged" object:nil];
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(cameraDriverChanged:) name:@"VIMCameraTestPatternChanged" object:nil];
         window.title=[NSString stringWithFormat:VIMLocalized(@"ui.configuration", @"“%@” Configuration"),machine.name];
         NSToolbar *toolbar=[[NSToolbar alloc] initWithIdentifier:@"VIMConfigurationToolbar"];
         toolbar.delegate=self;toolbar.displayMode=NSToolbarDisplayModeIconAndLabel;
@@ -256,6 +295,10 @@ static BOOL VIMConfigurationFormLayoutIsValid(NSView *view) {
         self.guestUsername=[NSUserDefaults.standardUserDefaults stringForKey:[@"VIMGuestUsername-" stringByAppendingString:self.machine.URL.path]]?:@"";
         [self render];
     }
+}
+- (void)cameraDriverChanged:(NSNotification *)note {
+    if(note.object&&![note.object isEqual:self.machine.configuration[@"Identifier"]])return;
+    if([self.section isEqual:@"Hardware"]&&self.hardwareIndex==5)[self render];
 }
 - (void)packageRelocated:(NSNotification *)note {
     if(![note.userInfo[@"Identifier"] isEqual:self.machine.configuration[@"Identifier"]])return;
@@ -487,6 +530,40 @@ static BOOL VIMConfigurationFormLayoutIsValid(NSView *view) {
         return VIMColumn(@[grid,hostAccess,
             VIMText(VIMLocalized(@"settings.changes-take-effect-the-next-time-the-virtual-mac-starts", @"Changes take effect the next time the virtual Mac starts."),NO)]);
     }
+    if(self.hardwareIndex==5) {
+        BOOL connected=VIMCameraDeviceAdvertised(c);NSString *modeValue=VIMCameraMode(c);
+        BOOL driverLoaded=[VIMSession cameraDriverLoadedForMachine:self.machine];
+        NSSwitch *connection=[NSSwitch new];connection.identifier=@"CameraConnected";
+        connection.state=connected?NSControlStateValueOn:NSControlStateValueOff;
+        connection.target=self;connection.action=@selector(cameraConnectionChanged:);
+        NSString *driverTitle=VIMLocalized(@"settings.enable-virtual-intel-mac-driver", @"Enable Camera");
+        connection.accessibilityLabel=driverTitle;
+        NSTextField *driverLabel=[NSTextField labelWithString:driverTitle];
+        NSImageView *dot=[NSImageView imageViewWithImage:[NSImage imageWithSystemSymbolName:@"circle.fill" accessibilityDescription:nil]];
+        dot.symbolConfiguration=[NSImageSymbolConfiguration configurationWithPointSize:9 weight:NSFontWeightRegular];
+        dot.contentTintColor=driverLoaded?NSColor.systemGreenColor:NSColor.tertiaryLabelColor;
+        NSTextField *status=[NSTextField labelWithString:driverLoaded?VIMLocalized(@"settings.connected", @"Connected"):VIMLocalized(@"settings.disconnected", @"Disconnected")];
+        status.textColor=driverLoaded?NSColor.labelColor:NSColor.secondaryLabelColor;
+        status.toolTip=VIMLocalized(@"settings.camera-driver-light-tooltip", @"Green while the virtual Mac’s camera driver is loaded.");
+        NSStackView *connectionRow=[NSStackView stackViewWithViews:@[connection,driverLabel,dot,status]];connectionRow.spacing=8;
+        [connectionRow setCustomSpacing:20 afterView:driverLabel];connectionRow.alignment=NSLayoutAttributeCenterY;
+        NSPopUpButton *camera=[self cameraPopup],*mode=[self cameraModePopup];camera.enabled=connected&&![modeValue isEqual:@"testpattern"];mode.enabled=connected;
+        NSButton *chimes=[NSButton checkboxWithTitle:VIMLocalized(@"settings.play-chimes-when-autosense-acknowledges-camera-requests", @"Play chimes when Autosense acknowledges camera requests") target:self action:@selector(cameraChimesChanged:)];
+        chimes.state=VIMCameraChimesEnabled(c)?NSControlStateValueOn:NSControlStateValueOff;
+        chimes.enabled=connected&&[modeValue isEqual:@"autosense"];
+        NSTextField *cameraLabel=[NSTextField labelWithString:VIMLocalized(@"settings.camera", @"Camera:")],*modeLabel=[NSTextField labelWithString:VIMLocalized(@"settings.camera-mode", @"Mode:")];
+        if(!connected){cameraLabel.textColor=NSColor.disabledControlTextColor;modeLabel.textColor=NSColor.disabledControlTextColor;}
+        NSGridView *grid=[NSGridView gridViewWithViews:@[
+            @[NSGridCell.emptyContentView,connectionRow],
+            @[cameraLabel,camera],@[modeLabel,mode],@[NSGridCell.emptyContentView,chimes]]];
+        grid.rowSpacing=20;grid.columnSpacing=12;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;[grid columnAtIndex:1].xPlacement=NSGridCellPlacementLeading;
+        NSString *explanation=!connected?VIMLocalized(@"settings.camera-explanation.disconnected", @"The virtual Mac has no camera. Turn on Enable Camera to add one; only Autosense and Constant Output ask for camera access."):
+            ([modeValue isEqual:@"constant"]?VIMLocalized(@"settings.camera-explanation.constant", @"This Mac’s camera stays on while the virtual Mac is running."):
+            ([modeValue isEqual:@"autosense"]?VIMLocalized(@"settings.camera-explanation.autosense", @"This Mac’s camera turns on only while an app in the virtual Mac uses it."):
+            ([modeValue isEqual:@"testpattern"]?VIMLocalized(@"settings.camera-explanation.testpattern", @"The virtual Mac receives a test pattern. This Mac’s camera stays off and is never asked for access."):
+            VIMLocalized(@"settings.camera-explanation.off", @"No camera data is sent, but the camera stays connected, so apps in the virtual Mac still see it and you can switch to another mode without restarting. Turn the camera off to remove it entirely."))));
+        return VIMColumn(@[grid,VIMText(explanation,NO)]);
+    }
     if(self.hardwareIndex==3) {
         NSPopUpButton *source=[NSPopUpButton new];source.target=self;source.action=@selector(networkChanged:);
         [source addItemsWithTitles:@[VIMLocalized(@"settings.disconnected", @"Disconnected"),VIMLocalized(@"settings.shared-network-recommended", @"Shared Network (Recommended)"),VIMLocalized(@"settings.host-only-network", @"Host-Only Network"),VIMLocalized(@"settings.bridged-network", @"Bridged Network")]];
@@ -522,7 +599,7 @@ static BOOL VIMConfigurationFormLayoutIsValid(NSView *view) {
         grid.columnSpacing=12;grid.rowSpacing=18;[grid columnAtIndex:0].xPlacement=NSGridCellPlacementTrailing;
         return VIMColumn(@[grid]);
     }
-    if(self.hardwareIndex==6) {
+    if(self.hardwareIndex==7) {
         NSArray *images=[VIMSession connectedImagesForMachine:self.machine];NSMutableArray *rows=[NSMutableArray new];
         NSUInteger driveNumber=0;
         for(NSDictionary *image in images) {
@@ -808,6 +885,60 @@ static BOOL VIMConfigurationFormLayoutIsValid(NSView *view) {
     if([selected isEqual:@"disabled"])choice=popup.lastItem;
     [popup selectItem:choice];return popup;
 }
+- (NSPopUpButton *)cameraPopup {
+    NSPopUpButton *popup=[NSPopUpButton new];popup.identifier=@"CameraDevice";
+    [popup.widthAnchor constraintEqualToConstant:240].active=YES;
+    [popup addItemWithTitle:VIMLocalized(@"app.default", @"Default")];popup.lastItem.representedObject=@"default";
+    NSString *selected=VIMCameraSelection(self.machine.editableConfiguration);
+    for(NSDictionary *device in VIMHostCameraDevices()) {
+        [popup addItemWithTitle:device[@"Name"]];popup.lastItem.representedObject=device[@"UID"];
+    }
+    NSMenuItem *choice=popup.itemArray.firstObject;for(NSMenuItem *item in popup.itemArray)if([item.representedObject isEqual:selected])choice=item;
+    if(![selected isEqual:@"disabled"]&&![choice.representedObject isEqual:selected]){[popup addItemWithTitle:VIMLocalized(@"settings.selected-device-unavailable", @"Selected Camera (Unavailable)")];choice=popup.lastItem;choice.representedObject=selected;}
+    [popup selectItem:choice];
+    popup.target=self;popup.action=@selector(cameraChanged:);
+    return popup;
+}
+- (NSPopUpButton *)cameraModePopup {
+    NSPopUpButton *popup=[NSPopUpButton new];popup.identifier=@"CameraMode";
+    [popup.widthAnchor constraintEqualToConstant:240].active=YES;
+    [popup addItemWithTitle:VIMLocalized(@"settings.camera-mode.off", @"No Picture")];popup.lastItem.representedObject=@"off";
+    [popup addItemWithTitle:VIMLocalized(@"settings.autosense", @"Autosense")];popup.lastItem.representedObject=@"autosense";
+    [popup addItemWithTitle:VIMLocalized(@"settings.constant-output", @"Constant Output")];popup.lastItem.representedObject=@"constant";
+    NSString *mode=VIMCameraMode(self.machine.editableConfiguration);
+    if(VIMCameraTestPatternOffered(mode)){
+        [popup.menu addItem:NSMenuItem.separatorItem];
+        [popup addItemWithTitle:VIMLocalized(@"settings.test-pattern", @"Test Pattern")];popup.lastItem.representedObject=@"testpattern";
+    }
+    for(NSMenuItem *item in popup.itemArray)if([item.representedObject isEqual:mode])[popup selectItem:item];
+    popup.target=self;popup.action=@selector(cameraChanged:);
+    return popup;
+}
+- (void)cameraChanged:(NSPopUpButton *)sender {
+    NSString *value=sender.selectedItem.representedObject;
+    NSDictionary *config=self.machine.editableConfiguration;
+    if(!VIMCameraDeviceAdvertised(config))return;
+    if([sender.identifier isEqual:@"CameraMode"]&&[VIMCameraMode(config) isEqual:value])return;
+    if([sender.identifier isEqual:@"CameraDevice"]&&[VIMCameraSelection(config) isEqual:value])return;
+    if([self commitSettings:@{sender.identifier:value}]) {
+        if([sender.identifier isEqual:@"CameraMode"])[VIMMachineSettings handleCameraModeSelection:value fromWindow:self.window];
+        [VIMSession cameraPreferencesChangedForMachine:self.machine];
+        [self render];
+    }
+}
+- (void)cameraConnectionChanged:(NSSwitch *)sender {
+    BOOL connect=sender.state==NSControlStateValueOn;
+    if(connect==VIMCameraDeviceAdvertised(self.machine.editableConfiguration))return;
+    if(![self commitSettings:@{@"CameraDevice":connect?@"default":@"disabled"}]){[self render];return;}
+    if(connect&&VIMCameraModeUsesHostCamera(VIMCameraMode(self.machine.editableConfiguration)))[VIMMachineSettings requestCameraAccessFromWindow:self.window];
+    [VIMSession cameraPreferencesChangedForMachine:self.machine];
+    [NSNotificationCenter.defaultCenter postNotificationName:@"VIMLibraryChanged" object:nil];
+    [self render];
+    [VIMSession offerCameraRestartForMachine:self.machine window:self.window];
+}
+- (void)cameraChimesChanged:(NSButton *)sender {
+    [self commitSettings:@{@"CameraChimesEnabled":@(sender.state==NSControlStateValueOn)}];
+}
 - (void)audioChanged:(NSPopUpButton *)sender {
     if([self commitSettings:@{@"AudioEnabled":@YES,sender.identifier:sender.selectedItem.representedObject}])[self render];
 }
@@ -896,7 +1027,7 @@ static BOOL VIMConfigurationFormLayoutIsValid(NSView *view) {
     // Retire its callbacks before replacing the body; each table also owns
     // its immutable row model instead of consulting the new section's list.
     self.sidebar.delegate=nil;self.sidebar.dataSource=nil;self.sidebar=nil;
-    BOOL hasRestore=[self.section isEqual:@"Hardware"]&&[@[@0,@1,@3,@4] containsObject:@(self.hardwareIndex)];
+    BOOL hasRestore=[self.section isEqual:@"Hardware"]&&[@[@0,@1,@3,@4,@5] containsObject:@(self.hardwareIndex)];
     CGFloat height=[self.section isEqual:@"General"]?380:([self.section isEqual:@"Hardware"]?390:490);
     // All panes share one width; long popup titles must not resize the window.
     CGFloat width=660;
@@ -988,15 +1119,15 @@ static BOOL VIMConfigurationFormLayoutIsValid(NSView *view) {
     // intrinsic menu width and shrinks on the next AppKit layout pass.
     [content layoutSubtreeIfNeeded];
 }
-- (NSArray *)categories {return [self.section isEqual:@"Hardware"]?@[@"CPU & Memory",@"Graphics",@"Mouse & Keyboard",@"Network",@"Sound",@"Hard Disk",@"CD/DVD"]:@[@"File Sharing",@"Remote Login",@"Clipboard"];}
+- (NSArray *)categories {return [self.section isEqual:@"Hardware"]?@[@"CPU & Memory",@"Graphics",@"Mouse & Keyboard",@"Network",@"Sound",@"Camera",@"Hard Disk",@"CD/DVD"]:@[@"File Sharing",@"Remote Login",@"Clipboard"];}
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {return [(VIMConfigurationSidebar *)tableView categories].count;}
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)column row:(NSInteger)row {
     NSArray *categories=[(VIMConfigurationSidebar *)tableView categories];
     if(row<0||row>=(NSInteger)categories.count)return nil;
     NSTableCellView *cell=[NSTableCellView new];NSString *title=categories[row];
-    NSString *symbol=@{@"CPU & Memory":@"cpu",@"Graphics":@"display",@"Sound":@"speaker.wave.2",@"Network":@"network",@"Hard Disk":@"internaldrive",@"Mouse & Keyboard":@"keyboard",@"File Sharing":@"folder",@"Remote Login":@"terminal",@"CD/DVD":@"opticaldisc",@"Clipboard":@"doc.on.clipboard"}[title];
+    NSString *symbol=@{@"CPU & Memory":@"cpu",@"Graphics":@"display",@"Sound":@"speaker.wave.2",@"Camera":@"camera",@"Network":@"network",@"Hard Disk":@"internaldrive",@"Mouse & Keyboard":@"keyboard",@"File Sharing":@"folder",@"Remote Login":@"terminal",@"CD/DVD":@"opticaldisc",@"Clipboard":@"doc.on.clipboard"}[title];
     NSColor *color=@{@"CPU & Memory":NSColor.systemBlueColor,@"Graphics":NSColor.systemIndigoColor,
-        @"Sound":NSColor.systemPinkColor,@"Network":NSColor.systemBlueColor,
+        @"Sound":NSColor.systemPinkColor,@"Camera":NSColor.systemOrangeColor,@"Network":NSColor.systemBlueColor,
         @"Hard Disk":NSColor.systemGrayColor,@"Mouse & Keyboard":NSColor.darkGrayColor,
         @"File Sharing":NSColor.systemBlueColor,@"Remote Login":NSColor.darkGrayColor,@"Clipboard":NSColor.systemOrangeColor,
         @"CD/DVD":NSColor.systemTealColor}[title]?:NSColor.systemBlueColor;
@@ -1086,10 +1217,11 @@ static BOOL VIMConfigurationFormLayoutIsValid(NSView *view) {
         [VIMSession changeNetworkMode:@"shared" connected:YES machine:self.machine window:self.window completion:^(NSError *error){if(error)VIMPresentError(error,self.window);[self render];}];return;
     }
     BOOL retina=VIMGuestSupportsRetinaDisplay(self.machine.editableConfiguration);
-    NSDictionary *settings=self.hardwareIndex==0?@{@"CPUCount":@(MIN(4,NSProcessInfo.processInfo.processorCount)),@"MemoryMiB":@4096}:(self.hardwareIndex==1?@{@"DisplayMode":retina?@"retina":@"scaled",@"RetinaEnabled":@(retina),@"DisplayScalingFilter":retina?@"linear":@"nearest"}:(self.hardwareIndex==3?@{@"NetworkConnected":@YES,@"MACAddress":@""}:@{@"AudioEnabled":@YES,@"AudioInputDevice":@"default",@"AudioOutputDevice":@"default"}));
+    NSDictionary *settings=self.hardwareIndex==0?@{@"CPUCount":@(MIN(4,NSProcessInfo.processInfo.processorCount)),@"MemoryMiB":@4096}:(self.hardwareIndex==1?@{@"DisplayMode":retina?@"retina":@"scaled",@"RetinaEnabled":@(retina),@"DisplayScalingFilter":retina?@"linear":@"nearest"}:(self.hardwareIndex==5?@{@"CameraDevice":@"disabled",@"CameraMode":@"off",@"CameraChimesEnabled":@YES}:@{@"AudioEnabled":@YES,@"AudioInputDevice":@"default",@"AudioOutputDevice":@"default"}));
     if([self commitSettings:settings]) {
         if(self.hardwareIndex==1)[VIMSession displayScalingPreferencesChangedForMachine:self.machine];
         if(self.hardwareIndex==3)[VIMSession setNetworkConnected:YES machine:self.machine completion:^(NSError *error){if(error)VIMPresentError(error,self.window);}];
+        if(self.hardwareIndex==5)[VIMSession cameraPreferencesChangedForMachine:self.machine];
         [self render];
     }
 }
@@ -1179,6 +1311,37 @@ static BOOL VIMConfigurationFormLayoutIsValid(NSView *view) {
             if(!granted)dispatch_async(dispatch_get_main_queue(),^{NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"settings.microphone-access-is-turned-off", @"Microphone access is turned off");alert.informativeText=VIMLocalized(@"settings.you-can-allow-virtual-intel-mac-to-use-this-mac", @"You can allow Virtual Intel Mac to use this Mac’s microphone in Privacy settings.");[alert addButtonWithTitle:VIMLocalized(@"common.ok", @"OK")];VIMPresentAlert(alert,window,nil);});
         }];
     } else [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"]];
+}
++ (void)requestCameraAccessFromWindow:(NSWindow *)window {
+    if([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo]==AVAuthorizationStatusNotDetermined) {
+        [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo completionHandler:^(BOOL granted){
+            dispatch_async(dispatch_get_main_queue(),^{
+                if(granted)[VIMSession cameraAccessChanged];
+                else {NSAlert *alert=[NSAlert new];alert.messageText=VIMLocalized(@"settings.camera-access-is-turned-off", @"Camera access is turned off");alert.informativeText=VIMLocalized(@"settings.you-can-allow-virtual-intel-mac-to-use-this-mac-s-camera", @"You can allow Virtual Intel Mac to use this Mac’s camera in Privacy settings.");[alert addButtonWithTitle:VIMLocalized(@"common.ok", @"OK")];VIMPresentAlert(alert,window,nil);}
+            });
+        }];
+    } else if([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo]!=AVAuthorizationStatusAuthorized)
+        [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Camera"]];
+}
++ (void)handleCameraModeSelection:(NSString *)mode fromWindow:(NSWindow *)window {
+    void (^requestAccess)(void)=^{
+        if(VIMCameraModeUsesHostCamera(mode)&&[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo]==AVAuthorizationStatusNotDetermined)
+            [self requestCameraAccessFromWindow:window];
+    };
+    if([mode isEqual:@"autosense"]&&![NSUserDefaults.standardUserDefaults boolForKey:@"VIMAutosenseOnboardingSeen"])
+        [self presentAutosenseOnboardingFromWindow:window completion:requestAccess];
+    else requestAccess();
+}
++ (void)presentAutosenseOnboardingFromWindow:(NSWindow *)window completion:(void (^)(void))completion {
+    static VIMAutosenseOnboardingSheet *presented;
+    if(presented||!window){if(completion)completion();return;}
+    VIMAutosenseOnboardingSheet *sheet=[VIMAutosenseOnboardingSheet new];
+    presented=sheet;
+    [window beginSheet:sheet.window completionHandler:^(NSModalResponse response){
+        (void)response;presented=nil;
+        [NSUserDefaults.standardUserDefaults setBool:YES forKey:@"VIMAutosenseOnboardingSeen"];
+        if(completion)completion();
+    }];
 }
 + (void)showForMachine:(VIMMachine *)machine section:(NSString *)section category:(NSString *)category window:(NSWindow *)window {
     if([category isEqual:@"Sharing"])category=@"File Sharing";

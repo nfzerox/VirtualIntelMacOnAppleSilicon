@@ -2,6 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
     <key>NSRemovableVolumesUsageDescription</key><string>Allow a USB drive you choose to be connected to your virtual Mac instead of this Mac.</string>
+    <key>NSCameraUseContinuityCameraDeviceType</key><true/>
     <key>CFBundleDocumentTypes</key><array><dict>
         <key>CFBundleTypeName</key><string>Virtual Intel Mac</string>
         <key>CFBundleTypeRole</key><string>Editor</string>

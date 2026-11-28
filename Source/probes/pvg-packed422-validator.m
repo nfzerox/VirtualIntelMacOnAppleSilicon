@@ -28,6 +28,8 @@ int main(int argc,char **argv) {@autoreleasepool {
     assert(adapted(receiver,selector,&descriptor,&source,&destination,1,descriptor.length)&&!memcmp(&source,&destination,sizeof(source)));
     source.strideAndElement=0x08001400;
     assert(!adapted(receiver,selector,&descriptor,&source,&destination,1,descriptor.length));
+    descriptor.pixelFormat=0x32767579;source.width=640;source.height=480;source.strideAndElement=0x04000500;
+    assert(adapted(receiver,selector,&descriptor,&source,&destination,1,descriptor.length)&&destination.width==320);
     puts("PASS: real donor rejects captured layout, adapter accepts packed texels, original allocation/other-format checks remain active");
     return 0;
 }}

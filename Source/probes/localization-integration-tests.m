@@ -251,7 +251,7 @@ int main(int argc, const char *argv[]) {
                 completed = YES;
             }];
             Check(completed && monitor.calls == 4, @"Image hot-plug did not complete its production command sequence");
-            for (NSString *kind in @[@"Network", @"CD/DVD", @"Keyboard", @"Sound Output", @"Microphone"]) {
+            for (NSString *kind in @[@"Network", @"CD/DVD", @"Keyboard", @"Sound Output", @"Microphone", @"Camera"]) {
                 NSMenu *menu = [session deviceMenuForKind:kind];
                 Check(menu.numberOfItems > 0, [@"Empty translated device menu: " stringByAppendingString:kind]);
                 NSMenu *copy = [menu copy];

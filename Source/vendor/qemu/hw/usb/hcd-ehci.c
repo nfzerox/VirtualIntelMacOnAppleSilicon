@@ -30,6 +30,7 @@
 #include "qapi/error.h"
 #include "hw/core/irq.h"
 #include "hw/usb/ehci-regs.h"
+#include "vim-camera-stream.h"
 #include "hw/usb/hcd-ehci.h"
 #include "migration/vmstate.h"
 #include "trace.h"
@@ -1522,6 +1523,7 @@ static int ehci_process_itd(EHCIState *ehci,
                         qemu_sglist_destroy(&ehci->isgl);
                         return -1;
                     }
+                    vim_camera_note_bus_frame(ehci->frindex + i);
                     usb_handle_packet(dev, &ehci->ipacket);
                     usb_packet_unmap(&ehci->ipacket, &ehci->isgl);
                 } else {

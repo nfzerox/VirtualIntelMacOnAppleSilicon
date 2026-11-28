@@ -18,6 +18,24 @@
         }
       }
     },
+    "NSCameraUsageDescription" : {
+      "comment" : "System permission prompt.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allow your virtual Macs to use this Mac’s camera when a guest app needs video."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许虚拟Intel Mac在客户机应用需要视频时使用此Mac的相机。"
+          }
+        }
+      }
+    },
     "NSHumanReadableCopyright" : {
       "comment" : "Copyright (human-readable)",
       "extractionState" : "extracted_with_value",

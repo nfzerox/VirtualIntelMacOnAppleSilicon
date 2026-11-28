@@ -156,7 +156,7 @@
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 270000
     if(@available(macOS 27.0,*)){configure.preferredImageVisibility=NSMenuItemImageVisibilityVisible;apps.preferredImageVisibility=NSMenuItemImageVisibilityVisible;}
 #endif
-    for(NSString *name in @[@"Network",@"Sound Output",@"Microphone",@"CD/DVD",@"USB",@"Sharing",@"Keyboard"]) {
+    for(NSString *name in @[@"Network",@"Sound Output",@"Microphone",@"Camera",@"CD/DVD",@"USB",@"Sharing",@"Keyboard"]) {
         NSMenuItem *item=[devices addItemWithTitle:VIMLocalizedLabel(name) action:nil keyEquivalent:@""];
         if(!session) {
             item.enabled=NO;item.submenu=[NSMenu new];item.submenu.autoenablesItems=NO;
